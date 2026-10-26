@@ -74,7 +74,7 @@ export interface FilteringConfig {
    */
   include_video_official_audio: boolean;
   prefer_explicit: boolean;            // Prefer explicit versions over clean
-  enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
+  enable_redundancy_filter: boolean;   // Automatic curation. Key kept; the setting is labelled Automatic curation.
   compilation_policy: CompilationPolicy; // Compilations only fill gaps, or compete for fewest albums
   require_provider_availability: boolean; // Only mark release groups wanted when a provider offer exists
 }

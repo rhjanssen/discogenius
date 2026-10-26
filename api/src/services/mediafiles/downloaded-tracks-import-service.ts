@@ -23,7 +23,7 @@ import { MetadataIdentityService } from "../metadata/metadata-identity-service.j
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { ProviderTrackTagSupplementService } from "./provider-track-tag-supplement-service.js";
 import { TrackLyricsMaterializer, type TrackLyricsMaterializeResult } from "./track-lyrics-materializer.js";
-import { removeEmptyParents } from "./library-files.js";
+import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
 import { Config } from "../config/config.js";
 import {
     decideImportedQuality,
@@ -1497,6 +1497,21 @@ export class DownloadedTracksImportService {
                 throw new Error(`Video tagging failed for ${providerId}: ${retagResult.errors.map(item => item.error).join("; ") || "imported file is missing"}`);
             }
             cancellationCheckpoint("after applying video tag rules");
+        }
+
+        try {
+            const settledFileIds = importedLibraryFileIds(organizeResult);
+            if (settledFileIds.length > 0) {
+                const recordingIds = (db.prepare(`
+                    SELECT DISTINCT recording_id AS id
+                    FROM TrackFiles
+                    WHERE id IN ${SQL_JSON_LIST}
+                      AND recording_id IS NOT NULL
+                `).all(jsonList(settledFileIds)) as Array<{ id: number }>).map((row) => row.id);
+                LibraryFilesService.settleImportedRecordings(recordingIds);
+            }
+        } catch (settleError) {
+            console.warn("[ImportDownload] Unmonitored-file settlement failed:", settleError);
         }
 
         cancellationCheckpoint("before recording import history");

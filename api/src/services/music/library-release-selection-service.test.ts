@@ -178,7 +178,7 @@ test("manual library selection pins the exact provider edition on the active sch
     assert.deepEqual(monitored.map((selection) => ({
       editionId: selection.editionId,
       selectionMode: selection.selectionMode,
-      // Manual selection is a preference, not a lock: Lock is its own action.
+      // Choosing an edition records a user decision.
       locked: selection.locked,
       representative: selection.representative,
       composition: selection.plan?.composition,
@@ -187,7 +187,7 @@ test("manual library selection pins the exact provider edition on the active sch
     })), [{
       editionId: 1,
       selectionMode: "manual",
-      locked: false,
+      locked: true,
       representative: true,
       composition: "single_source",
       downloadMode: "album",
@@ -197,7 +197,7 @@ test("manual library selection pins the exact provider edition on the active sch
       SELECT selection_mode, locked
       FROM LibraryAlbums
       WHERE library_id = 1 AND release_group_id = 1
-    `).get(), { selection_mode: "manual", locked: 0 });
+    `).get(), { selection_mode: "manual", locked: 1 });
     assert.deepEqual(db.prepare(`
       SELECT source.provider_edition_match_id, source.role
       FROM AcquisitionPlanSources source
@@ -260,8 +260,7 @@ test("an additive selection keeps the editions the album already monitors", () =
       INSERT INTO Libraries (
         id, name, root_path, metadata_profile_id, quality_profile_id, enabled
       ) VALUES (1, 'Lossless', '/library/lossless', 1, 1, 1);
-      -- The user deliberately selected the deluxe edition by hand (manual, but
-      -- not locked — Lock is a separate action).
+      -- The user deliberately selected the deluxe edition by hand.
       INSERT INTO LibraryEditions (
         id, library_id, edition_id, selection_mode, reason, curation_version
       ) VALUES (99, 1, 2, 'manual', 'user', 1);
@@ -387,7 +386,7 @@ test("the album lock reaches the edition rows planning actually consults", () =>
     const service = new LibraryReleaseSelectionService(db);
     service.selectRelease({ releaseGroupMbid: albumMbid, libraryId: 1, editionId: 1 });
 
-    // Manual selection records a preference without silently locking.
+    // Choosing an edition records the user decision on the album.
     assert.deepEqual(
       db.prepare("SELECT selection_mode FROM LibraryEditions WHERE edition_id = 1").get(),
       { selection_mode: "manual" },
@@ -395,8 +394,8 @@ test("the album lock reaches the edition rows planning actually consults", () =>
     assert.equal(
       (db.prepare("SELECT locked FROM LibraryAlbums WHERE release_group_id = 1")
         .get() as { locked: number }).locked,
-      0,
-      "an ordinary selection must not press Lock",
+      1,
+      "choosing an edition is a user decision",
     );
 
     AlbumCommandService.updateAlbum(albumMbid, true, true, { kind: "library", libraryId: 1 });

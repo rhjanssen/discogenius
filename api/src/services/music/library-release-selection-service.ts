@@ -6,6 +6,7 @@ import { parseMediaFormats } from "./media-formats.js";
 import { editionRendition, planEligibleForEdition } from "./rendition-policy.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
 import { LibraryFilesService } from "../mediafiles/library-files.js";
+import { clearUserExclusions, recordAlbumUserExclusion, recordEditionUserExclusion } from "./library-user-decisions.js";
 import {
   planHeadlineQualitySql,
   planQualityHistogramSql,
@@ -546,8 +547,9 @@ export class LibraryReleaseSelectionService {
    * edition) keeps other monitored editions. One plan per edition either way —
    * additive never stacks two plans on the same card.
    *
-   * Neither mode presses Lock. Lock is a separate, explicit action, and it is
-   * what makes a choice permanent rather than merely preferred.
+   * Choosing an edition is a user decision. The album is marked chosen by you
+   * so curation will not swap that edition. Other editions still follow the
+   * active monitoring mode. "Back to automatic" clears the decision.
    */
   choosePlan(input: {
     releaseGroupMbid: string;
@@ -599,6 +601,7 @@ export class LibraryReleaseSelectionService {
   }): LibraryReleaseGroupAvailabilityView {
     const target = this.requireTargetEdition(input);
 
+    let albumRemoved = false;
     this.db.transaction(() => {
       const removed = this.db.prepare(`
         DELETE FROM LibraryEditions WHERE library_id = ? AND edition_id = ?
@@ -619,12 +622,15 @@ export class LibraryReleaseSelectionService {
 
       if (remaining.length === 0) {
         // No monitored Edition left means the Album is no longer monitored here.
-        // Canonical metadata, provider matches and candidate plans all survive.
+        // The exclusion is what stops curation from putting it back.
+        recordAlbumUserExclusion(this.db, input.libraryId, target.releaseGroupId);
         this.db.prepare(`
           DELETE FROM LibraryAlbums WHERE library_id = ? AND release_group_id = ?
         `).run(input.libraryId, target.releaseGroupId);
+        albumRemoved = true;
         return;
       }
+      recordEditionUserExclusion(this.db, input.libraryId, target.releaseGroupId, input.editionId);
       if (!remaining.some((edition) => edition.representative)) {
         this.db.prepare(`
           UPDATE LibraryEditions
@@ -638,7 +644,9 @@ export class LibraryReleaseSelectionService {
       libraryId: input.libraryId,
       reason: "edition-unmonitored",
     });
-    LibraryFilesService.pruneUnmonitoredForReleaseGroup(input.releaseGroupMbid);
+    LibraryFilesService.pruneUnmonitoredForReleaseGroup(input.releaseGroupMbid, albumRemoved
+      ? { immediate: true }
+      : { immediate: true, editionIds: [input.editionId] });
     return this.getAvailability(input.releaseGroupMbid);
   }
 
@@ -721,14 +729,17 @@ export class LibraryReleaseSelectionService {
   private ensureLibraryAlbum(libraryId: number, releaseGroupId: number): void {
     this.db.prepare(`
       INSERT INTO LibraryAlbums (
-        library_id, release_group_id, selection_mode, locked,
+        library_id, release_group_id, selection_mode, locked, decision,
         reason, curation_version, updated_at
-      ) VALUES (?, ?, 'manual', 0, 'user', 1, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, 'manual', 1, 'user', 'user', 1, CURRENT_TIMESTAMP)
       ON CONFLICT(library_id, release_group_id) DO UPDATE SET
         selection_mode = 'manual',
+        locked = 1,
+        decision = 'user',
         reason = 'user',
         updated_at = CURRENT_TIMESTAMP
     `).run(libraryId, releaseGroupId);
+    clearUserExclusions(this.db, libraryId, releaseGroupId);
   }
 
   /**
@@ -752,6 +763,15 @@ export class LibraryReleaseSelectionService {
     } | undefined;
 
     if (input.exclusive) {
+      const removed = this.db.prepare(`
+        SELECT edition_id FROM LibraryEditions
+        WHERE library_id = ?
+          AND edition_id != ?
+          AND edition_id IN (SELECT id FROM AlbumEditions WHERE release_group_id = ?)
+      `).all(input.libraryId, input.editionId, input.releaseGroupId) as Array<{ edition_id: number }>;
+      for (const row of removed) {
+        recordEditionUserExclusion(this.db, input.libraryId, input.releaseGroupId, row.edition_id);
+      }
       this.db.prepare(`
         DELETE FROM LibraryEditions
         WHERE library_id = ?
@@ -766,7 +786,7 @@ export class LibraryReleaseSelectionService {
       if (input.exclusive) {
         this.db.prepare(`
           UPDATE LibraryEditions
-          SET representative = 1, selection_mode = 'manual', reason = 'user',
+          SET representative = 1, selection_mode = 'manual', decision = 'user', reason = 'user',
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `).run(existing.id);
@@ -784,14 +804,13 @@ export class LibraryReleaseSelectionService {
         AND monitored_edition.representative = 1
     `).get(input.libraryId, input.releaseGroupId));
 
-    // Manual selection records a preference; it does not silently press Lock.
-    // Only the explicit Album lock protects a choice from being reconsidered by
-    // coverage-driven curation.
+    // A manual edition is a user decision. Curation may add other editions;
+    // it may not swap this one.
     this.db.prepare(`
       INSERT INTO LibraryEditions (
-        library_id, edition_id, selection_mode, representative, reason,
+        library_id, edition_id, selection_mode, decision, representative, reason,
         curation_version, selected_at, updated_at
-      ) VALUES (?, ?, 'manual', ?, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, 'manual', 'user', ?, 'user', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).run(input.libraryId, input.editionId, albumHasRepresentative ? 0 : 1);
     if (input.exclusive) {
       this.demoteOtherEditions(input.libraryId, input.editionId, input.releaseGroupId);

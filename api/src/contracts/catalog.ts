@@ -121,6 +121,10 @@ export interface AlbumContract {
   redundant_of?: string | null;
   redundant?: string | null;
   monitored_lock: boolean;
+  /** Album-page status. Null when there is nothing to say. */
+  decision_label?: string | null;
+  /** Set when the user can hand the album back to the active monitoring mode. */
+  decision_action?: "back_to_automatic" | null;
   filter_locked?: number;
   module?: string;
   group_type?: string;
@@ -346,6 +350,12 @@ export function parseAlbumContract(value: unknown, index: number): AlbumContract
     redundant_of: expectNullableString(record.redundant_of, `${label}.redundant_of`),
     redundant: expectNullableString(record.redundant, `${label}.redundant`),
     monitored_lock: expectOptionalBoolean(record.monitored_lock, `${label}.monitored_lock`) ?? false,
+    decision_label: expectOptionalString(record.decision_label, `${label}.decision_label`) ?? null,
+    decision_action: record.decision_action == null
+      ? null
+      : expectString(record.decision_action, `${label}.decision_action`) === "back_to_automatic"
+        ? "back_to_automatic"
+        : null,
     filter_locked: expectOptionalNumber(record.filter_locked, `${label}.filter_locked`),
     module: expectOptionalString(record.module, `${label}.module`),
     group_type: expectOptionalString(record.group_type, `${label}.group_type`),

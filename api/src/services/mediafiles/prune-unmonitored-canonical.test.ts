@@ -354,6 +354,26 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
       medium_position, position, title
     ) VALUES ('trk-x-oblivion-live', ?, 'ed-x-live', ?, 'rec-oblivion-live', 1, 1, 'Oblivion')
   `).run(deluxe.id, recording.id);
+  const coveredPath = path.join(tempDir, "Bad Blood X", "01 - Oblivion.flac");
+  fs.mkdirSync(path.dirname(coveredPath), { recursive: true });
+  fs.writeFileSync(coveredPath, "covered");
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, library_id, release_group_id, album_edition_id, recording_id,
+      canonical_recording_mbid, library_slot, file_path, relative_path, library_root,
+      filename, extension, file_type, quality
+    ) VALUES (?, ?, ?, ?, ?, ?, 'stereo', ?, ?, ?, '01 - Oblivion.flac', 'flac', 'track', 'LOSSLESS')
+  `).run(
+    (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id,
+    testLibraryId,
+    albumId,
+    deluxe.id,
+    recording.id,
+    "rec-oblivion-live",
+    coveredPath,
+    path.relative(tempDir, coveredPath),
+    tempDir,
+  );
 
   const leftoverDir = path.join(tempDir, "All This Bad Blood (2014)");
   fs.mkdirSync(leftoverDir, { recursive: true });
@@ -416,8 +436,8 @@ test("unmonitored edition folders lose untracked extra media when cleanup is on"
   );
   assert.equal(
     (db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n,
-    0,
-    "prune must not leave TrackFiles pointing at deleted paths",
+    1,
+    "the monitored edition's copy of the same recording stays",
   );
   assert.ok(result.deleted >= 1);
 });
@@ -428,10 +448,37 @@ test("prune preview counts what cleanup would delete, by folder, compilations ap
   seedLibraryGroup("rg-studio-old", 0);
   seedLibraryGroup("rg-hits", 0);
   db.prepare("UPDATE Albums SET secondary_types = ? WHERE mbid = 'rg-hits'").run(JSON.stringify(["compilation"]));
-  insertFile({ fileType: "track", slot: "stereo", rg: "rg-keep", folder: "C:/lib/Keep" });
-  insertFile({ fileType: "track", slot: "stereo", rg: "rg-studio-old", folder: "C:/lib/Studio" });
-  insertFile({ fileType: "track", slot: "stereo", rg: "rg-hits", folder: "C:/lib/Hits" });
-  insertFile({ fileType: "track", slot: "stereo", rg: "rg-hits", folder: "C:/lib/Hits" });
+  const recording = db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
+    VALUES ('rec-preview', 'Song', 'artist-mbid', 0)
+    RETURNING id
+  `).get() as { id: number };
+  const keepAlbumId = (db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-keep'").get() as { id: number }).id;
+  const keepEdition = db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES ('ed-keep-preview', ?, 'rg-keep', 'artist-mbid', 'Keep')
+    RETURNING id
+  `).get(keepAlbumId) as { id: number };
+  db.prepare(`
+    INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, representative, curation_version)
+    VALUES (?, ?, 'auto', 1, 1)
+  `).run(testLibraryId, keepEdition.id);
+  insertFile({
+    fileType: "track", slot: "stereo", rg: "rg-keep", folder: "C:/lib/Keep",
+    albumEditionId: keepEdition.id, recordingId: recording.id, rec: "rec-preview",
+  });
+  insertFile({
+    fileType: "track", slot: "stereo", rg: "rg-studio-old", folder: "C:/lib/Studio",
+    recordingId: recording.id, rec: "rec-preview",
+  });
+  insertFile({
+    fileType: "track", slot: "stereo", rg: "rg-hits", folder: "C:/lib/Hits",
+    recordingId: recording.id, rec: "rec-preview",
+  });
+  insertFile({
+    fileType: "track", slot: "stereo", rg: "rg-hits", folder: "C:/lib/Hits",
+    recordingId: recording.id, rec: "rec-preview",
+  });
   const before = (db.prepare("SELECT COUNT(*) AS n FROM TrackFiles").get() as { n: number }).n;
 
   const preview = LibraryFilesService.previewUnmonitoredFiles();

@@ -41,6 +41,7 @@ import { migrateRetagAlbumScheduling } from "./database/schema/retag-album-sched
 import { migrateDeliveredQuality } from "./database/schema/delivered-quality.js";
 import { migrateReleaseTagFields } from "./database/schema/release-tag-fields.js";
 import { migrateRelationshipCredits } from "./database/schema/relationship-credits.js";
+import { migrateLibraryUserDecisions } from "./database/schema/library-user-decisions.js";
 import { migrateDropDownconvertSetting } from "./database/schema/drop-downconvert-setting.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createTrackArtistCreditNamesSchema, migrateTrackArtistCreditNames } from "./database/schema/track-artist-credit-names.js";
@@ -540,6 +541,8 @@ export function initDatabase() {
   // Relationship-credit tables only. user_version stays 46 so a queued
   // RetagArtist is not reset.
   migrateRelationshipCredits(db);
+  // Decision column + exclusion/outcome tables. user_version stays 46.
+  migrateLibraryUserDecisions(db);
   createArtworkStateSchema(db);
   ensureDownloadQueueSchema();
   pruneStaleArtistIdCommandFailures();

@@ -6,6 +6,7 @@ import {
   curateLibraryReleases,
   DEFAULT_COMPILATION_POLICY,
   editionTitleMatchesAlbum,
+  selectPlainLidarrEditions,
   type CanonicalMediumKind,
   type CurationEditionCandidate,
   type CurationEditionDecision,
@@ -20,11 +21,14 @@ import {
   type LibraryScopeType,
 } from "./library-curation-repository.js";
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
-import {
-  findUnreachableManualEditionChoices,
-  type ManualEditionChoiceAlbum,
-} from "./artist-coverage-optimizer.js";
 import { loadCoverageUnitsForRecordings } from "./coverage-identity-repository.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
+import {
+  excludedEditionIds,
+  excludedRecordingIds,
+  excludedReleaseGroupIds,
+  syncCurationOutcomes,
+} from "./library-user-decisions.js";
 import { createCurationPhaseTimer } from "./curation-profile.js";
 import type { QuarantinedProviderLink } from "./coverage-identity.js";
 import { editionRendition, renditionPreferenceRank } from "./rendition-policy.js";
@@ -220,11 +224,10 @@ export class LibraryCurationService {
       representative: number;
     }>;
 
-    const lockedEditionIds = new Set(
-      protectionRows.filter((row) => row.locked === 1).map((row) => row.edition_id),
-    );
+    // The album lock protects the album row. Only a manual edition is frozen.
+    const lockedEditionIds = new Set<number>();
     const manualEditionIds = new Set(
-      protectionRows.filter((row) => row.locked === 0 && row.selection_mode === "manual").map((row) => row.edition_id),
+      protectionRows.filter((row) => row.selection_mode === "manual").map((row) => row.edition_id),
     );
     const existingRepresentativeEditionIdByReleaseGroup = new Map<number, number>();
     for (const row of protectionRows) {
@@ -233,9 +236,16 @@ export class LibraryCurationService {
       }
     }
 
-    const overrulableManualEditions = protectionRows.filter(
-      (row) => row.locked === 0 && row.selection_mode === "manual",
-    );
+    for (const row of this.db.prepare(`
+      SELECT edition.release_group_id AS release_group_id, monitored.edition_id AS edition_id
+      FROM LibraryEditions monitored
+      JOIN AlbumEditions edition ON edition.id = monitored.edition_id
+      WHERE monitored.library_id = ? AND monitored.representative = 1
+    `).all(input.libraryId) as Array<{ release_group_id: number; edition_id: number }>) {
+      if (!existingRepresentativeEditionIdByReleaseGroup.has(row.release_group_id)) {
+        existingRepresentativeEditionIdByReleaseGroup.set(row.release_group_id, row.edition_id);
+      }
+    }
 
     const candidateScopes = new Map<number, LibraryReleaseScopeInput[]>();
     if (libraryArtists.length > 0) {
@@ -447,6 +457,24 @@ export class LibraryCurationService {
       );
     }
 
+    const redundancyEnabled = filtering.enable_redundancy_filter !== false;
+    const compilationPolicy = filtering.compilation_policy ?? DEFAULT_COMPILATION_POLICY;
+    const excludedReleaseGroupIdsSet = excludedReleaseGroupIds(this.db, input.libraryId);
+    const excludedEditionIdSet = excludedEditionIds(this.db, input.libraryId);
+    const suppressedUnitIds = mapRecordingsToCoverageUnits(
+      excludedRecordingIds(this.db, input.libraryId),
+      coverageUnitByRecording,
+    );
+    const monitoredEditionRows = this.db.prepare(`
+      SELECT monitored_edition.edition_id AS edition_id,
+             edition.release_group_id AS release_group_id
+      FROM LibraryEditions monitored_edition
+      JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+      WHERE monitored_edition.library_id = ?
+    `).all(input.libraryId) as Array<{ edition_id: number; release_group_id: number }>;
+    const monitoredEditionIdSet = new Set(monitoredEditionRows.map((row) => row.edition_id));
+    const editionTitleById = new Map<number, string>();
+
     const allCandidates: CurationEditionCandidate[] = [];
     for (const release of evaluatedEditions) {
       const rawAttainable = (canonicalByRelease ?? attainableByRelease)
@@ -460,12 +488,22 @@ export class LibraryCurationService {
       // stays in the database, stays on the Album page, and stays usable as
       // matching evidence — and `isProtected` below lets a manual or locked
       // selection keep it, exactly as it already overrides availability.
+      if (
+        excludedReleaseGroupIdsSet.has(release.release_group_id)
+        || excludedEditionIdSet.has(release.edition_id)
+      ) continue;
       const statusEligible = isReleaseStatusIncluded(release.status, filtering);
       const eligible = statusEligible && (requireProviderAvailability
         ? viableEditionIds.has(release.edition_id)
         : true);
-      const isProtected = lockedEditionIds.has(release.edition_id) || manualEditionIds.has(release.edition_id);
-      if (!eligible && !isProtected) continue;
+      const isProtected = manualEditionIds.has(release.edition_id);
+      // Availability failure is not a reason to drop an edition the library
+      // already monitors while automatic curation is off.
+      const keepMonitoredDespiteAvailability = !redundancyEnabled
+        && statusEligible
+        && monitoredEditionIdSet.has(release.edition_id);
+      if (!eligible && !isProtected && !keepMonitoredDespiteAvailability) continue;
+      editionTitleById.set(release.edition_id, release.title);
 
       const editionPreferenceRank = renditionPreferenceRank(
         editionRendition(release.title, release.disambiguation),
@@ -510,16 +548,40 @@ export class LibraryCurationService {
     }
 
     const allScopedSelections: ScopedCurationSelection[] = [];
-    const releasableFileEditionIds = new Set<number>();
-    const fileOwningEditionIds = new Set(
-      (this.db.prepare(
-        "SELECT DISTINCT album_edition_id AS edition_id FROM TrackFiles WHERE library_id = ? AND album_edition_id IS NOT NULL",
-      ).all(input.libraryId) as Array<{ edition_id: number }>).map((row) => row.edition_id),
-    );
     const proposedRepresentativesByReleaseGroup = new Map<number, Map<number, CurationEditionCandidate>>();
-    const overruledReleaseGroupIds = new Set<number>();
-    const redundancyEnabled = filtering.enable_redundancy_filter !== false;
-    const compilationPolicy = filtering.compilation_policy ?? DEFAULT_COMPILATION_POLICY;
+
+    // File-owning editions whose accepted automatic matches predate the
+    // current matcher stay monitored, but they are not coverage. Planning
+    // without them lets a current edition keep the recordings; the stale
+    // edition is put back afterwards.
+    const staleFileEditions = this.db.prepare(`
+      SELECT DISTINCT file.album_edition_id AS edition_id,
+             edition.release_group_id AS release_group_id,
+             edition.title AS title
+      FROM TrackFiles file
+      JOIN AlbumEditions edition ON edition.id = file.album_edition_id
+      JOIN LibraryEditions monitored
+        ON monitored.library_id = file.library_id
+       AND monitored.edition_id = file.album_edition_id
+       AND monitored.selection_mode = 'auto'
+      WHERE file.library_id = ?
+        AND file.album_edition_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM Tracks track
+          JOIN ProviderTrackMatches match
+            ON match.track_id = track.id
+           AND match.match_state = 'accepted'
+           AND match.decision_source = 'automatic'
+           AND match.matcher_version < ?
+          WHERE track.album_edition_id = file.album_edition_id
+        )
+    `).all(input.libraryId, PROVIDER_TRACK_MATCHER_VERSION) as Array<{
+      edition_id: number;
+      release_group_id: number;
+      title: string;
+    }>;
+    const staleFileEditionIds = new Set(staleFileEditions.map((row) => row.edition_id));
 
     for (const libraryArtist of libraryArtists) {
       const scopedCandidates = allCandidates
@@ -531,88 +593,22 @@ export class LibraryCurationService {
 
       if (scopedCandidates.length === 0) continue;
 
-      const lockedAlbumIdsInScope = new Set(
-        protectionRows.filter((row) => row.locked === 1).map((row) => row.release_group_id),
-      );
-      const monitoredEditionIdsInScope = new Set(protectionRows.map((row) => row.edition_id));
-      const eligibleCandidatesInScope = scopedCandidates.filter((candidate) =>
-        !lockedAlbumIdsInScope.has(candidate.releaseGroupId)
-        || monitoredEditionIdsInScope.has(candidate.editionId));
+      // A file-owning edition whose automatic matches are still from an older
+      // matcher does not count as coverage. It is put back after planning, so
+      // a current edition of the same recordings is the one curation keeps.
+      const plannerCandidates = redundancyEnabled
+        ? scopedCandidates.filter((candidate) => !staleFileEditionIds.has(candidate.editionId))
+        : scopedCandidates;
+      if (plannerCandidates.length === 0) continue;
 
-      const scopeOverrulableManual = overrulableManualEditions.filter((row) =>
-        eligibleCandidatesInScope.some((c) => c.editionId === row.edition_id));
-
-      const scopeOverruledRgs = this.overruledManualEditionAlbums({
-        overrulableManualEditions: scopeOverrulableManual,
-        candidates: eligibleCandidatesInScope,
-        coverageUnitByRecording,
-      });
-      for (const rgId of scopeOverruledRgs) {
-        overruledReleaseGroupIds.add(rgId);
-      }
-
-      const scopeManualIdsByAlbum = new Map<number, Set<number>>();
-      for (const row of scopeOverrulableManual) {
-        const editionIds = scopeManualIdsByAlbum.get(row.release_group_id) || new Set<number>();
-        editionIds.add(row.edition_id);
-        scopeManualIdsByAlbum.set(row.release_group_id, editionIds);
-      }
-
-      const curatedCandidatesInScope = eligibleCandidatesInScope.filter((candidate) => {
-        const manualIds = scopeManualIdsByAlbum.get(candidate.releaseGroupId);
-        if (!manualIds) return true;
-        if (scopeOverruledRgs.has(candidate.releaseGroupId)) return true;
-        return manualIds.has(candidate.editionId);
-      });
-      for (const candidate of curatedCandidatesInScope) {
-        if (scopeOverruledRgs.has(candidate.releaseGroupId)) {
-          candidate.protected = false;
-          candidate.protectedReason = undefined;
-        }
-      }
-
-      const scopedResult = timer.phase("cover-optimisation",
-        () => curateLibraryReleases(curatedCandidatesInScope, redundancyEnabled, compilationPolicy));
-
-      // An edition with files on disk may only be released when the planner
-      // weighed it and every recording it carries is attainable through the
-      // selection that replaces it. Editions it never saw keep their files.
-      {
-        const selectedInScope = new Set(scopedResult.selectedEditionIds);
-        const coveredUnits = new Set<number>();
-        for (const c of curatedCandidatesInScope) {
-          if (selectedInScope.has(c.editionId)) for (const u of c.attainableUnitIds) coveredUnits.add(u);
-        }
-        for (const c of curatedCandidatesInScope) {
-          if (selectedInScope.has(c.editionId) || c.protected || c.attainableUnitIds.size === 0) continue;
-          if ([...c.attainableUnitIds].every((u) => coveredUnits.has(u))) releasableFileEditionIds.add(c.editionId);
-        }
-      }
-
-      // An album curation keeps stays monitored through every edition that
-      // already has files, so swapping editions never deletes music only to
-      // download the same recordings again.
-      {
-        const keptGroups = new Set(scopedResult.selectedReleaseGroupIds);
-        const selectedInScope = new Set(scopedResult.selectedEditionIds);
-        for (const c of curatedCandidatesInScope) {
-          if (selectedInScope.has(c.editionId) || !keptGroups.has(c.releaseGroupId) || !fileOwningEditionIds.has(c.editionId)) continue;
-          allScopedSelections.push({
-            libraryArtistId: libraryArtist.library_artist_id,
-            editionId: c.editionId,
-            releaseGroupId: c.releaseGroupId,
-            role: "supplemental",
-            reason: "discography_gap_fill",
-            contributedUnitIds: [],
-            scopeTypes: (candidateScopes.get(c.editionId) || [])
-              .filter((scope) => scope.libraryArtistId === libraryArtist.library_artist_id)
-              .map((scope) => scope.scopeType),
-          });
-        }
-      }
+      const scopedResult = timer.phase("cover-optimisation", () => (
+        redundancyEnabled
+          ? curateLibraryReleases(plannerCandidates, true, compilationPolicy, suppressedUnitIds)
+          : selectPlainLidarrEditions(plannerCandidates, monitoredEditionIdSet)
+      ));
 
       for (const [rgId, repEditionId] of scopedResult.representativeEditionIdByReleaseGroup) {
-        const repCand = curatedCandidatesInScope.find((c) => c.editionId === repEditionId);
+        const repCand = scopedCandidates.find((c) => c.editionId === repEditionId);
         if (repCand) {
           const mapForRg = proposedRepresentativesByReleaseGroup.get(rgId) || new Map<number, CurationEditionCandidate>();
           mapForRg.set(libraryArtist.library_artist_id, repCand);
@@ -637,15 +633,32 @@ export class LibraryCurationService {
       }
     }
 
-    const selectedEditionIdsSet = new Set(allScopedSelections.map((s) => s.editionId));
-    for (const editionId of selectedEditionIdsSet) releasableFileEditionIds.delete(editionId);
-    const selectedReleaseGroupIdsSet = new Set(allScopedSelections.map((s) => s.releaseGroupId));
-    // Swapping one edition of a kept album for another would delete files only
-    // to download the same recordings again. Only editions of albums curation
-    // drops altogether may give up their files.
-    for (const candidate of allCandidates) {
-      if (selectedReleaseGroupIdsSet.has(candidate.releaseGroupId)) releasableFileEditionIds.delete(candidate.editionId);
+    for (const row of staleFileEditions) {
+      if (excludedReleaseGroupIdsSet.has(row.release_group_id) || excludedEditionIdSet.has(row.edition_id)) continue;
+      if (allScopedSelections.some((selection) => selection.editionId === row.edition_id)) continue;
+      editionTitleById.set(row.edition_id, row.title);
+      const scopes = candidateScopes.get(row.edition_id) ?? [];
+      const artistIds = [...new Set(scopes.map((scope) => scope.libraryArtistId))];
+      const targets = artistIds.length > 0
+        ? artistIds
+        : [libraryArtists[0]?.library_artist_id ?? 0];
+      for (const libraryArtistId of targets) {
+        allScopedSelections.push({
+          libraryArtistId,
+          editionId: row.edition_id,
+          releaseGroupId: row.release_group_id,
+          role: "supplemental",
+          reason: "release_group_primary",
+          contributedUnitIds: [],
+          scopeTypes: scopes
+            .filter((scope) => scope.libraryArtistId === libraryArtistId)
+            .map((scope) => scope.scopeType),
+        });
+      }
     }
+
+    const selectedEditionIdsSet = new Set(allScopedSelections.map((s) => s.editionId));
+    const selectedReleaseGroupIdsSet = new Set(allScopedSelections.map((s) => s.releaseGroupId));
 
     const reconciledRepresentativeMap = new Map<number, number>();
     for (const rgId of selectedReleaseGroupIdsSet) {
@@ -690,6 +703,11 @@ export class LibraryCurationService {
         reconciledRepresentativeMap.set(rgId, chosenRep.editionId);
       }
     }
+    for (const selection of allScopedSelections) {
+      if (!reconciledRepresentativeMap.has(selection.releaseGroupId)) {
+        reconciledRepresentativeMap.set(selection.releaseGroupId, selection.editionId);
+      }
+    }
 
     const selectedEditionIds = [...selectedEditionIdsSet].sort((a, b) => a - b);
     const selectedReleaseGroupIds = [...selectedReleaseGroupIdsSet].sort((a, b) => a - b);
@@ -725,10 +743,6 @@ export class LibraryCurationService {
         }
       }
 
-      if (overruledReleaseGroupIds.has(rgId) && strongestReason === "manual_selection") {
-        strongestReason = isRep ? "release_group_primary" : "discography_gap_fill";
-      }
-
       mergedDecisions.push({
         editionId,
         releaseGroupId: rgId,
@@ -737,15 +751,13 @@ export class LibraryCurationService {
         contributedUnitIds: [...contributedUnitsSet].sort((a, b) => a - b),
       });
 
-      const repoReason = overruledReleaseGroupIds.has(rgId)
-        ? "curation_override_unreachable_recordings"
-        : (strongestReason === "locked_selection"
-            ? "locked_selection"
-            : strongestReason === "manual_selection"
-              ? "manual_selection"
-              : isRep
-                ? "curation_primary"
-                : "curation_gap_fill");
+      const repoReason = strongestReason === "locked_selection"
+        ? "locked_selection"
+        : strongestReason === "manual_selection"
+          ? "manual_selection"
+          : isRep
+            ? "curation_primary"
+            : "curation_gap_fill";
       reasonByEditionId.set(editionId, repoReason);
     }
 
@@ -787,21 +799,49 @@ export class LibraryCurationService {
     const releaseGroupIdByReleaseId = new Map(
       allCandidates.map((candidate) => [candidate.editionId, candidate.releaseGroupId]),
     );
+    for (const selection of allScopedSelections) {
+      if (!releaseGroupIdByReleaseId.has(selection.editionId)) {
+        releaseGroupIdByReleaseId.set(selection.editionId, selection.releaseGroupId);
+      }
+    }
 
+    const monitoredGroupsBefore = new Set(monitoredEditionRows.map((row) => row.release_group_id));
     timer.phase("persist", () => this.repository.replaceAutomaticCuration({
       libraryId: input.libraryId,
       result: combinedResult,
       releaseGroupIdByReleaseId,
       scopes: selectedScopes,
       curationVersion: input.curationVersion,
-      reasonByReleaseGroupId: new Map(
-        [...overruledReleaseGroupIds].map((releaseGroupId) =>
-          [releaseGroupId, "curation_override_unreachable_recordings"] as const),
-      ),
       reasonByEditionId,
       scopedLibraryArtistIds: scopedArtistIds ?? undefined,
-      releasableFileEditionIds,
     }));
+
+    if (redundancyEnabled) {
+      const stillMonitored = new Set((this.db.prepare(`
+        SELECT release_group_id FROM LibraryAlbums WHERE library_id = ?
+      `).all(input.libraryId) as Array<{ release_group_id: number }>).map((row) => row.release_group_id));
+      const candidateGroups = new Set(allCandidates.map((candidate) => candidate.releaseGroupId));
+      const replaced: Array<{ releaseGroupId: number; replacementTitle: string | null }> = [];
+      for (const releaseGroupId of monitoredGroupsBefore) {
+        if (stillMonitored.has(releaseGroupId) || !candidateGroups.has(releaseGroupId)) continue;
+        if (excludedReleaseGroupIdsSet.has(releaseGroupId)) continue;
+        replaced.push({
+          releaseGroupId,
+          replacementTitle: replacementTitleFor(
+            releaseGroupId,
+            allCandidates,
+            reconciledRepresentativeMap,
+            editionTitleById,
+          ),
+        });
+      }
+      syncCurationOutcomes(
+        this.db,
+        input.libraryId,
+        combinedResult.selectedReleaseGroupIds,
+        replaced,
+      );
+    }
 
     for (const editionId of combinedResult.selectedEditionIds) {
       timer.phase("replan-selected", () => this.acquisitionPlanning.compute({
@@ -819,74 +859,6 @@ export class LibraryCurationService {
     });
 
     return combinedResult;
-  }
-
-  private overruledManualEditionAlbums(input: {
-    overrulableManualEditions: ReadonlyArray<{ edition_id: number; release_group_id: number }>;
-    candidates: readonly CurationEditionCandidate[];
-    coverageUnitByRecording: ReadonlyMap<number, number>;
-  }): Set<number> {
-    if (input.overrulableManualEditions.length === 0) return new Set();
-
-    const canonicalByEdition = this.canonicalRecordingIdsByEdition();
-    const unitsForEdition = (editionId: number): Set<number> =>
-      mapRecordingsToCoverageUnits(
-        canonicalByEdition.get(editionId) || new Set(),
-        input.coverageUnitByRecording,
-      );
-    const manualEditionIdsByAlbum = new Map<number, Set<number>>();
-    for (const row of input.overrulableManualEditions) {
-      const editionIds = manualEditionIdsByAlbum.get(row.release_group_id) || new Set<number>();
-      editionIds.add(row.edition_id);
-      manualEditionIdsByAlbum.set(row.release_group_id, editionIds);
-    }
-
-    const candidatesByAlbum = new Map<number, CurationEditionCandidate[]>();
-    for (const candidate of input.candidates) {
-      const list = candidatesByAlbum.get(candidate.releaseGroupId) || [];
-      list.push(candidate);
-      candidatesByAlbum.set(candidate.releaseGroupId, list);
-    }
-
-    const overruled = new Set<number>();
-    for (const [releaseGroupId, manualEditionIds] of manualEditionIdsByAlbum) {
-      const chosenUnitIds = new Set<number>();
-      for (const editionId of manualEditionIds) {
-        for (const unitId of unitsForEdition(editionId)) {
-          chosenUnitIds.add(unitId);
-        }
-      }
-      const alternativeUnitIds = new Set<number>();
-      for (const candidate of candidatesByAlbum.get(releaseGroupId) || []) {
-        if (manualEditionIds.has(candidate.editionId)) continue;
-        for (const unitId of unitsForEdition(candidate.editionId)) {
-          alternativeUnitIds.add(unitId);
-        }
-      }
-      const reachableUnitIds = new Set<number>();
-      for (const [otherAlbumId, otherCandidates] of candidatesByAlbum) {
-        if (otherAlbumId === releaseGroupId) continue;
-        for (const candidate of otherCandidates) {
-          for (const unitId of unitsForEdition(candidate.editionId)) {
-            reachableUnitIds.add(unitId);
-          }
-        }
-      }
-
-      const [overrule] = findUnreachableManualEditionChoices({
-        albums: [{ releaseGroupId, chosenUnitIds, alternativeUnitIds }],
-        reachableUnitIds,
-      });
-      if (!overrule) continue;
-      overruled.add(overrule.releaseGroupId);
-      console.warn(
-        `[LibraryCuration] Overruling the manual edition choice for release group `
-        + `${overrule.releaseGroupId}: ${overrule.unreachableUnitIds.length} canonical `
-        + `recording(s) are reachable through no other release in this discography `
-        + `(${overrule.unreachableUnitIds.slice(0, 10).join(", ")})`,
-      );
-    }
-    return overruled;
   }
 
   /** Canonical recordings per edition; `editionIds` omitted means every edition. */
@@ -948,6 +920,33 @@ function secondaryTypeRankFor(raw: string | null): number {
   if (types.includes("remix")) return 2;
   if (types.includes("live") || types.includes("soundtrack")) return 1;
   return 0;
+}
+
+function replacementTitleFor(
+  releaseGroupId: number,
+  candidates: readonly CurationEditionCandidate[],
+  representatives: ReadonlyMap<number, number>,
+  editionTitleById: ReadonlyMap<number, string>,
+): string | null {
+  const dropped = new Set<number>();
+  for (const candidate of candidates) {
+    if (candidate.releaseGroupId !== releaseGroupId) continue;
+    for (const unitId of candidate.attainableUnitIds) dropped.add(unitId);
+  }
+  let best: { title: string; overlap: number } | null = null;
+  for (const [otherGroupId, editionId] of representatives) {
+    if (otherGroupId === releaseGroupId) continue;
+    const candidate = candidates.find((item) => item.editionId === editionId);
+    if (!candidate) continue;
+    let overlap = 0;
+    for (const unitId of candidate.attainableUnitIds) {
+      if (dropped.has(unitId)) overlap += 1;
+    }
+    const title = editionTitleById.get(editionId);
+    if (!title || overlap === 0) continue;
+    if (!best || overlap > best.overlap) best = { title, overlap };
+  }
+  return best?.title ?? null;
 }
 
 function parseStringArray(json: string | null | undefined): string[] {

@@ -1,7 +1,8 @@
 import { after } from "node:test";
 /**
  * Files on disk and automatic curation: a compilation the discography fully
- * covers gives up its files; another edition of a kept album keeps them.
+ * covers is unmonitored, and so is a redundant edition of a kept album.
+ * Whether the files are deleted is the coverage policy, not this selection.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -142,7 +143,7 @@ function giveFilesAndMonitor(db: Database.Database, editionIds: number[]): void 
   }
 }
 
-test("a covered compilation with files is unmonitored, other editions of a kept album keep their files", () => {
+test("a covered compilation and a redundant studio edition are unmonitored even with files", () => {
   withLibrary((db, service) => {
     curate(service);
     const chosen = monitored(db).filter((id) => id === 101 || id === 102);
@@ -153,8 +154,8 @@ test("a covered compilation with files is unmonitored, other editions of a kept 
     curate(service);
 
     const after = monitored(db);
-    assert.ok(!after.includes(201), "the compilation the studio album covers gives up its files");
-    assert.ok(after.includes(other), "the other edition of the kept album stays monitored with its files");
+    assert.ok(!after.includes(201), "the compilation the studio album covers is unmonitored");
+    assert.ok(!after.includes(other), "the redundant studio edition is unmonitored even though it has files");
     assert.ok(after.includes(chosen[0]), "the representative stays monitored");
   });
 });

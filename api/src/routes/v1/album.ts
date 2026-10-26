@@ -322,6 +322,20 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.post("/:albumId/decision/automatic", async (req, res) => {
+  try {
+    const result = await runAlbumUserWrite(() =>
+      AlbumCommandService.revertAlbumToAutomatic(req.params.albumId),
+    );
+    if (result.status === 404) {
+      return res.status(404).json({ detail: result.message || "Album not found" });
+    }
+    res.status(200).json({ success: true });
+  } catch (error: any) {
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
+  }
+});
+
 router.patch("/:albumId", async (req, res) => {
   try {
     const albumId = req.params.albumId;

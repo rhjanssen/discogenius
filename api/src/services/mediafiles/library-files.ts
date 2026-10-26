@@ -1,4 +1,6 @@
 import { linkCachedMediaCoverSidecar } from "../metadata/media-cover-service.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
+import { classifyUnmonitoredFileDeletes } from "./unmonitored-file-policy.js";
 import fs from "fs";
 import path from "path";
 import { db, batchDelete, batchRun, withSqliteWriteGate } from "../../database.js";
@@ -3221,7 +3223,17 @@ export class LibraryFilesService {
     return { rebound };
   }
 
-  static pruneUnmonitoredFiles(artistId: string): { deleted: number; missing: number; errors: number } {
+  static pruneUnmonitoredFiles(
+    artistId: string,
+    options?: {
+      mode?: "coverage" | "immediate";
+      releaseGroupIds?: readonly number[];
+      editionIds?: readonly number[];
+      recordingIds?: readonly number[];
+      /** Skip artist-wide folder sweeps. Used after one import. */
+      filesOnly?: boolean;
+    },
+  ): { deleted: number; missing: number; errors: number } {
     const artistMonitored = isArtistLibraryMonitored(artistId);
 
     // Unmonitoring an artist does not implicitly wipe the artist folder.
@@ -3232,10 +3244,19 @@ export class LibraryFilesService {
       return { deleted: 0, missing: 0, errors: 0 };
     }
 
-    const rows = LibraryFilesService.selectUnmonitoredFileRows(artistId);
+    const candidates = LibraryFilesService.selectUnmonitoredFileRows(artistId);
+    const decisions = classifyUnmonitoredFileDeletes(db, candidates.map((row) => row.id), {
+      mode: options?.mode ?? "coverage",
+      releaseGroupIds: options?.releaseGroupIds,
+      editionIds: options?.editionIds,
+      recordingIds: options?.recordingIds,
+    });
+    const deleteIds = new Set(decisions.filter((decision) => decision.delete).map((decision) => decision.id));
+    const rows = candidates.filter((row) => deleteIds.has(row.id));
     const prunedDirectories = new Map<string, string>();
 
     if (rows.length === 0) {
+      if (options?.filesOnly) return { deleted: 0, missing: 0, errors: 0 };
       const untracked = this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
       const renamed = this.pruneLeftoverRenamedAlbumFolders(artistId);
       return {
@@ -3333,14 +3354,16 @@ export class LibraryFilesService {
     deleted += leftovers.deleted;
     missing += leftovers.missing;
     errors += leftovers.errors;
-    const untracked = this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
-    deleted += untracked.deleted;
-    missing += untracked.missing;
-    errors += untracked.errors;
-    const renamed = this.pruneLeftoverRenamedAlbumFolders(artistId);
-    deleted += renamed.deleted;
-    missing += renamed.missing;
-    errors += renamed.errors;
+    if (!options?.filesOnly) {
+      const untracked = this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
+      deleted += untracked.deleted;
+      missing += untracked.missing;
+      errors += untracked.errors;
+      const renamed = this.pruneLeftoverRenamedAlbumFolders(artistId);
+      deleted += renamed.deleted;
+      missing += renamed.missing;
+      errors += renamed.errors;
+    }
 
     return { deleted, missing, errors };
   }
@@ -3621,23 +3644,60 @@ export class LibraryFilesService {
    * removal, and housekeeping all go through here so extras in that folder
    * leave with the TrackFiles instead of surviving as orphan ExtraFiles.
    */
-  static pruneUnmonitoredForReleaseGroup(releaseGroupMbid: string): {
+  static pruneUnmonitoredForReleaseGroup(
+    releaseGroupMbid: string,
+    options?: { immediate?: boolean; editionIds?: readonly number[] },
+  ): {
     deleted: number; missing: number; errors: number;
   } {
     if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) {
       return { deleted: 0, missing: 0, errors: 0 };
     }
     const artist = db.prepare(`
-      SELECT CAST(artist.id AS TEXT) AS id
+      SELECT CAST(artist.mbid AS TEXT) AS id, album.id AS release_group_id
       FROM Albums album
       JOIN ArtistMetadata artist ON artist.mbid = album.artist_mbid
       WHERE album.mbid = ?
       LIMIT 1
-    `).get(releaseGroupMbid) as { id?: string } | undefined;
-    if (!artist?.id) {
+    `).get(releaseGroupMbid) as { id?: string; release_group_id?: number } | undefined;
+    if (!artist?.id || artist.release_group_id == null) {
       return { deleted: 0, missing: 0, errors: 0 };
     }
-    return this.pruneUnmonitoredFiles(artist.id);
+    return this.pruneUnmonitoredFiles(artist.id, {
+      mode: options?.immediate ? "immediate" : "coverage",
+      releaseGroupIds: [artist.release_group_id],
+      editionIds: options?.editionIds,
+      filesOnly: true,
+    });
+  }
+
+  /**
+   * After a successful import, delete unmonitored files whose recordings this
+   * import covered. Does not scan the artist folder.
+   */
+  static settleImportedRecordings(recordingIds: readonly number[]): void {
+    if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) return;
+    const ids = [...new Set(recordingIds.filter((id) => Number.isInteger(id) && id > 0))];
+    if (ids.length === 0) return;
+    const artists = db.prepare(`
+      SELECT DISTINCT artist.mbid AS mbid
+      FROM TrackFiles file
+      JOIN ArtistMetadata artist ON artist.id = file.artist_metadata_id
+      WHERE file.recording_id IN ${SQL_JSON_LIST}
+         OR file.canonical_recording_mbid IN (
+           SELECT recording.mbid FROM Recordings recording
+           WHERE recording.id IN ${SQL_JSON_LIST}
+             AND recording.mbid IS NOT NULL
+         )
+    `).all(jsonList(ids), jsonList(ids)) as Array<{ mbid: string }>;
+    for (const artist of artists) {
+      if (!artist.mbid) continue;
+      this.pruneUnmonitoredFiles(artist.mbid, {
+        mode: "coverage",
+        recordingIds: ids,
+        filesOnly: true,
+      });
+    }
   }
 
   /**
@@ -3684,7 +3744,13 @@ export class LibraryFilesService {
     let artistCount = 0;
     for (const artist of artists) {
       if (!isArtistLibraryMonitored(artist.id)) continue;
-      const rows = this.selectUnmonitoredFileRows(artist.id);
+      const candidates = this.selectUnmonitoredFileRows(artist.id);
+      const decisions = classifyUnmonitoredFileDeletes(db, candidates.map((row) => row.id), {
+        mode: "coverage",
+        dryRun: true,
+      });
+      const deleteIds = new Set(decisions.filter((decision) => decision.delete).map((decision) => decision.id));
+      const rows = candidates.filter((row) => deleteIds.has(row.id));
       if (rows.length === 0) continue;
       artistCount += 1;
       for (const row of rows) {

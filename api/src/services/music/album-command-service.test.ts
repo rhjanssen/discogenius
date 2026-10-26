@@ -131,7 +131,7 @@ test("locking one library does not touch another library's row", () => {
     "release-group-mbid-1", true, { kind: "all-audio-libraries" },
   );
   serviceModule.AlbumCommandService.updateAlbum(
-    "release-group-mbid-1", undefined, true, { kind: "library", libraryId: libraryId("Stereo") },
+    "release-group-mbid-1", undefined, false, { kind: "library", libraryId: libraryId("Stereo") },
   );
 
   const locks = dbModule.db.prepare(`
@@ -142,8 +142,8 @@ test("locking one library does not touch another library's row", () => {
     ORDER BY library.name
   `).all() as Array<{ name: string; locked: number }>;
   assert.deepEqual(locks, [
-    { name: "Spatial", locked: 0 },
-    { name: "Stereo", locked: 1 },
+    { name: "Spatial", locked: 1 },
+    { name: "Stereo", locked: 0 },
   ]);
 });
 
@@ -174,6 +174,13 @@ test("unmonitoring an album withdraws the editions monitored under it", () => {
     (dbModule.db.prepare("SELECT COUNT(*) AS n FROM LibraryEditions WHERE edition_id = 10")
       .get() as { n: number }).n,
     0,
+  );
+  assert.equal(
+    (dbModule.db.prepare(`
+      SELECT COUNT(*) AS n FROM LibraryUserExclusions
+      WHERE library_id = ? AND release_group_id = 1 AND edition_id IS NULL
+    `).get(stereo) as { n: number }).n,
+    1,
   );
 });
 

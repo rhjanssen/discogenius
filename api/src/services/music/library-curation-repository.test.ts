@@ -81,7 +81,7 @@ db.prepare("INSERT INTO Albums (id, mbid, artist_metadata_id, title) VALUES (1, 
   }
 });
 
-test("automatic curation keeps an edition that already has library files", () => {
+test("automatic curation unmonitors a file-owning edition the selection did not keep", () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-library-curation-owned-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
@@ -138,7 +138,6 @@ test("automatic curation keeps an edition that already has library files", () =>
       WHERE library_id = ?
       ORDER BY edition_id
     `).all(libraries.stereoId), [
-      { edition_id: 1, representative: 0 },
       { edition_id: 2, representative: 1 },
     ]);
   } finally {
@@ -147,7 +146,7 @@ test("automatic curation keeps an edition that already has library files", () =>
   }
 });
 
-test("automatic curation releases a file-owning edition whose recordings the selection covers", () => {
+test("automatic curation releases a file-owning edition the selection did not keep", () => {
   const folder = mkdtempSync(path.join(tmpdir(), "discogenius-library-curation-owned-"));
   const db = new Database(path.join(folder, "test.db"));
   try {

@@ -282,55 +282,48 @@ test("the standard edition is retained when singles supply the deluxe-only recor
   );
 });
 
-test("the standard edition is overruled when only the deluxe carries the recordings", () => {
+test("the user's edition stays and the deluxe is added when only it carries the recordings", () => {
   seedCatalog({ withSingles: false });
   chooseStandardManually({ locked: false });
 
   curate();
 
+  assert.ok(monitoredEditionIds().includes(STANDARD_EDITION_ID),
+    "a manual edition is not swapped");
   assert.ok(monitoredEditionIds().includes(DELUXE_EDITION_ID),
-    "recordings 3 and 4 exist nowhere else, so the deluxe is restored");
-});
-
-test("overruling a manual choice is recorded, not silent", () => {
-  seedCatalog({ withSingles: false });
-  chooseStandardManually({ locked: false });
-
-  curate();
-
+    "recordings 3 and 4 exist nowhere else, so the deluxe is added");
+  assert.equal(
+    (db.prepare(`
+      SELECT selection_mode FROM LibraryEditions
+      WHERE library_id = ? AND edition_id = ?
+    `).get(LIBRARY_ID, STANDARD_EDITION_ID) as { selection_mode: string }).selection_mode,
+    "manual",
+  );
   assert.equal(
     (db.prepare(`
       SELECT reason FROM LibraryAlbums WHERE library_id = ? AND release_group_id = ?
-    `).get(LIBRARY_ID, ALBUM_ID) as { reason: string }).reason,
-    "curation_override_unreachable_recordings",
-  );
-  assert.equal(
-    (db.prepare(`
-      SELECT reason FROM LibraryEditions WHERE library_id = ? AND edition_id = ?
-    `).get(LIBRARY_ID, DELUXE_EDITION_ID) as { reason: string }).reason,
-    "curation_override_unreachable_recordings",
+    `).get(LIBRARY_ID, ALBUM_ID) as { reason: string }).reason === "curation_override_unreachable_recordings",
+    false,
   );
 });
 
-test("a locked album keeps the user's edition and shows the gap", () => {
+test("a locked album keeps the user's edition and may add the missing deluxe", () => {
   seedCatalog({ withSingles: false });
   chooseStandardManually({ locked: true });
 
   curate();
 
-  assert.deepEqual(monitoredEditionIds(), [STANDARD_EDITION_ID],
-    "a lock is unconditional; coverage does not argue with it");
-  // The gap is real and visible: two canonical recordings of this album are
-  // monitored nowhere.
-  const monitoredRecordingIds = new Set(
+  assert.ok(monitoredEditionIds().includes(STANDARD_EDITION_ID),
+    "the user's edition stays");
+  assert.ok(monitoredEditionIds().includes(DELUXE_EDITION_ID),
+    "other editions still follow coverage");
+  assert.equal(
     (db.prepare(`
-      SELECT DISTINCT track.recording_id
-      FROM LibraryEditions monitored_edition
-      JOIN Tracks track ON track.album_edition_id = monitored_edition.edition_id
-      WHERE monitored_edition.library_id = ?
-    `).all(LIBRARY_ID) as Array<{ recording_id: number }>).map((row) => row.recording_id),
+      SELECT selection_mode FROM LibraryEditions
+      WHERE library_id = ? AND edition_id = ?
+    `).get(LIBRARY_ID, STANDARD_EDITION_ID) as { selection_mode: string }).selection_mode,
+    "manual",
   );
-  assert.deepEqual([...monitoredRecordingIds].sort((a, b) => a - b), [1, 2]);
 });
 
 test("an unrelated manual choice is not disturbed by another album's override", () => {

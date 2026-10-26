@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { albumDecisionView } from "../music/library-user-decisions.js";
 import type { AlbumContract } from "../../contracts/catalog.js";
 import type { AlbumPageContract } from "../../contracts/pages.js";
 import type { AlbumTrackContract, AlbumVersionContract } from "../../contracts/media.js";
@@ -588,6 +589,9 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
 }
 
 function applyAlbumDownloadStats(album: AlbumContract): AlbumContract {
+    const decision = albumDecisionView(db, album.id);
+    album.decision_label = decision.label;
+    album.decision_action = decision.action;
     const stats = getReleaseGroupDownloadStatsMap([album.id]).get(album.id);
     if (!stats) {
         return album;

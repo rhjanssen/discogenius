@@ -413,8 +413,8 @@ test("a normal plan click monitors that edition alone and runs that exact plan",
   assert.equal(
     (db.prepare("SELECT locked FROM LibraryAlbums WHERE library_id = ? AND release_group_id = 1")
       .get(LIBRARY_ID) as { locked: number }).locked,
-    0,
-    "an ordinary selection must not press Lock",
+    1,
+    "choosing an edition is a user decision",
   );
 });
 

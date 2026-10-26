@@ -207,14 +207,10 @@ export class LibraryCurationRepository {
         selectedReleaseGroupIds.add(releaseGroupId);
       }
 
-      // Automation may only reconsider rows it created itself. A manual choice
-      // is the user's, and a locked Album holds every Edition under it — the
-      // lock lives on LibraryAlbums, which is the one authority on the subject.
-      // An edition that already has library files stays monitored too. Dropping
-      // it would let housekeeping delete those files on the next pass.
-      const overruledScope = overruledReleaseGroupIds.length === 0
-        ? ""
-        : `OR edition.release_group_id IN (${overruledPlaceholders})`;
+      // Automation reconsiders automatic editions, including ones that already
+      // have files. Coverage, not file ownership, decides whether those files
+      // go. A manual edition stays. The album lock keeps the album row; it
+      // does not freeze automatic editions under it.
       // A scoped pass owns an automatic Edition row only through the artists it
       // curated. That set is resolved to ids up front, because the deletes
       // below remove the very scope rows the predicate reads.
@@ -227,47 +223,44 @@ export class LibraryCurationRepository {
                 AND scope.library_artist_id IN (${artistPlaceholders})
             )`
         : "";
-      const releasable = input.releasableFileEditionIds ?? new Set<number>();
+      const lockedOverrule = overruledReleaseGroupIds.length === 0
+        ? ""
+        : `OR (
+            COALESCE(library_album.locked, 0) = 0
+            AND edition.release_group_id IN (${overruledPlaceholders})
+          )`;
       const replaceableEditionRowIds = (this.db.prepare(`
-        SELECT monitored_edition.id, monitored_edition.edition_id,
-          EXISTS (
-            SELECT 1 FROM TrackFiles owned_file
-            WHERE owned_file.library_id = monitored_edition.library_id
-              AND owned_file.album_edition_id = monitored_edition.edition_id
-          ) AS has_files
+        SELECT monitored_edition.id
         FROM LibraryEditions monitored_edition
         JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
         LEFT JOIN LibraryAlbums library_album
           ON library_album.library_id = monitored_edition.library_id
          AND library_album.release_group_id = edition.release_group_id
         WHERE monitored_edition.library_id = ?
-          AND COALESCE(library_album.locked, 0) = 0
-          AND (monitored_edition.selection_mode = 'auto' ${overruledScope})
+          AND (monitored_edition.selection_mode = 'auto' ${lockedOverrule})
           ${ownedByThisPass}
       `).all(
         input.libraryId,
         ...overruledReleaseGroupIds,
         ...(scopedArtistIds ?? []),
-      ) as Array<{ id: number; edition_id: number; has_files: number }>)
-        .filter((row) => !row.has_files || releasable.has(row.edition_id))
-        .map(({ id }) => id);
+      ) as Array<{ id: number }>).map(({ id }) => id);
 
       if (replaceableEditionRowIds.length > 0) {
-        const rowPlaceholders = replaceableEditionRowIds.map(() => "?").join(",");
+        const rowIds = jsonList(replaceableEditionRowIds);
         if (scopedArtistIds) {
           // Drop only this pass's claims. An Edition two artists both want — a
           // collaboration credited to each — keeps the other's claim, and the
           // sweep below removes the Edition only once nothing claims it.
           this.db.prepare(`
             DELETE FROM LibraryEditionScopes
-            WHERE library_artist_id IN (${artistPlaceholders})
-              AND library_edition_id IN (${rowPlaceholders})
-          `).run(...scopedArtistIds, ...replaceableEditionRowIds);
+            WHERE library_artist_id IN ${SQL_JSON_LIST}
+              AND library_edition_id IN ${SQL_JSON_LIST}
+          `).run(jsonList(scopedArtistIds), rowIds);
         } else {
           this.db.prepare(`
             DELETE FROM LibraryEditionScopes
-            WHERE library_edition_id IN (${rowPlaceholders})
-          `).run(...replaceableEditionRowIds);
+            WHERE library_edition_id IN ${SQL_JSON_LIST}
+          `).run(rowIds);
         }
 
         // Release the deferred plan reference before the rows go, and note that
@@ -282,12 +275,12 @@ export class LibraryCurationRepository {
         this.db.prepare(`
           UPDATE LibraryEditions
           SET preferred_plan_key = NULL
-          WHERE id IN (${rowPlaceholders})${unclaimed}
-        `).run(...replaceableEditionRowIds);
+          WHERE id IN ${SQL_JSON_LIST}${unclaimed}
+        `).run(rowIds);
         this.db.prepare(`
           DELETE FROM LibraryEditions
-          WHERE id IN (${rowPlaceholders})${unclaimed}
-        `).run(...replaceableEditionRowIds);
+          WHERE id IN ${SQL_JSON_LIST}${unclaimed}
+        `).run(rowIds);
       }
 
       // Overruling withdraws manual protection for this pass. The album row
@@ -307,9 +300,7 @@ export class LibraryCurationRepository {
 
       // An Album row exists because at least one of its Editions is monitored.
       // Retire an automatic album only once none of its editions remain. A
-      // file-backed edition this pass did not select stays monitored, and
-      // deleting its album would fail the invariant (or, if the check were
-      // skipped, let housekeeping treat the release as unmonitored).
+      // locked album is a user decision and stays even if its editions leave.
       this.db.prepare(`
         DELETE FROM LibraryAlbums
         WHERE library_id = ? AND locked = 0 AND selection_mode = 'auto'

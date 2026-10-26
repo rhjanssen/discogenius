@@ -412,6 +412,7 @@ export function curateLibraryReleases(
   inputCandidates: ReadonlyArray<CurationEditionCandidate>,
   redundancyEnabled: boolean,
   compilationPolicy: CompilationPolicy = DEFAULT_COMPILATION_POLICY,
+  suppressedUnitIds: ReadonlySet<number> = new Set(),
 ): LibraryCurationResult {
   const candidates = inputCandidates
     .filter((candidate) => candidate.attainableUnitIds.size > 0 || candidate.protected)
@@ -429,6 +430,9 @@ export function curateLibraryReleases(
   // Original discography: every non-compilation group (and protected picks).
   // Fewest albums: only protected picks; set cover decides the rest.
   const anchored = (group: readonly CurationEditionCandidate[]): boolean => {
+    // Automatic curation off: exactly one edition per release group, including
+    // compilations. Gap-fill and redundancy pruning are skipped below.
+    if (!redundancyEnabled) return true;
     if (group.some((c) => c.protected)) return true;
     if (compilationPolicy === "fewest_albums") return false;
     return !group.every(isCompilation);
@@ -462,7 +466,9 @@ export function curateLibraryReleases(
     coveredByRepresentativesAndProtected,
   );
 
-  if (novelSupplementalUnits.size > 0) {
+  for (const unitId of suppressedUnitIds) novelSupplementalUnits.delete(unitId);
+
+  if (redundancyEnabled && novelSupplementalUnits.size > 0) {
     const eligibleSupplemental = candidates.filter(
       (c) =>
         !representativeSet.has(c.editionId)
@@ -563,6 +569,67 @@ export function curateLibraryReleases(
     selectedEditionIds: finalSelectedIds,
     selectedReleaseGroupIds,
     attainableUnitIds,
+    decisions,
+  };
+}
+
+/**
+ * Plain Lidarr: one edition per release group, plus every edition the library
+ * already monitors. No gap-fill, no compilation drop, no redundancy prune.
+ * Callers use this when automatic curation is off so a pass never unmonitors
+ * an edition the user or an earlier pass already kept.
+ */
+export function selectPlainLidarrEditions(
+  inputCandidates: readonly CurationEditionCandidate[],
+  monitoredEditionIds: ReadonlySet<number>,
+): LibraryCurationResult {
+  const candidates = [...inputCandidates].sort((left, right) =>
+    left.releaseGroupId - right.releaseGroupId || comparePrimaryEditionCandidates(left, right));
+  const groups = new Map<number, CurationEditionCandidate[]>();
+  for (const candidate of candidates) {
+    const group = groups.get(candidate.releaseGroupId) || [];
+    group.push(candidate);
+    groups.set(candidate.releaseGroupId, group);
+  }
+
+  const selected: CurationEditionCandidate[] = [];
+  const representativeEditionIdByReleaseGroup = new Map<number, number>();
+  for (const [releaseGroupId, group] of groups) {
+    const kept = group.filter((candidate) =>
+      monitoredEditionIds.has(candidate.editionId) || candidate.protected);
+    const chosen = kept.length > 0 ? kept : [];
+    if (chosen.length === 0) {
+      const representative = selectRepresentativeEdition(group);
+      if (!representative) continue;
+      chosen.push(representative);
+    }
+    selected.push(...chosen);
+    const representative = chosen.find((candidate) => candidate.existingRepresentative)
+      ?? selectRepresentativeEdition(chosen)
+      ?? chosen[0];
+    representativeEditionIdByReleaseGroup.set(releaseGroupId, representative.editionId);
+  }
+
+  const decisions: CurationEditionDecision[] = selected.map((candidate) => {
+    const isRepresentative = representativeEditionIdByReleaseGroup.get(candidate.releaseGroupId) === candidate.editionId;
+    return {
+      editionId: candidate.editionId,
+      releaseGroupId: candidate.releaseGroupId,
+      role: isRepresentative ? "representative" : "supplemental",
+      reason: candidate.protected
+        ? (candidate.protectedReason || "manual_selection")
+        : "release_group_primary",
+      contributedUnitIds: [...candidate.attainableUnitIds].sort((left, right) => left - right),
+    };
+  });
+  const selectedEditionIds = selected.map((candidate) => candidate.editionId).sort((left, right) => left - right);
+  const representativeIds = new Set(representativeEditionIdByReleaseGroup.values());
+  return {
+    representativeEditionIdByReleaseGroup,
+    supplementalEditionIds: selectedEditionIds.filter((editionId) => !representativeIds.has(editionId)),
+    selectedEditionIds,
+    selectedReleaseGroupIds: [...representativeEditionIdByReleaseGroup.keys()].sort((left, right) => left - right),
+    attainableUnitIds: unionUnits(selected),
     decisions,
   };
 }

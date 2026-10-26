@@ -10,6 +10,9 @@ import {
     type AlbumLibraryScope,
 } from "./library-album-monitoring.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
+import { clearUserExclusions } from "./library-user-decisions.js";
+import { LibraryCurationService } from "./library-curation-service.js";
+import { ACQUISITION_PLANNER_VERSION, getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
 
 export class AlbumCommandService {
     private static releaseGroupExists(releaseGroupMbid: string): { id: number; mbid: string } | null {
@@ -40,7 +43,7 @@ export class AlbumCommandService {
         })();
 
         if (!monitored) {
-            LibraryFilesService.pruneUnmonitoredForReleaseGroup(releaseGroupMbid);
+            LibraryFilesService.pruneUnmonitoredForReleaseGroup(releaseGroupMbid, { immediate: true });
         }
 
         ArtistStatisticsService.refreshForReleaseGroupMbids([releaseGroupMbid]);
@@ -203,6 +206,79 @@ export class AlbumCommandService {
             return { success: true, albumId, monitored };
         }
         return { success: false, status: 404, message: 'Release group not found' };
+    }
+
+    /**
+     * Clear a user decision and let the active monitoring mode choose again.
+     * Exclusions, the album lock, and manual edition choices all go.
+     */
+    static revertAlbumToAutomatic(albumId: string): { success: boolean; status?: number; message?: string } {
+        const releaseGroup = this.releaseGroupExists(albumId);
+        if (!releaseGroup) return { success: false, status: 404, message: "Release group not found" };
+
+        const libraryIds = resolveScopedLibraryIds(db, { kind: "all-audio-libraries" });
+        db.transaction(() => {
+            const clearEdition = db.prepare(`
+                UPDATE LibraryEditions
+                SET selection_mode = 'auto',
+                    decision = 'curation',
+                    plan_selection_mode = 'auto',
+                    preferred_plan_key = NULL,
+                    reason = 'curation',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE library_id = ?
+                  AND edition_id IN (SELECT id FROM AlbumEditions WHERE release_group_id = ?)
+            `);
+            const clearAlbum = db.prepare(`
+                UPDATE LibraryAlbums
+                SET locked = 0,
+                    selection_mode = 'auto',
+                    decision = 'curation',
+                    reason = 'curation',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE library_id = ? AND release_group_id = ?
+            `);
+            for (const libraryId of libraryIds) {
+                clearUserExclusions(db, libraryId, releaseGroup.id);
+                clearEdition.run(libraryId, releaseGroup.id);
+                clearAlbum.run(libraryId, releaseGroup.id);
+            }
+        })();
+
+        const artists = db.prepare(`
+            SELECT DISTINCT library_artist.library_id AS library_id,
+                            library_artist.id AS library_artist_id
+            FROM Albums album
+            JOIN ArtistMetadata artist ON artist.mbid = album.artist_mbid
+            JOIN LibraryArtists library_artist
+              ON library_artist.artist_metadata_id = artist.id
+            JOIN Libraries library
+              ON library.id = library_artist.library_id AND library.enabled = 1
+            WHERE album.id = ?
+        `).all(releaseGroup.id) as Array<{ library_id: number; library_artist_id: number }>;
+        const byLibrary = new Map<number, number[]>();
+        for (const row of artists) {
+            const list = byLibrary.get(row.library_id) || [];
+            list.push(row.library_artist_id);
+            byLibrary.set(row.library_id, list);
+        }
+        const curation = new LibraryCurationService(db);
+        for (const [libraryId, libraryArtistIds] of byLibrary) {
+            curation.curateLibrary({
+                libraryId,
+                providerPriority: getAcquisitionProviderPriority(),
+                acquisitionPlannerVersion: ACQUISITION_PLANNER_VERSION,
+                curationVersion: 1,
+                scope: { libraryArtistIds },
+            });
+        }
+        invalidateReleaseGroupDownloadStatus(albumId);
+        emitLibraryUpdated({
+            reason: "album-decision-cleared",
+            releaseGroupMbids: [albumId],
+            libraryIds,
+        });
+        return { success: true };
     }
 
 }

@@ -974,6 +974,23 @@ export class ManualImportService {
             for (const id of reportedIds) remove.run(Number(id));
         })(), "manual-import:completed");
 
+        try {
+            const fileIds = Object.values(importedFileIds);
+            const { LibraryFilesService } = await import("./library-files.js");
+            const { SQL_JSON_LIST, jsonList } = await import("../../utils/sql-id-list.js");
+            const recordingIds = fileIds.length === 0
+                ? []
+                : (db.prepare(`
+                    SELECT DISTINCT recording_id AS id
+                    FROM TrackFiles
+                    WHERE id IN ${SQL_JSON_LIST}
+                      AND recording_id IS NOT NULL
+                  `).all(jsonList(fileIds)) as Array<{ id: number }>).map((row) => row.id);
+            LibraryFilesService.settleImportedRecordings(recordingIds);
+        } catch (error) {
+            console.warn("[ManualImport] Unmonitored-file settlement failed:", error);
+        }
+
         return {
             requested: items.length,
             imported,
