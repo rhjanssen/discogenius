@@ -152,13 +152,13 @@ test("album-mode imports with provenance offers do not hard-fail a shortfall", (
     acquisitionMode: "trackOffers",
     processedCount: 23,
     trackOfferCount: 24,
-  }), true);
+  }), false);
 });
 
 test("YouTube album imports reconcile the exact downloaded plan instead of provider album membership", () => {
   const trackOffers = Array.from({ length: 12 }, (_, index) => ({ provider: 'youtube-music', providerTrackId: String(index) }));
   assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'album', provider: 'youtube-music', trackOffers }, 22), 12);
-  assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 11, trackOfferCount: 12 }), true);
+  assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 11, trackOfferCount: 12 }), false);
   assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 12, trackOfferCount: 12 }), false);
   assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'album', provider: 'youtube-music' }, 22), 22);
 });
@@ -179,4 +179,21 @@ test("hybrid import names each offered track the organizer did not place", async
         { provider: "deezer", providerTrackId: "2", title: "Lost", trackNum: 7, volumeNum: 2 },
     ], ["1"]);
     assert.deepEqual(missing, ['2-7 "Lost" (deezer:2)']);
+    const { listUnorganizedTrackGaps, shouldHardFailIncompleteAlbumImport } = await import("./downloaded-tracks-import-service.js");
+    assert.equal(shouldHardFailIncompleteAlbumImport({
+        type: "album",
+        acquisitionMode: "trackOffers",
+        provider: "youtube-music",
+        processedCount: 11,
+        trackOfferCount: 12,
+    }), false);
+    assert.deepEqual(listUnorganizedTrackGaps([
+        { provider: "tidal", providerTrackId: "1", title: "Kept", trackNum: 1, volumeNum: 1 },
+        { provider: "deezer", providerTrackId: "2", title: "Lost", trackNum: 7, volumeNum: 2 },
+    ], ["1"]), [{
+        position: "2-7",
+        title: "Lost",
+        providerId: "deezer:2",
+        cause: "not organized",
+    }]);
 });

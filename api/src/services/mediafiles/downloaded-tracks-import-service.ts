@@ -52,7 +52,7 @@ export function expectedImportedTrackCount(payload: Pick<ImportDownloadJob['payl
 }
 
 /** Full-album provenance is not exhaustive unless the backend downloads exact offers. */
-export function shouldHardFailIncompleteAlbumImport(options: {
+export function offeredImportShortfall(options: {
   type?: string;
   acquisitionMode?: string | null;
   provider?: string;
@@ -63,6 +63,22 @@ export function shouldHardFailIncompleteAlbumImport(options: {
     && downloadsSelectedOffers(options)
     && options.trackOfferCount > 0
     && options.processedCount < options.trackOfferCount;
+}
+
+/**
+ * A short hybrid or YouTube import keeps the tracks that landed. The gap is
+ * recorded per offer and only those tracks stay wanted. Failing the job would
+ * mark the album failed after the files were already organized.
+ */
+export function shouldHardFailIncompleteAlbumImport(options: {
+  type?: string;
+  acquisitionMode?: string | null;
+  provider?: string;
+  processedCount: number;
+  trackOfferCount: number;
+}): boolean {
+  void offeredImportShortfall(options);
+  return false;
 }
 
 function rememberImportTouchedFiles(commandId: number, fileIds: readonly number[]): void {
@@ -108,6 +124,36 @@ function markImportLibraryMutationStarted(commandId: number): void {
             } as any,
         });
     }, "import:mutation-start");
+}
+
+export type UnorganizedTrackGap = {
+  position: string | null;
+  title: string | null;
+  providerId: string;
+  cause: string;
+};
+
+/** One row per offered track the organizer did not place. Cause text is recorded, not repaired. */
+export function listUnorganizedTrackGaps(
+  offers: readonly { provider: string; providerTrackId: string; title?: string | null; trackNum?: number | null; volumeNum?: number | null }[],
+  processedTrackIds: readonly string[],
+  cause = "not organized",
+): UnorganizedTrackGap[] {
+  const processed = new Set(processedTrackIds.map(String));
+  const seen = new Set<string>();
+  const gaps: UnorganizedTrackGap[] = [];
+  for (const offer of offers) {
+    const providerId = `${offer.provider}:${offer.providerTrackId}`;
+    if (processed.has(String(offer.providerTrackId)) || seen.has(providerId)) continue;
+    seen.add(providerId);
+    gaps.push({
+      position: offer.trackNum != null ? `${offer.volumeNum ?? 1}-${offer.trackNum}` : null,
+      title: offer.title ? String(offer.title) : null,
+      providerId,
+      cause,
+    });
+  }
+  return gaps;
 }
 
 /** Offered tracks the organizer did not place, labelled for logs and history. */
@@ -1591,15 +1637,21 @@ export class DownloadedTracksImportService {
             && !isTrackOffersJob
             && expectedProcessedTracks > 0
             && organizeResult.processedTrackIds.length < expectedProcessedTracks;
-        const hardIncomplete = shouldHardFailIncompleteAlbumImport({
+        const offerShortfall = offeredImportShortfall({
             type,
             acquisitionMode,
             provider,
             processedCount: organizeResult.processedTrackIds.length,
             trackOfferCount,
         });
+        const offerGaps = offerShortfall
+            ? listUnorganizedTrackGaps(
+                Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
+                organizeResult.processedTrackIds,
+            )
+            : [];
 
-        if (softIncomplete || hardIncomplete) {
+        if (softIncomplete || offerShortfall) {
             try {
                 await withSqliteWriteGate(() => recordHistoryEvent({
                     artistId: historyContext.artistId,
@@ -1612,6 +1664,7 @@ export class DownloadedTracksImportService {
                         type,
                         providerId,
                         originalJobId: originalJobId ?? null,
+                        importTrackGaps: offerGaps,
                         unorganizedTrackOffers: isTrackOffersJob
                             ? describeUnorganizedTrackOffers(job.payload.trackOffers ?? [], organizeResult.processedTrackIds)
                             : undefined,
@@ -1629,20 +1682,14 @@ export class DownloadedTracksImportService {
             }
         }
 
-        if (hardIncomplete) {
-            const processed = organizeResult.processedTrackIds.length;
+        if (offerShortfall) {
             const missing = describeUnorganizedTrackOffers(
                 Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
                 organizeResult.processedTrackIds,
             );
             console.warn(
-                `[ImportDownload] Hybrid album ${providerId}: ${organizeResult.totalTracksInStaging} file(s) in staging; `
-                + `not organized: ${missing.join("; ") || "none identified"}`,
-            );
-            throw new Error(
-                `Hybrid album import incomplete for ${providerId}: organized ${processed}/${trackOfferCount} offered tracks `
-                + `(${organizeResult.totalTracksInStaging} in staging). Not organized: ${missing.slice(0, 5).join("; ")}`
-                + `${missing.length > 5 ? ` and ${missing.length - 5} more` : ""}. Refusing to mark the job complete.`,
+                `[ImportDownload] Hybrid album ${providerId}: organized ${organizeResult.processedTrackIds.length}/${trackOfferCount}. `
+                + `Still wanted: ${missing.join("; ") || "none identified"}`,
             );
         }
 
@@ -1654,10 +1701,22 @@ export class DownloadedTracksImportService {
             ...payloadDownloadState,
             ...liveDownloadState,
         };
-        const warningMessage = typeof existingDownloadState.warningMessage === "string"
+        const priorWarning = typeof existingDownloadState.warningMessage === "string"
             ? existingDownloadState.warningMessage.trim()
             : "";
-        const completedWithWarning = existingDownloadState.outcome === "completedWithWarning" && Boolean(warningMessage);
+        const gapWarning = offerGaps.length > 0
+            ? `Imported ${organizeResult.processedTrackIds.length}/${trackOfferCount}. Still wanted: ${
+                offerGaps.slice(0, 5).map((gap) => {
+                    const position = gap.position ? `${gap.position} ` : "";
+                    const title = gap.title ? `"${gap.title}" ` : "";
+                    return `${position}${title}(${gap.providerId}) ${gap.cause}`;
+                }).join("; ")
+            }${offerGaps.length > 5 ? ` and ${offerGaps.length - 5} more` : ""}`
+            : "";
+        const warningMessage = [priorWarning, gapWarning].filter(Boolean).join(" ");
+        const completedWithWarning = Boolean(warningMessage) && (
+            existingDownloadState.outcome === "completedWithWarning" || offerGaps.length > 0
+        );
         options.updateState({
             progress: 100,
             description: "ImportDownload: completed",
