@@ -105,6 +105,38 @@ test("contradictory waiting intent rolls back plan expiration", () => fixture(pl
   assert.ok(db.prepare("SELECT id FROM Tracks WHERE id=1").get());
 }));
 
+test("obsolete track referenced by LibraryVideos detaches placement and still expires", () => fixture(plan => {
+  db.exec("INSERT INTO Recordings(id,mbid,title,is_video) VALUES(10,'video-1','Video',1)");
+  db.prepare(`INSERT INTO LibraryVideos(library_id,video_recording_id,selection_mode,placement_mode,placement_library_id,inline_track_id,inline_slot,placement_selection_mode)
+    VALUES(?,10,'manual','inline',?,1,'video','manual')`).run(library, library);
+  reconcile();
+  assert.equal(db.prepare("SELECT id FROM Tracks WHERE id=1").get(), undefined);
+  assert.deepEqual(db.prepare("SELECT video_recording_id,placement_mode,inline_track_id,selection_mode FROM LibraryVideos").get(), {
+    video_recording_id: 10, placement_mode: "separated", inline_track_id: null, selection_mode: "manual",
+  });
+  assert.equal(db.prepare("SELECT id FROM AcquisitionPlans WHERE id=?").get(plan), undefined);
+  assert.deepEqual(db.pragma("foreign_key_check"), []);
+}));
+
+test("obsolete track referenced by LibraryVideos re-points onto a retained same-recording track", () => fixture(() => {
+  db.exec("UPDATE Tracks SET recording_mbid='recording-1', recording_id=1 WHERE id=2");
+  db.exec("INSERT INTO Recordings(id,mbid,title,is_video) VALUES(10,'video-1','Video',1)");
+  db.prepare(`INSERT INTO LibraryVideos(library_id,video_recording_id,selection_mode,placement_mode,placement_library_id,inline_track_id,inline_slot,placement_selection_mode)
+    VALUES(?,10,'manual','inline',?,1,'video','manual')`).run(library, library);
+  reconcile();
+  assert.equal(db.prepare("SELECT id FROM Tracks WHERE id=1").get(), undefined);
+  assert.deepEqual(db.prepare("SELECT placement_mode,inline_track_id,selection_mode FROM LibraryVideos").get(), {
+    placement_mode: "inline", inline_track_id: 2, selection_mode: "manual",
+  });
+}));
+
+test("obsolete track referenced by ArtistTopTracks expires with the derived projection", () => fixture(() => {
+  db.exec("INSERT INTO ArtistTopTracks(artist_metadata_id,track_id,recording_id,rank) VALUES(1,1,1,1)");
+  reconcile();
+  assert.equal(db.prepare("SELECT id FROM Tracks WHERE id=1").get(), undefined);
+  assert.equal(db.prepare("SELECT track_id FROM ArtistTopTracks").get(), undefined);
+}));
+
 test("owned obsolete audio blocks expiry before any plan or provider context changes", () => fixture(plan => {
   db.prepare("UPDATE ProviderTrackMatches SET track_id=1 WHERE id=1").run();
   db.prepare(`INSERT INTO TrackFiles(library_id,artist_metadata_id,file_path,relative_path,filename,extension,file_type,library_root,track_id,album_edition_id,recording_id)

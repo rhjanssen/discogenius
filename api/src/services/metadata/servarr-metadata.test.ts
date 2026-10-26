@@ -846,6 +846,29 @@ for (const reverse of [false, true]) test(`catalog cross-edition exchanges prese
   } finally { db.prepare("DELETE FROM TrackFiles WHERE file_path='/library/owned.flac'").run(); }
 });
 
+test("catalog refresh detaches an inline LibraryVideos placement from an obsolete track and commits the edition", async () => {
+  resetCatalog();
+  const { db } = dbModule;
+  const payload = twoTrackPayload();
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const track = db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get() as { id: number };
+  const videoId = Number(db.prepare("INSERT INTO Recordings(mbid,title,is_video,artist_mbid) VALUES('video-rec','Video',1,'artist-mbid')").run().lastInsertRowid);
+  const videoLibrary = db.prepare("SELECT id FROM Libraries WHERE name='Video'").get() as { id: number } | undefined;
+  const audioLibrary = db.prepare("SELECT id FROM Libraries ORDER BY id LIMIT 1").get() as { id: number };
+  db.prepare(`INSERT INTO LibraryVideos(library_id,video_recording_id,selection_mode,placement_mode,placement_library_id,inline_track_id,inline_slot,placement_selection_mode)
+    VALUES(?,?, 'manual','inline',?,?,'video','manual')`).run(videoLibrary?.id ?? audioLibrary.id, videoId, audioLibrary.id, track.id);
+  const corrected = { ...payload, Releases: [{ ...payload.Releases[0], TrackCount: 1, Tracks: [{ ...payload.Releases[0].Tracks[1], TrackPosition: 1 }] }] };
+  fetchReturning(corrected);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.equal(db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get(), undefined);
+  assert.deepEqual(db.prepare("SELECT video_recording_id,placement_mode,inline_track_id FROM LibraryVideos").get(), {
+    video_recording_id: videoId, placement_mode: "separated", inline_track_id: null,
+  });
+  assert.equal((db.prepare("SELECT position FROM Tracks WHERE mbid='trk-2'").get() as { position: number }).position, 1);
+  assert.notEqual((db.prepare("SELECT content_hash FROM Albums WHERE mbid='rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+});
+
 for (const owned of [false, true]) test(`catalog position replacement ${owned ? "rejects owned obsolete identities" : "removes only unreferenced obsolete catalog rows"}`, async () => {
   resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload(); fetchReturning(payload);
   await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");

@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { LidarrTrack } from "../metadata/servarr-metadata.js";
 import { AcquisitionPlanRepository } from "../music/acquisition-plan-repository.js";
 import { prepareAcquisitionPlanMutation } from "../music/acquisition-plan-ownership.js";
+import { jsonList, SQL_JSON_LIST } from "../../utils/sql-id-list.js";
 
 /** Redirects are catalogue identity evidence, never inferred from slots or titles.
  * Validate the full incoming graph before any admitted catalogue write. */
@@ -154,13 +155,16 @@ export function prepareEditionTrackPositions(db: Database.Database, releaseMbid:
     UNION ALL SELECT 'TrackFiles' FROM TrackFiles
       WHERE track_id IS NULL AND album_edition_id=(SELECT album_edition_id FROM Tracks WHERE id=@id)
         AND recording_id=(SELECT recording_id FROM Tracks WHERE id=@id)
-    UNION ALL SELECT 'LibraryVideos' FROM LibraryVideos WHERE inline_track_id=@id
-    UNION ALL SELECT 'ArtistTopTracks' FROM ArtistTopTracks WHERE track_id=@id
     UNION ALL SELECT 'MetadataFiles' FROM MetadataFiles WHERE canonical_track_mbid=@mbid
     UNION ALL SELECT 'LyricFiles' FROM LyricFiles WHERE canonical_track_mbid=@mbid
     UNION ALL SELECT 'ExtraFiles' FROM ExtraFiles WHERE canonical_track_mbid=@mbid
     LIMIT 1
   `);
+  // Inline video placement is a library overlay, not an owned media file.
+  // Re-point it onto a retained same-recording track, or detach to separated,
+  // so one placement cannot fail the whole artist refresh. Video files stay.
+  // ArtistTopTracks / TrackLibraryIndex cascade with the track row.
+  releaseObsoleteInlineVideos(db, releaseMbid, obsolete, retainedTrackIds);
   // Validate file ownership before expiring any derived coverage. All changes
   // participate in the same rollback as the edition reconciliation.
   // Credits and the download projection may cascade with an obsolete track.
@@ -194,6 +198,31 @@ export function prepareEditionTrackPositions(db: Database.Database, releaseMbid:
   for (const id of obsolete.keys()) remove.run(id);
   const stage = db.prepare("UPDATE Tracks SET medium_position=-1, position=-id WHERE id=?");
   for (const id of movingIds) stage.run(id);
+}
+
+/** Keep the LibraryVideos monitoring row. Never delete a video file. */
+function releaseObsoleteInlineVideos(
+  db: Database.Database,
+  releaseMbid: string,
+  obsolete: ReadonlyMap<number, string>,
+  retainedTrackIds: ReadonlySet<string>,
+): void {
+  const videos = db.prepare(`SELECT id, library_id, placement_library_id, inline_slot FROM LibraryVideos WHERE inline_track_id=?`);
+  const replacements = db.prepare(`SELECT id FROM Tracks WHERE release_mbid=? AND recording_id=(SELECT recording_id FROM Tracks WHERE id=?)
+    AND mbid IN ${SQL_JSON_LIST} AND id!=?`);
+  const slotTaken = db.prepare(`SELECT 1 FROM LibraryVideos WHERE library_id=? AND placement_library_id=? AND inline_track_id=? AND inline_slot=? AND placement_mode='inline' LIMIT 1`);
+  const retained = jsonList([...retainedTrackIds]);
+  for (const [trackId] of obsolete) {
+    for (const row of videos.all(trackId) as Array<{ id: number; library_id: number; placement_library_id: number; inline_slot: string }>) {
+      const target = (replacements.all(releaseMbid, trackId, retained, trackId) as Array<{ id: number }>)
+        .find((candidate) => !slotTaken.get(row.library_id, row.placement_library_id, candidate.id, row.inline_slot));
+      if (target) {
+        db.prepare("UPDATE LibraryVideos SET inline_track_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(target.id, row.id);
+      } else {
+        db.prepare(`UPDATE LibraryVideos SET placement_mode='separated', placement_library_id=NULL, inline_track_id=NULL, inline_slot=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(row.id);
+      }
+    }
+  }
 }
 
 /** Editions exchanging stable track identities must commit together. Unrelated
