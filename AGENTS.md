@@ -71,6 +71,18 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   does not rebuild the plan. An acquisition plan owned by a download or import
   defers only the release being rewritten. It is retried later. It is not a
   process-lifetime failure, and it must not roll back the rest of the batch.
+  A provider item that maps to the same recording on two editions is the
+  plan's own track, not ambiguous provenance. Karaoke, tribute, "in the style
+  of", "cover version", and "originally performed by" releases are not the
+  MusicBrainz album: new automatic matches refuse them. Matcher version stays
+  5 so stored accepted rows are not replayed away, and curation does not
+  unmonitor or delete because of them. `listDerivativeSourceFiles` lists
+  on-disk files from those sources and deletes nothing. Provider album art
+  and the album provider id are used only when that provider item is this
+  edition (single-source plan, or relation `exact` / `source_superset`).
+  Overlap and source_subset donors fall back to Cover Art Archive. A short
+  hybrid or YouTube import keeps the organized tracks, records each missing
+  offer, and leaves only those tracks wanted.
 - **Catalog refresh dependents.** One dependent row must not fail a whole
   artist refresh. A MusicBrainz recording redirect re-keys video artwork
   (`ArtworkSources` / `ArtworkLibraryLinks` / `ArtworkProxyVariants` /
