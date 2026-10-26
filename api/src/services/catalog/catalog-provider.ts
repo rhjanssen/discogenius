@@ -248,6 +248,16 @@ export interface CatalogProvider {
    */
   getArtistVideoRecordings?(artistMbid: string): Promise<CatalogVideoRecording[]>;
 
+  /**
+   * Composer, performer, and work credits for a refresh batch. Optional:
+   * the hosted metadata server has no relationship graph. A returned bundle
+   * replaces stored credits for the queried MBIDs, including an empty list.
+   */
+  getRelationshipBundle?(
+    recordingMbids: string[],
+    releaseMbids: string[],
+  ): Promise<import("./relationship-credit-model.js").RelationshipBundle>;
+
   /** Free-text search (artists by default). */
   search(query: string, options?: CatalogSearchOptions): Promise<CatalogSearchResults>;
 }

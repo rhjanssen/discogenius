@@ -671,6 +671,11 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     return mapMbRecordingToCatalog(mbRecording);
   }
 
+  async getRelationshipBundle(recordingMbids: string[], releaseMbids: string[]) {
+    const { fetchRelationshipBundle } = await import("./musicbrainz-relationship-query.js");
+    return fetchRelationshipBundle((sql, values) => this.query(sql, values), recordingMbids, releaseMbids);
+  }
+
   async lookupByUPC(upc: string): Promise<CatalogUpcLookupResult> {
     const normalized = String(upc || "").replace(/[^0-9]/g, "");
     if (!normalized) return { upc, releases: [] };

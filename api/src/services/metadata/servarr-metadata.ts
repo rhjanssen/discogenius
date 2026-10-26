@@ -887,7 +887,13 @@ export class ServarrMetadataService {
           return row?.recording_mbid === track.RecordingId && row.medium_position === track.MediumNumber && row.position === track.TrackPosition;
         });
       });
-      if (complete) return;
+      if (complete) {
+        await this.refreshRelationshipCredits(
+          releases.flatMap((release) => release.Tracks.map((track) => track.RecordingId)),
+          releases.map((release) => release.Id),
+        );
+        return;
+      }
     }
 
     const insertRg = db.prepare(`
@@ -1123,6 +1129,33 @@ export class ServarrMetadataService {
         }
       })();
     }, "servarr:release-group-credits");
+    await this.refreshRelationshipCredits(
+      releases.flatMap((release) => release.Tracks.map((track) => track.RecordingId)),
+      releases.map((release) => release.Id),
+    );
+  }
+
+  /**
+   * Mirror providers supply relationship credits. A WS provider does not, and
+   * that absence must not delete credits already stored. A mirror error is
+   * logged and skipped so one relationship read cannot fail the artist.
+   */
+  private async refreshRelationshipCredits(recordingMbids: string[], releaseMbids: string[]): Promise<void> {
+    const recordings = recordingMbids.map((mbid) => String(mbid || "").trim()).filter(Boolean);
+    const releases = releaseMbids.map((mbid) => String(mbid || "").trim()).filter(Boolean);
+    if (recordings.length === 0 && releases.length === 0) return;
+    const { catalogProviderRegistry } = await import("../catalog/index.js");
+    const provider = catalogProviderRegistry.getActive();
+    if (typeof provider.getRelationshipBundle !== "function") return;
+    try {
+      const bundle = await provider.getRelationshipBundle(recordings, releases);
+      const { applyRelationshipRefresh } = await import("./relationship-credit-store.js");
+      await withSqliteWriteGate(() => {
+        applyRelationshipRefresh(db, bundle);
+      }, "servarr:relationship-credits");
+    } catch (error) {
+      console.warn(`[Catalog] Relationship credits were not refreshed: ${error instanceof Error ? error.message : error}`);
+    }
   }
 }
 

@@ -40,6 +40,7 @@ import { migrateFileWorkRestartResume } from "./database/schema/file-work-restar
 import { migrateRetagAlbumScheduling } from "./database/schema/retag-album-scheduling.js";
 import { migrateDeliveredQuality } from "./database/schema/delivered-quality.js";
 import { migrateReleaseTagFields } from "./database/schema/release-tag-fields.js";
+import { migrateRelationshipCredits } from "./database/schema/relationship-credits.js";
 import { migrateDropDownconvertSetting } from "./database/schema/drop-downconvert-setting.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createTrackArtistCreditNamesSchema, migrateTrackArtistCreditNames } from "./database/schema/track-artist-credit-names.js";
@@ -536,6 +537,9 @@ export function initDatabase() {
   // Nullable AlbumEditions columns for Picard catalog number, ASIN, script,
   // and language. user_version stays 46.
   migrateReleaseTagFields(db);
+  // Relationship-credit tables only. user_version stays 46 so a queued
+  // RetagArtist is not reset.
+  migrateRelationshipCredits(db);
   createArtworkStateSchema(db);
   ensureDownloadQueueSchema();
   pruneStaleArtistIdCommandFailures();
