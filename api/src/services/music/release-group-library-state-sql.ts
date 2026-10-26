@@ -1,4 +1,5 @@
 import { planHeadlineQualitySql } from "../../utils/display-quality-sql.js";
+import { PROVIDER_REPRESENTS_EDITION_SQL } from "./provider-represents-edition.js";
 
 const spatialLibraryClassSql = `CASE WHEN EXISTS (
         SELECT 1
@@ -41,10 +42,19 @@ export function releaseGroupLibraryStateCte(wantedGroupsSql: string): string {
       ) AS monitored_lock,
       release.id AS selected_album_release_id,
       release.mbid AS selected_release_mbid,
-      COALESCE(provider_item.provider, plan.provider) AS selected_provider,
-      provider_item.id AS selected_provider_item_id,
-      provider_item.provider_id AS selected_provider_id,
-      provider_item.provider_url,
+      CASE WHEN matched_release.release_group_id = library_group.release_group_id
+        AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+        THEN COALESCE(provider_item.provider, plan.provider)
+        ELSE plan.provider END AS selected_provider,
+      CASE WHEN matched_release.release_group_id = library_group.release_group_id
+        AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+        THEN provider_item.id END AS selected_provider_item_id,
+      CASE WHEN matched_release.release_group_id = library_group.release_group_id
+        AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+        THEN provider_item.provider_id END AS selected_provider_id,
+      CASE WHEN matched_release.release_group_id = library_group.release_group_id
+        AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+        THEN provider_item.provider_url END AS provider_url,
       plan.id AS selected_plan_id,
       release_match.match_state AS match_status,
       release_match.method AS match_method,
@@ -52,11 +62,13 @@ export function releaseGroupLibraryStateCte(wantedGroupsSql: string): string {
       plan.composition AS plan_composition,
       plan.coverage AS plan_coverage,
       plan.target_track_count AS plan_target_track_count,
-      -- A composite plan's source album may belong to another album (a
-      -- greatest-hits assembled from studio albums). Its cover is not ours.
+      -- A composite donor (overlap or source_subset, including one matched
+      -- onto this edition) is not this album. Its cover is not ours.
       CASE WHEN matched_release.release_group_id = library_group.release_group_id
+        AND ${PROVIDER_REPRESENTS_EDITION_SQL}
         THEN COALESCE(provider_item.artwork_url, provider_item.cover_id) END AS cover,
       CASE WHEN matched_release.release_group_id = library_group.release_group_id
+        AND ${PROVIDER_REPRESENTS_EDITION_SQL}
         THEN provider_item.cover_id END AS asset_id,
       provider_item.explicit,
       COALESCE(CAST(provider_item.popularity AS REAL), 0) AS popularity,

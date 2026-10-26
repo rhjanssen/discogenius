@@ -287,7 +287,9 @@ class LibraryMetadataBackfillService {
                 ? db.prepare(`
                     SELECT
                       plan.provider AS selected_provider,
-                      provider_release.provider_id AS selected_provider_id,
+                      CASE WHEN matched_release.release_group_id = selected_release.release_group_id
+                        AND (plan.composition = 'single_source' OR release_match.relation IN ('exact', 'source_superset'))
+                        THEN provider_release.provider_id END AS selected_provider_id,
                       selected_release.mbid AS selected_release_mbid,
                       (
                         SELECT COALESCE(NULLIF(TRIM(variant.provider_quality_label), ''), variant.quality_class)
@@ -306,13 +308,15 @@ class LibraryMetadataBackfillService {
                       provider_release.title,
                       provider_release.version,
                       provider_release.release_date,
-                      COALESCE(
+                      CASE WHEN matched_release.release_group_id = selected_release.release_group_id
+                        AND (plan.composition = 'single_source' OR release_match.relation IN ('exact', 'source_superset'))
+                        THEN COALESCE(
                         provider_release.cover_id,
                         provider_release.artwork_url
-                      ) AS cover,
-                      -- A composite's primary source may be another album's
-                      -- release (a greatest-hits built from studio albums).
+                      ) END AS cover,
+                      -- Overlap and source_subset are donors, even on this edition.
                       CASE WHEN matched_release.release_group_id = selected_release.release_group_id
+                        AND (plan.composition = 'single_source' OR release_match.relation IN ('exact', 'source_superset'))
                         THEN 1 ELSE 0 END AS owns_cover
                     FROM LibraryEditions library_release
                     JOIN AlbumEditions selected_release

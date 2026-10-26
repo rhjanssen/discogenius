@@ -21,6 +21,7 @@ import { AlbumTrackListNavigationService } from "../music/album-track-list-navig
 import { libraryArtistMonitoredSelectSql } from "../music/managed-artists.js";
 import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
 import { getReleaseGroupDownloadStatsMap } from "../download/download-state.js";
+import { PROVIDER_REPRESENTS_EDITION_SQL } from "../music/provider-represents-edition.js";
 
 function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
@@ -39,11 +40,20 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
             WHERE allowed.value = 'spatial'
           ) THEN 'spatial' ELSE 'stereo' END AS library_class,
           release.mbid AS release_mbid,
-          COALESCE(provider_release.provider, plan.provider) AS provider,
-          provider_release.provider_id AS provider_id,
-          provider_release.provider_url AS provider_url,
-          -- A composite's primary source can be another album's release.
-          CASE WHEN matched_release.release_group_id = selected_group.id THEN COALESCE(
+          CASE WHEN matched_release.release_group_id = selected_group.id
+            AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+            THEN COALESCE(provider_release.provider, plan.provider)
+            ELSE plan.provider END AS provider,
+          CASE WHEN matched_release.release_group_id = selected_group.id
+            AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+            THEN provider_release.provider_id END AS provider_id,
+          CASE WHEN matched_release.release_group_id = selected_group.id
+            AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+            THEN provider_release.provider_url END AS provider_url,
+          -- A composite donor matched onto this edition is still not this album.
+          CASE WHEN matched_release.release_group_id = selected_group.id
+            AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+            THEN COALESCE(
             provider_release.cover_id,
             provider_release.artwork_url
           ) END AS provider_cover,

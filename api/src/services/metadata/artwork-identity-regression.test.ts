@@ -985,9 +985,45 @@ test("composite-of-versions-of-the-same-album-keeps-the-provider-cover", async (
   const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(album);
   assert.deepEqual(
     candidates.map((candidate) => candidate.entityId),
-    [`${album}-album-c-16bit`, `${album}-album-c-hires`],
-    "Every version of this album on the provider stays a cover candidate, in plan order",
+    [`${album}-album-c-16bit`],
+    "The whole-album match supplies the cover. A source_subset hi-res donor does not.",
   );
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: album });
   assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(album))), HASH_C);
+});
+
+test("a donor album matched onto this edition is not its cover", async () => {
+  // Hitlist's plan source is Tidal "Evolve", and that match was written onto
+  // the Hitlist edition itself (same release group, relation overlap). The
+  // same-group join used to treat Evolve as Hitlist's cover.
+  const db = dbModule.db;
+  const album = "rg-hitlist-evolve-on-edition";
+  insertTestAlbum(db, album, "Hitlist");
+  const releaseGroup = db.prepare("SELECT id, artist_mbid FROM Albums WHERE mbid = ?").get(album) as {
+    id: number;
+    artist_mbid: string;
+  };
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES (?, ?, ?, ?, 'Hitlist')
+  `).run(`${album}-release`, releaseGroup.id, album, releaseGroup.artist_mbid);
+  const edition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(`${album}-release`) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderItems (entity_type, provider, provider_id, title, artwork_url)
+    VALUES ('release', 'test-hybrid-provider', 'evolve-donor-id', 'Evolve', 'https://provider.test/evolve.jpg')
+  `).run();
+  const item = db.prepare("SELECT id FROM ProviderItems WHERE provider_id = 'evolve-donor-id'").get() as { id: number };
+  const match = db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'overlap', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(item.id, edition.id);
+  seedCompositePlan(db, album, [Number(match.lastInsertRowid)]);
+
+  assert.deepEqual(
+    mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(album),
+    [],
+    "An overlap donor matched onto this edition is not a cover candidate",
+  );
 });

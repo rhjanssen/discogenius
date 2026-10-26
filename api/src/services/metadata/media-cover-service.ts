@@ -2416,6 +2416,10 @@ export function loadAlbumProviderArtworkCandidates(
       WHERE release_group.mbid = ?
         AND plan.state = 'current'
         AND release_match.match_state = 'accepted'
+        AND (
+          plan.composition = 'single_source'
+          OR release_match.relation IN ('exact', 'source_superset')
+        )
       ORDER BY
         library_release.representative DESC,
         CASE WHEN EXISTS (
@@ -2450,6 +2454,7 @@ export function loadAlbumProviderArtworkCandidates(
         ON library_release.edition_id = release.id
       WHERE release_group.mbid = ?
         AND release_match.match_state = 'accepted'
+        AND release_match.relation IN ('exact', 'source_superset')
       ORDER BY
         CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
         COALESCE(library_release.representative, 0) DESC,

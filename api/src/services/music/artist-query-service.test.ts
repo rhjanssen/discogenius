@@ -267,6 +267,20 @@ test("artist page uses canonical release groups, tracks, and video recordings", 
   assert.equal(videos.some((video: any) => video.title === "Stale provider Video"), false);
 });
 
+test("a donor album matched onto this release group is not the album provider", async () => {
+  const { artistId } = seedCanonicalArtistPage();
+  const { db } = dbModule;
+  db.prepare("UPDATE AcquisitionPlans SET composition = 'composite'").run();
+  db.prepare("UPDATE ProviderEditionMatches SET relation = 'overlap' WHERE edition_id = 201").run();
+
+  const page = await artistQueryModule.ArtistQueryService.getArtistPage(artistId);
+  const modules = (page?.rows || []).flatMap((row: any) => row.modules || []);
+  const albums = modules.find((module: any) => module.title === "Albums")?.items || [];
+  assert.equal(albums[0].selected_provider_id, null);
+  assert.equal(albums[0].stereo_provider_url, null);
+  assert.notEqual(albums[0].provider_cover_id, "13bb32e2-e326-4ee5-be74-f3320ad3379c");
+});
+
 test("artist page sections can be loaded independently", async () => {
   const { artistId } = seedCanonicalArtistPage();
   const identity = await artistQueryModule.ArtistQueryService.getArtistPage(artistId, {
