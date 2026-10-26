@@ -19,7 +19,7 @@ Wanted work is `LibraryAlbums` (the release group). Coverage is `LibraryEditions
 ## Runtime
 
 1. Add/search resolves a MusicBrainz artist. Catalog facts land on `ArtistMetadata`. Membership is `LibraryArtists` only after add (schema 46).
-2. Refresh syncs release groups into `Albums`, releases into `AlbumEditions`, plus tracks, recordings, and relations.
+2. Refresh syncs release groups into `Albums`, releases into `AlbumEditions`, plus tracks, recordings, and relations. A MusicBrainz recording redirect re-keys video artwork onto the surviving recording in that edition write. An obsolete track detaches or re-points `LibraryVideos` instead of failing the artist. Owned audio `TrackFiles` and a live download/import snapshot still fail closed.
 3. Providers supply edition offers. Typed matchers write edges.
 4. Curation applies type/redundancy policy per library and writes `LibraryAlbums` / `LibraryEditions`.
 5. Acquisition planning fits accepted sources onto each selected edition (`acquisition-plan-optimizer.ts`).

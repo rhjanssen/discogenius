@@ -64,6 +64,15 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   does not rebuild the plan. An acquisition plan owned by a download or import
   defers only the release being rewritten. It is retried later. It is not a
   process-lifetime failure, and it must not roll back the rest of the batch.
+- **Catalog refresh dependents.** One dependent row must not fail a whole
+  artist refresh. A MusicBrainz recording redirect re-keys video artwork
+  (`ArtworkSources` / `ArtworkLibraryLinks` / `ArtworkProxyVariants` /
+  `ArtworkMutationJournal`) onto the surviving recording in the same
+  transaction; artwork files are never deleted to pass the guard. An obsolete
+  edition track detaches or re-points `LibraryVideos` (video files stay;
+  monitoring stays). `ArtistTopTracks` and `TrackLibraryIndex` cascade with
+  the track. Owned `TrackFiles`, sidecar `canonical_track_mbid` rows, live
+  download/import snapshots, and standalone waiting requests still fail closed.
 - **Online catalog** (default) strips ISRC/UPC. Use local-MB mode for exact
   ISRC/UPC; otherwise match on MBID + duration + title distance.
 
