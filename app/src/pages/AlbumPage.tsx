@@ -34,8 +34,6 @@ import { MediaCard } from "@/components/cards/MediaCard";
 import {
   ArrowDownload24Regular,
   Eye24Regular,
-  LockClosed24Regular,
-  LockOpen24Regular,
   Info24Regular,
   Tag24Regular,
   MusicNote224Regular,
@@ -45,8 +43,6 @@ import {
   Play24Filled,
   ArrowDownload24Filled,
   Eye24Filled,
-  LockClosed24Filled,
-  LockOpen24Filled,
   Info24Filled,
   Tag24Filled,
   MusicNote224Filled,
@@ -120,8 +116,6 @@ import {
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
-const LockClosed24 = bundleIcon(LockClosed24Filled, LockClosed24Regular);
-const LockOpen24 = bundleIcon(LockOpen24Filled, LockOpen24Regular);
 const Info24 = bundleIcon(Info24Filled, Info24Regular);
 const Tag24 = bundleIcon(Tag24Filled, Tag24Regular);
 const MusicNote224 = bundleIcon(MusicNote224Filled, MusicNote224Regular);
@@ -647,7 +641,7 @@ const AlbumPage = () => {
   const location = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { toggleMonitor, toggleLock, isTogglingMonitor, isTogglingLock } = useMonitoring();
+  const { toggleMonitor, isTogglingMonitor } = useMonitoring();
   const { downloadingTracks, handleDownloadTrack } = useTrackQueueActions();
 
   const [downloadingAlbum, setDownloadingAlbum] = useState(false);
@@ -1137,12 +1131,17 @@ const AlbumPage = () => {
     dispatchLibraryUpdated();
   };
 
-  const handleToggleLock = () => {
+  const handleBackToAutomatic = async () => {
     if (!album) return;
-    toggleLock({ id: album.id, type: 'album', isLocked });
+    await api.revertAlbumToAutomatic(album.id);
     updateAlbumPageCache((current) => ({
       ...current,
-      album: { ...current.album, monitored_lock: !isLocked },
+      album: {
+        ...current.album,
+        monitored_lock: false,
+        decision_label: null,
+        decision_action: null,
+      },
     }));
     dispatchLibraryUpdated();
   };
@@ -1499,7 +1498,9 @@ const AlbumPage = () => {
 
   const albumActions: OverflowAction[] = [
     { key: 'monitor', label: monitorAction.label, disabled: monitorAction.disabled, onClick: handleToggleMonitor },
-    { key: 'lock', label: isLocked ? 'Unlock' : 'Lock', disabled: isTogglingLock, onClick: handleToggleLock },
+    ...(album?.decision_action === "back_to_automatic"
+      ? [{ key: 'automatic', label: 'Back to automatic', disabled: false, onClick: () => void handleBackToAutomatic() }]
+      : []),
     {
       key: 'download',
       // Say how many editions this queues. It is not the selected tab.
@@ -1790,22 +1791,22 @@ const AlbumPage = () => {
                     </AppTooltip>
                   </OverflowItem>
 
-                  {/* Lock Button — icon shows action (what clicking will do) */}
-                  <OverflowItem id="lock" priority={2}>
-                    <AppTooltip content={isLocked
-                      ? "Unlock to let curation change the monitored state, edition choice and acquisition plan"
-                      : "Lock the monitored state, edition choice and acquisition plan against curation"} relationship="label">
-                      <Button
-                        appearance="subtle"
-                        icon={isLocked ? <LockOpen24 /> : <LockClosed24 />}
-                        onClick={handleToggleLock}
-                        disabled={isTogglingLock}
-                        className={mergeClasses(styles.actionButton, styles.transparentButton)}
-                      >
-                        {isLocked ? "Unlock" : "Lock"}
-                      </Button>
-                    </AppTooltip>
-                  </OverflowItem>
+                  {(album?.decision_label || album?.decision_action === "back_to_automatic") && (
+                    <OverflowItem id="decision" priority={2}>
+                      <div className={styles.actions}>
+                        {album.decision_label && <Text>{album.decision_label}</Text>}
+                        {album.decision_action === "back_to_automatic" && (
+                          <Button
+                            appearance="subtle"
+                            onClick={() => void handleBackToAutomatic()}
+                            className={mergeClasses(styles.actionButton, styles.transparentButton)}
+                          >
+                            Back to automatic
+                          </Button>
+                        )}
+                      </div>
+                    </OverflowItem>
+                  )}
 
                   {/* Download Button */}
                   <OverflowItem id="download" priority={1}>

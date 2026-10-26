@@ -909,6 +909,11 @@ class ApiClient {
     });
   }
 
+  /** Clear a user decision and let the active monitoring mode choose again. */
+  async revertAlbumToAutomatic(albumId: string) {
+    return this.request(`/v1/album/${albumId}/decision/automatic`, { method: 'POST' });
+  }
+
   /** `scope` is required for monitored/monitored_lock changes — see monitorAlbum. */
   async updateAlbum(albumId: string, updates: any, scope: AlbumLibraryScope) {
     return this.request(`/v1/album/${albumId}`, {

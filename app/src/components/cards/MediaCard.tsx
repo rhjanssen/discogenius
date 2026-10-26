@@ -306,8 +306,8 @@ export const MediaCard: React.FC<MediaCardProps> = memo(function MediaCard({
                     <AppTooltip
                         content={monitoringLocked
                             ? (monitored
-                                ? "Stop monitoring. Lock only prevents automatic curation changes; manual changes remain available."
-                                : "Start monitoring. Lock only prevents automatic curation changes; manual changes remain available.")
+                                ? "Stop monitoring. Chosen by you until you pick Back to automatic."
+                                : "Start monitoring. Chosen by you until you pick Back to automatic.")
                             : monitored ? "Unmonitor" : "Monitor"}
                         relationship="label"
                     >

@@ -316,8 +316,8 @@ export const CurationSettingsSection = ({
                     afterGroup: true,
                 })}
                 {renderToggleRow({
-                    title: "Deduplicate coverage",
-                    description: "Drop singles, EPs, and re-packages whose tracks are already covered by a larger monitored product (clean/explicit twins count as the same track).",
+                    title: "Automatic curation",
+                    description: "Picks the editions needed to cover the full discography and unmonitors redundant ones.",
                     checked: curationConfig?.enable_redundancy_filter !== false,
                     onChange: (checked) => void onUpdate({ enable_redundancy_filter: checked }),
                 })}

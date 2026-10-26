@@ -1050,8 +1050,8 @@ const ArtistPage = () => {
             key: "monitor",
             label: isLocked
               ? (album.is_monitored
-                ? "Stop monitoring. Lock only prevents automatic curation changes."
-                : "Start monitoring. Lock only prevents automatic curation changes.")
+                ? "Stop monitoring. Chosen by you until you pick Back to automatic."
+                : "Start monitoring. Chosen by you until you pick Back to automatic.")
               : (album.is_monitored ? "Unmonitor" : "Monitor"),
             icon: album.is_monitored ? <EyeOff24 /> : <Eye24 />,
             onClick: (event) => toggleAlbumMonitored(event, String(album.id), !album.is_monitored),

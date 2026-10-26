@@ -852,8 +852,8 @@ const VideoPage = () => {
                             <AppTooltip
                                 content={isLocked
                                     ? (isMonitored
-                                        ? "Stop monitoring. Lock only prevents automatic curation changes."
-                                        : "Start monitoring. Lock only prevents automatic curation changes.")
+                                        ? "Stop monitoring. Chosen by you until you pick Back to automatic."
+                                        : "Start monitoring. Chosen by you until you pick Back to automatic.")
                                     : (isMonitored ? "Stop monitoring" : "Start monitoring")}
                                 relationship="label"
                             >

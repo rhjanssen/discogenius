@@ -139,7 +139,7 @@ export const MonitoringSettingsSection = ({
                 })}
                 {renderToggleRow({
                     title: "Remove unmonitored files",
-                    description: "Delete release files when you stop monitoring them and during housekeeping.",
+                    description: "When you stop monitoring an album, its files are deleted right away. When curation stops monitoring an album, a file is deleted only once the same recording is already in a monitored edition.",
                     checked: monitoringConfig?.removeUnmonitoredFiles || false,
                     onChange: (checked) => void onUpdateMonitoring({ removeUnmonitoredFiles: checked }),
                 })}

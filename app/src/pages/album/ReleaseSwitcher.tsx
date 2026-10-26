@@ -651,7 +651,7 @@ export function ReleaseSwitcher({
       library.qualityProfile,
       labelHint,
       selection?.locked
-        ? "Locked — automatic curation will not change this album."
+        ? "Chosen by you. Automatic curation will not swap this edition."
         : null,
       summary?.tooltip,
     ].filter(Boolean).join("\n") || slotLabel;
