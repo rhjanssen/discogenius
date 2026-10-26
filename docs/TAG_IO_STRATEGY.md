@@ -258,6 +258,21 @@ does not join those values.
 | GENRE | GENRE | TCON | ©gen | Release genres |
 | RELEASETYPE | RELEASETYPE | TXXX:MusicBrainz Album Type | freeform MusicBrainz Album Type | Primary and secondary types |
 | Track totals | TRACKNUMBER, TRACKTOTAL, DISCNUMBER, DISCTOTAL | TRCK and TPOS as n/m | trkn, disk | Canonical positions |
+| COMPOSER | COMPOSER | TCOM | ©wrt | Relationship credits, release then recording then work |
+| COMPOSERSORT | COMPOSERSORT | TSOC | soco | Composer sort name, or the credited name when sort is empty |
+| LYRICIST | LYRICIST | TEXT | freeform LYRICIST | Lyricist and librettist. Skipped on an instrumental work |
+| WRITER | WRITER | TXXX:Writer | freeform writer | Writer |
+| ARRANGER | ARRANGER | TIPL pair `arranger` | freeform arranger | Arranger, including instrument, orchestral, and vocal arranger |
+| CONDUCTOR | CONDUCTOR | TPE3 | freeform CONDUCTOR | Conductor |
+| PRODUCER | PRODUCER | TIPL pair `producer` | freeform PRODUCER | Producer |
+| ENGINEER | ENGINEER | TIPL pair `engineer` | freeform ENGINEER | Engineer, audio, and sound. Mastering is stored and not written |
+| MIXER | MIXER | TIPL pair `mix` | freeform MIXER | Mix |
+| DJMIXER | DJMIXER | TIPL pair `DJ-mix` | freeform DJMIXER | Mix-DJ. A medium attribute keeps it on that medium only |
+| PERFORMER | PERFORMER `Name (role)` | TMCL pairs | not written | Instrument and vocal attributes. MP4 has no performer tag |
+| WORK | WORK | TXXX:WORK | ©wrk | Work title from a performance relationship |
+| MUSICBRAINZ_WORKID | MUSICBRAINZ_WORKID | TXXX:MusicBrainz Work Id | freeform MusicBrainz Work Id | Work MBID |
+| MUSICBRAINZ_COMPOSERID | MUSICBRAINZ_COMPOSERID | TXXX:MusicBrainz Composer Id | freeform MusicBrainz Composer Id | Composer MBID |
+| DIRECTOR | DIRECTOR | TXXX:DIRECTOR | ©dir | Audio or video director |
 
 A retag removes fields Discogenius used to write and no longer owns:
 PROVIDER_URL, TXXX/freeform Track Number, Track Count, Disc Number, Disc Count,
@@ -301,9 +316,32 @@ the field keeps the stored value. Disc subtitle
 and the release-group first release date were already stored. `user_version`
 stays 46.
 
-Composer, lyricist, performer, and the other relationship credits are not
-written yet. Music-video files still use the previous video writer, including
-PROVIDER_URL. Both are listed in `docs/TASKS.md`.
+Relationship credits are written only after a mirror refresh has set
+`Recordings.relationship_credits_at`. A retag before that leaves composer and
+performer tags already in the file alone. An empty mirror result clears those
+tags. The WS provider has no relationship graph, so it does not delete stored
+credits. A mirror error is logged and skipped. Rows live in
+`CatalogRelationshipCredits` and `RecordingWorks` (recording, release, and work).
+`artist_mbid` is text. These people are not monitored artists. Replacing the
+credits of 500 recordings, two credits each, measured about 10 ms. Work language
+is not copied onto LANGUAGE. Credited-as alias sort names are not in the mirror
+query; composersort uses the artist sort name.
+
+Music videos use a player map, not Picard. MP4 (the atom writer): ©nam, ©ART,
+©day, ©gen, freeform ARTISTS, freeform MusicBrainz Track Id and MusicBrainz
+Artist Id, ISRC, `stik=6`, plus the credit atoms above when the recording's
+credits are known. Album is written when the recording has a release title.
+Genre is the release-group genre list. A retag strips PROVIDER, PROVIDER_URL,
+PROVIDER_ID, YOUTUBE_VIDEO_ID, QUALITY, the copyright atom, album artist, and
+the release and release-group MusicBrainz ids this writer used to add.
+
+MKV and WebM are accepted by the importer. TagLib cannot open an ffmpeg
+Matroska file whose tag target type is outside 0–70, so those containers are
+remuxed with ffmpeg (`-map 0 -c copy`) and the same names ffprobe shows
+(`title`, `artist`, `ARTISTS`, `date`, `genre`, `MUSICBRAINZ_TRACKID`,
+`MUSICBRAINZ_ARTISTID`, `ISRC`, and Vorbis-style credit names). A second retag
+skips. ENCODER and DURATION stay. `.ts` is not tagged. No new cover is fetched
+on a video retag; an attached picture already in the file is left in place.
 
 Track and edition artist IDs come from their respective canonical credits.
 ISRCs and artist IDs retain multiple native values. MP4 uses native integer
