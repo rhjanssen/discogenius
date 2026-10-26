@@ -270,10 +270,17 @@ defaults off. A user tag such as DISCOGENIUS_CUSTOM is left in place unless
 Embedded lyrics are plain text (LYRICS, USLT, ©lyr). Synced lyrics stay in the
 `.lrc` sidecar.
 
-FLAC, Ogg Vorbis, Opus, MP3, AAC ADTS, WAV, classic AIFF (FORM AIFF), and M4A
-(AAC or ALAC in an MP4) round-trip these fields. WMA, APE, MP2, a bare `.alac`
-file, and AIFF-C are left unchanged: TagLib cannot store this tag set there,
-and ffmpeg is not used as a half-tag fallback. Catalog number, ASIN, script,
+The audio parity matrix round-trips these fields for FLAC, Ogg Vorbis, Opus,
+MP3, M4A AAC, M4A ALAC (`-c:a alac -f mp4`), AAC ADTS, WAV, classic AIFF
+(FORM AIFF), and `.aif` (the same ID3 writer as `.aiff`). `.mp4` audio uses
+the same atom writer as M4A; the matrix files are `.m4a` because that is the
+audio extension. WMA, APE, MP2, a bare `.alac` file, and AIFF-C are left
+unchanged: TagLib cannot store this tag set there, and ffmpeg is not used as
+a half-tag fallback. The importer also accepts `.mkv`, `.mp4`, `.m4v`,
+`.mov`, `.webm`, and `.ts` as video. Those are not audio-matrix rows. Music
+video MP4 and MKV have their own writer. `.m4v`, `.mov`, `.webm`, and `.ts`
+stay out of the audio writer: TagLib does not open them, and a partial ffmpeg
+rewrite would drop Picard's multi-value fields. Catalog number, ASIN, script,
 and language are empty until the next MusicBrainz mirror import. A mirror
 payload that carries the field overwrites it, including a removal (empty ASIN,
 script, language, or catalog-number list). A WS or Servarr payload that omits

@@ -26,10 +26,15 @@ const FORMATS = [
   { extension: ".ogg", codec: ["-c:a", "libvorbis"] },
   { extension: ".mp3", codec: ["-c:a", "libmp3lame", "-id3v2_version", "4"] },
   { extension: ".m4a", codec: ["-c:a", "aac", "-f", "mp4"] },
+  // ALAC lives in the same MP4 container as AAC. The importer's .m4a extension
+  // covers both; the label keeps the two rows from sharing a test name.
+  { extension: ".m4a", codec: ["-c:a", "alac", "-f", "mp4"], label: ".m4a alac" },
   { extension: ".aac", codec: ["-c:a", "aac", "-f", "adts"] },
   { extension: ".wav", codec: ["-c:a", "pcm_s16le", "-f", "wav"] },
   // TagLib only opens classic FORM AIFF. ffmpeg's default PCM is AIFF-C.
   { extension: ".aiff", codec: ["-c:a", "pcm_s16be", "-f", "aiff"] },
+  // .aif is the same ID3 writer as .aiff. The importer accepts both spellings.
+  { extension: ".aif", codec: ["-c:a", "pcm_s16be", "-f", "aiff"] },
 ] as const;
 
 function generateAudio(filePath: string, codec: readonly string[]): void {
@@ -263,7 +268,7 @@ function assertPicardFields(tags: Record<string, unknown>, extension: string, va
 for (const format of FORMATS) {
   for (const mode of ["picard", "plex_jellyfin"] as const) {
     for (const various of [false, true]) {
-      test(`Picard tags ${format.extension} ${mode} ${various ? "VA" : "collaboration"}`, { skip: !hasFfmpeg }, async () => {
+      test(`Picard tags ${"label" in format ? format.label : format.extension} ${mode} ${various ? "VA" : "collaboration"}`, { skip: !hasFfmpeg }, async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-picard-"));
         try {
           const mediaPath = path.join(tempDir, `sample${format.extension}`);
