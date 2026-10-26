@@ -54,7 +54,7 @@ export function classifyUnmonitoredFileDeletes(
     ? new Set((database.prepare(`
         SELECT mbid FROM Recordings
         WHERE id IN ${SQL_JSON_LIST} AND mbid IS NOT NULL AND TRIM(mbid) != ''
-      `).all(jsonList([...recordingIds])) as Array<{ mbid: string }>).map((row) => row.mbid))
+      `).all(jsonList(Array.from(recordingIds))) as Array<{ mbid: string }>).map((row) => row.mbid))
     : null;
 
   const rows = database.prepare(`
