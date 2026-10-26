@@ -174,9 +174,10 @@ with an existing Apple freeform field and checks decoded audio preservation.
 
 Audio and video retagging share the native-field diff. A file whose
 `managed_tag_fingerprint` already equals the catalogue projection (policy,
-scrub flag, ReplayGain, lyrics and cover flags, and the managed tag values)
-is skipped without opening it. A null fingerprint, or a fingerprint that
-predates the scrub flag, is opened once. Obsolete aliases of managed fields
+scrub flag, ReplayGain, lyrics and cover flags, album-artist mode, tag
+standard `picard-v1`, and the managed tag values) is skipped without opening
+it. The stored prefix stays `retag:v1:`. A null fingerprint, or a hash from
+before this tag standard, is opened once. Obsolete aliases of managed fields
 are removed during that diff. Unrelated custom tags remain unless
 `scrub_audio_tags`, exposed as "Remove unmanaged tags", is enabled. Turning
 scrub on changes the fingerprint, so each file is opened once and custom tags
@@ -205,11 +206,65 @@ path can produce a readable image. Otherwise the tracks are tagged with no
 embedded cover and the album records one warning. One bad cover does not
 fail every track.
 
-Default ALBUMARTIST is the primary artist's MusicBrainz name (the folder
-artist), not the release credited-as name. The credited-as string stays in
-ALBUMARTISTS, and in ALBUMARTIST only when full album-artist credit is on.
-ARTIST stays the track credit string. ALBUMARTISTSORT is that primary artist's
-sort name.
+`album_artist_mode` chooses ALBUMARTIST. `plex_jellyfin` (default) writes one
+primary artist in MusicBrainz spelling, or Various Artists when that release
+credit is the MusicBrainz Various Artists artist. `picard` writes the full
+release credit with MusicBrainz join phrases (`A & B`, `A feat. B`). A saved
+`full_album_artist_credit: true` migrates to `picard`. ALBUMARTISTS is the
+credited-as list in MusicBrainz order in both modes. ALBUMARTISTSORT and
+MUSICBRAINZ_ALBUMARTISTID match the people in ALBUMARTIST. ARTIST is the track
+credit with join phrases. ARTISTS is each artist's own MusicBrainz name, so a
+player does not split one MBID into two spellings.
+
+Multi-value fields are one Vorbis key per value, null-separated ID3v2.4 text,
+and multiple MP4 freeform strings. ID3v2.3 files are not upgraded. New empty
+ID3 tags are written as v2.4. Navidrome reads M4A `----:com.apple.iTunes:ALBUMARTISTS`
+as repeated `albumartists` after it strips the freeform prefix and lowercases
+the name. A single `"; "`-joined string would stay one artist, so the writer
+does not join those values.
+
+| Field | Vorbis | ID3 | MP4 | Source |
+| --- | --- | --- | --- | --- |
+| ALBUMARTIST | ALBUMARTIST | TPE2 | aART | Primary MB name, VA, or full credit |
+| ALBUMARTISTS | ALBUMARTISTS | TXXX:ALBUMARTISTS | freeform ALBUMARTISTS | Credited-as names |
+| ARTIST | ARTIST | TPE1 | ©ART | Track credit with join phrases |
+| ARTISTS | ARTISTS | TXXX:ARTISTS | freeform ARTISTS | Each artist's MB name |
+| MUSICBRAINZ_ARTISTID | MUSICBRAINZ_ARTISTID | TXXX:MusicBrainz Artist Id | freeform MusicBrainz Artist Id | Track artist MBIDs |
+| MUSICBRAINZ_ALBUMARTISTID | MUSICBRAINZ_ALBUMARTISTID | TXXX:MusicBrainz Album Artist Id | freeform MusicBrainz Album Artist Id | People in ALBUMARTIST |
+| LABEL | LABEL | TPUB | freeform LABEL | Release labels |
+| CATALOGNUMBER | CATALOGNUMBER | TXXX:CATALOGNUMBER | freeform CATALOGNUMBER | `release_label.catalog_number` |
+| ASIN | ASIN | TXXX:ASIN | freeform ASIN | `release_meta.amazon_asin` |
+| SCRIPT | SCRIPT | TXXX:SCRIPT | freeform SCRIPT | `script.iso_code` |
+| LANGUAGE | LANGUAGE | TLAN | freeform LANGUAGE | Release `language.iso_code_3` |
+| DISCSUBTITLE | DISCSUBTITLE | TSST, or TXXX:DISCSUBTITLE on v2.3 | freeform DISCSUBTITLE | Medium name |
+| ORIGINALDATE | ORIGINALDATE | TDOR | freeform originaldate | Release-group first release date |
+| ORIGINALYEAR | ORIGINALYEAR | TXXX:originalyear | freeform originalyear | Year of that date |
+| COMPILATION | COMPILATION=1 | TCMP | cpil | Various Artists release |
+| ARTISTSORT | ARTISTSORT | TSOP | soar | Track sort names with join phrases |
+| ALBUMARTISTSORT | ALBUMARTISTSORT | TSO2 | soaa | Sort names of the ALBUMARTIST people |
+| GENRE | GENRE | TCON | ©gen | Release genres |
+| RELEASETYPE | RELEASETYPE | TXXX:MusicBrainz Album Type | freeform MusicBrainz Album Type | Primary and secondary types |
+| Track totals | TRACKNUMBER, TRACKTOTAL, DISCNUMBER, DISCTOTAL | TRCK and TPOS as n/m | trkn, disk | Canonical positions |
+
+A retag removes fields Discogenius used to write and no longer owns:
+PROVIDER_URL, TXXX/freeform Track Number, Track Count, Disc Number, Disc Count,
+ITUNESADVISORY (the MP4 `rtng` atom stays), DISCOGENIUS_ALBUMARTIST_MBIDS,
+RELEASETIME, and the provider sort atoms soal, sonm, and soco. A user tag such
+as DISCOGENIUS_CUSTOM is left in place unless "Remove unmanaged tags" is on.
+Embedded lyrics are plain text (LYRICS, USLT, ©lyr). Synced lyrics stay in the
+`.lrc` sidecar.
+
+FLAC, Ogg Vorbis, Opus, MP3, AAC ADTS, WAV, classic AIFF (FORM AIFF), and M4A
+(AAC or ALAC in an MP4) round-trip these fields. WMA, APE, MP2, a bare `.alac`
+file, and AIFF-C are left unchanged: TagLib cannot store this tag set there,
+and ffmpeg is not used as a half-tag fallback. Catalog number, ASIN, script,
+and language are empty until the next MusicBrainz mirror import. Disc subtitle
+and the release-group first release date were already stored. `user_version`
+stays 46.
+
+Composer, lyricist, performer, and the other relationship credits are not
+written yet. Music-video files still use the previous video writer, including
+PROVIDER_URL. Both are listed in `docs/TASKS.md`.
 
 Track and edition artist IDs come from their respective canonical credits.
 ISRCs and artist IDs retain multiple native values. MP4 uses native integer
@@ -221,8 +276,3 @@ Video imports tag the exact returned TrackFiles rows and fail on tag-write
 errors. Artist retagging also includes videos. Video tag writes verify the
 result and a second unchanged retag skips the file. The real MP4 integration
 test checks that encoded audio and video hashes remain unchanged.
-
-This is not full Picard feature parity. Composer and performer relationship
-metadata needs canonical acquisition support before it can be written. The
-real-file regression coverage here is FLAC, MP3, M4A and MP4; it does not prove
-every legacy container or arbitrary custom tag representation.
