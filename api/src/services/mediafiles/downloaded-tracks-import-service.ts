@@ -696,11 +696,53 @@ export function persistPreparedImportQuality(
  * consistency check between the operation result and the exact internal
  * ProviderItems row carried by the acquisition command.
  */
+/**
+ * One provider item on two editions of the same recording is one provenance.
+ * Contexts that name different recordings stay ambiguous.
+ * The edition being imported picks which of the same-recording contexts is stamped.
+ */
+export function selectProvenanceOffer(
+    providerTrackId: string,
+    candidates: readonly DownloadTrackOffer[],
+    releaseMbid?: string | null,
+): DownloadTrackOffer {
+    if (candidates.length === 1) return candidates[0];
+    const recordingIds = candidates.map((offer) => String(offer.canonicalRecordingMbid || "").trim());
+    const sameRecording = recordingIds.every((id) => id.length > 0) && new Set(recordingIds).size === 1;
+    const refuse = (): never => {
+        throw new Error(
+            `[ImportDownload] Downloaded track ${providerTrackId} has ${candidates.length} exact offer contexts; refusing ambiguous provenance`,
+        );
+    };
+    if (!sameRecording) refuse();
+
+    const release = String(releaseMbid || "").trim();
+    if (release) {
+        const onRelease = new Set((db.prepare(`
+            SELECT track.mbid AS mbid
+            FROM Tracks track
+            JOIN AlbumEditions edition ON edition.id = track.album_edition_id
+            WHERE edition.mbid = ?
+        `).all(release) as Array<{ mbid: string | null }>)
+            .map((row) => String(row.mbid || ""))
+            .filter(Boolean));
+        const planned = candidates.filter((offer) =>
+            offer.canonicalTrackMbid && onRelease.has(offer.canonicalTrackMbid));
+        if (planned.length === 1) return planned[0];
+        if (planned.length > 1 && new Set(planned.map((offer) => offer.providerTrackItemId)).size === 1) {
+            return planned[0];
+        }
+    }
+    if (new Set(candidates.map((offer) => offer.providerTrackItemId)).size === 1) return candidates[0];
+    refuse();
+}
+
 export function persistDownloadedProviderProvenance(
     libraryId: number | null | undefined,
     organizeResult: OrganizeResult,
     trackOffers: readonly DownloadTrackOffer[],
     acquisitionPlanId?: number | null,
+    releaseMbid?: string | null,
 ): void {
     if (trackOffers.length === 0) {
         if (acquisitionPlanId != null && organizeResult.processedTrackIds.length > 0) {
@@ -788,12 +830,12 @@ export function persistDownloadedProviderProvenance(
                 ? byTrackId.filter((offer) => offer.provider === file.provider)
                 : byTrackId;
             const candidates = narrowed.length > 0 ? narrowed : byTrackId;
-            if (candidates.length !== 1) {
+            if (candidates.length === 0) {
                 throw new Error(
-                    `[ImportDownload] Downloaded track ${providerTrackId} has ${candidates.length} exact offer contexts; refusing ambiguous provenance`,
+                    `[ImportDownload] Downloaded track ${providerTrackId} has 0 exact offer contexts; refusing ambiguous provenance`,
                 );
             }
-            const offer = candidates[0];
+            const offer = selectProvenanceOffer(String(providerTrackId), candidates, releaseMbid);
             if (!Number.isInteger(offer.providerTrackItemId) || Number(offer.providerTrackItemId) <= 0) {
                 throw new Error(
                     `[ImportDownload] Downloaded track ${providerTrackId} has no exact provider_item_id`,
@@ -1330,6 +1372,7 @@ export class DownloadedTracksImportService {
                 organizeResult,
                 Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
                 job.payload.acquisitionPlanId,
+                job.payload.releaseMbid,
             ), "import:provenance");
         }
         const importLibraryId = job.payload.libraryId;

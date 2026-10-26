@@ -19,6 +19,7 @@ const { db, dbModule } = await openActiveSchemaDb();
 const {
   persistPreparedImportQuality,
   persistDownloadedProviderProvenance,
+  selectProvenanceOffer,
   reconcileImportedDownload,
   releaseGroupMbidFromJobContext,
   ensureDestAlbumArtworkForFileIds,
@@ -636,4 +637,86 @@ test("a composite plan's cross-provider track keeps its own provenance", () => {
   ).get(fileId) as { provider: string; provider_item_id: number };
   assert.equal(row.provider_item_id, tidalItem.id, "the offer is the authority on where the track came from");
   assert.equal(row.provider, "tidal", "and the file's provider is corrected to match it");
+});
+
+test("the same recording on two editions is the plan's own offer, not an ambiguous provenance", () => {
+  // Live shape: YouTube Ey_hgKCCYU4 accepted on two editions of recording a5ccdf6f.
+  // On 95475504 persist throws "2 exact offer contexts; refusing ambiguous provenance".
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile({ provider: "youtube-music", provider_id: "Ey_hgKCCYU4" });
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('rg-shared', 'op-artist', 'Shared', 'Album')
+  `).run();
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title)
+    VALUES ('rel-imported', 'rg-shared', 'op-artist', 'Imported'),
+           ('rel-other', 'rg-shared', 'op-artist', 'Other')
+  `).run();
+  db.prepare(`
+    INSERT INTO Recordings (mbid, title) VALUES ('rec-shared', 'Perfect Strangers (Club Mix)')
+  `).run();
+  const importedEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-imported'").get() as { id: number };
+  const otherEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-other'").get() as { id: number };
+  const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = 'rec-shared'").get() as { id: number };
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_edition_id, recording_id, medium_position, position, title, length_ms,
+      release_mbid, recording_mbid
+    ) VALUES
+      ('track-imported', ?, ?, 1, 3, 'Perfect Strangers (Club Mix)', 180000, 'rel-imported', 'rec-shared'),
+      ('track-other', ?, ?, 1, 1, 'Perfect Strangers (Club Mix)', 180000, 'rel-other', 'rec-shared')
+  `).run(importedEdition.id, recording.id, otherEdition.id, recording.id);
+  const item = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('youtube-music', 'track', 'Ey_hgKCCYU4', 'Perfect Strangers (Club Mix)', 'available')
+    RETURNING id
+  `).get() as { id: number };
+  const plannedVariant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (provider_item_id, variant_key, quality_class, availability)
+    VALUES (?, 'planned', 'lossy', 'available') RETURNING id
+  `).get(item.id) as { id: number };
+  const otherVariant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (provider_item_id, variant_key, quality_class, availability)
+    VALUES (?, 'other', 'lossy', 'available') RETURNING id
+  `).get(item.id) as { id: number };
+  const offers = [
+    {
+      provider: "youtube-music",
+      providerTrackId: "Ey_hgKCCYU4",
+      providerTrackItemId: item.id,
+      providerAudioVariantId: otherVariant.id,
+      canonicalTrackMbid: "track-other",
+      canonicalRecordingMbid: "rec-shared",
+    },
+    {
+      provider: "youtube-music",
+      providerTrackId: "Ey_hgKCCYU4",
+      providerTrackItemId: item.id,
+      providerAudioVariantId: plannedVariant.id,
+      canonicalTrackMbid: "track-imported",
+      canonicalRecordingMbid: "rec-shared",
+    },
+  ];
+
+  assert.throws(
+    () => selectProvenanceOffer("Ey_hgKCCYU4", [
+      { ...offers[0], canonicalRecordingMbid: "rec-other" },
+      offers[1],
+    ]),
+    /refusing ambiguous provenance/,
+  );
+
+  persistDownloadedProviderProvenance(
+    libraryId,
+    organizeResult(["Ey_hgKCCYU4"], { Ey_hgKCCYU4: fileId }),
+    offers,
+    25601,
+    "rel-imported",
+  );
+  const row = db.prepare(
+    "SELECT provider_item_id, source_audio_variant_id FROM TrackFiles WHERE id = ?",
+  ).get(fileId) as { provider_item_id: number; source_audio_variant_id: number };
+  assert.equal(row.provider_item_id, item.id);
+  assert.equal(row.source_audio_variant_id, plannedVariant.id);
 });
