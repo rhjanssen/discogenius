@@ -2433,6 +2433,7 @@ export class AudioTagService {
     // Custom frames from earlier Discogenius releases. A retag deletes them
     // in every format. MP4 rtng is the itunesadvisory write key and is not
     // this removal.
+    remove("acoustid_fingerprint", "AcoustID Fingerprint", "ACOUSTID_FINGERPRINT");
     remove("provider_url", "Provider URL", "PROVIDER_URL");
     remove("album_artist_mbids", "Legacy Album Artist MBIDs", "DISCOGENIUS_ALBUMARTIST_MBIDS");
     remove("legacy_itunesadvisory", "Legacy iTunes Advisory", "ITUNESADVISORY");
@@ -2960,11 +2961,18 @@ export class AudioTagService {
         });
       }
 
-      // AcoustID id/fingerprint are deliberately NOT embedded: we write only
-      // MusicBrainz IDs (what media servers typically read) and use fpcalc/
-      // AcoustID purely as INTERNAL import-match evidence — never as a written
-      // tag. The fingerprint stays in TrackFiles for
-      // matching/verification but is not surfaced as an embedded tag.
+      // Picard default is save_acoustid_fingerprints = false. The id is the
+      // portable AcoustID tag; the chromaprint stays in TrackFiles for matching.
+      const acoustidId = String(row.media_acoustid_id || row.file_acoustid_id || "").trim();
+      if (acoustidId) {
+        tags.push({
+          key: "acoustid_id",
+          label: "AcoustID",
+          ffmpegKey: "ACOUSTID_ID",
+          targetValue: acoustidId,
+          aliases: ["acoustid_id", "acoustid id", "Acoustid Id"],
+        });
+      }
 
       // Explicit content is the MP4 rtng atom. Other containers drop the old
       // TXXX/Vorbis ITUNESADVISORY field instead of writing a custom tag.

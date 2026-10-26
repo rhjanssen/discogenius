@@ -249,8 +249,13 @@ does not join those values.
 A retag removes fields Discogenius used to write and no longer owns:
 PROVIDER_URL, TXXX/freeform Track Number, Track Count, Disc Number, Disc Count,
 ITUNESADVISORY (the MP4 `rtng` atom stays), DISCOGENIUS_ALBUMARTIST_MBIDS,
-RELEASETIME, and the provider sort atoms soal, sonm, and soco. A user tag such
-as DISCOGENIUS_CUSTOM is left in place unless "Remove unmanaged tags" is on.
+RELEASETIME, ACOUSTID_FINGERPRINT (Vorbis `ACOUSTID_FINGERPRINT`, ID3
+`TXXX:Acoustid Fingerprint`, MP4 `----:com.apple.iTunes:Acoustid Fingerprint`),
+and the provider sort atoms soal, sonm, and soco. `ACOUSTID_ID` is written.
+The chromaprint stays in `TrackFiles.fingerprint` for matching. Picard leaves
+the fingerprint out unless "Save AcoustID fingerprints" is on, and that option
+defaults off. A user tag such as DISCOGENIUS_CUSTOM is left in place unless
+"Remove unmanaged tags" is on.
 Embedded lyrics are plain text (LYRICS, USLT, ©lyr). Synced lyrics stay in the
 `.lrc` sidecar.
 

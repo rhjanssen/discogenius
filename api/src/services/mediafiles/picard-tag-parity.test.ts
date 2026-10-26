@@ -59,6 +59,7 @@ function removalTags(): ManagedTag[] {
     tag("legacy_itunesadvisory", "ITUNESADVISORY", ""),
     tag("album_artist_mbids", "DISCOGENIUS_ALBUMARTIST_MBIDS", ""),
     tag("legacy_release_time", "RELEASETIME", ""),
+    tag("acoustid_fingerprint", "ACOUSTID_FINGERPRINT", ""),
   ];
 }
 
@@ -113,6 +114,7 @@ function desiredTags(mode: "picard" | "plex_jellyfin", various: boolean): Manage
     tag("musicbrainz_artistid", "musicbrainz_artistid", [A, B].join(MULTI_VALUE_SEPARATOR)),
     tag("musicbrainz_albumartistid", "musicbrainz_albumartistid", plan.albumArtistMbids.join(MULTI_VALUE_SEPARATOR)),
     tag("itunesadvisory", "ITUNESADVISORY", "1"),
+    tag("acoustid_id", "ACOUSTID_ID", "2b3c4d5e-6f70-8192-a3b4-c5d6e7f8091a"),
   ];
   if (plan.albumArtistSort) tags.push(tag("album_artist_sort", "ALBUMARTISTSORT", plan.albumArtistSort));
   if (plan.compilation) tags.push(tag("compilation", "COMPILATION", "1"));
@@ -200,6 +202,8 @@ function assertPicardFields(tags: Record<string, unknown>, extension: string, va
     assert.equal(values(tags, "ITUNESADVISORY").length, 0);
     assert.equal(values(tags, "DISCOGENIUS_ALBUMARTIST_MBIDS").length, 0);
     assert.equal(values(tags, "RELEASETIME").length, 0);
+    assert.equal(values(tags, "ACOUSTID_FINGERPRINT").length, 0);
+    assert.deepEqual(values(tags, "ACOUSTID_ID"), ["2b3c4d5e-6f70-8192-a3b4-c5d6e7f8091a"]);
     assert.deepEqual(values(tags, "DISCOGENIUS_CUSTOM"), ["keep me"]);
     if (various) assert.deepEqual(values(tags, "COMPILATION"), ["1"]);
     else assert.equal(values(tags, "COMPILATION").length, 0);
@@ -224,6 +228,8 @@ function assertPicardFields(tags: Record<string, unknown>, extension: string, va
     assert.equal(values(tags, "----:com.apple.iTunes:Track Number").length, 0);
     assert.equal(values(tags, "----:com.apple.iTunes:DISCOGENIUS_ALBUMARTIST_MBIDS").length, 0);
     assert.equal(values(tags, "----:com.apple.iTunes:RELEASETIME").length, 0);
+    assert.equal(values(tags, "----:com.apple.iTunes:Acoustid Fingerprint").length, 0);
+    assert.deepEqual(values(tags, "----:com.apple.iTunes:Acoustid Id"), ["2b3c4d5e-6f70-8192-a3b4-c5d6e7f8091a"]);
     assert.deepEqual(values(tags, "----:com.apple.iTunes:DISCOGENIUS_CUSTOM"), ["keep me"]);
     assert.deepEqual(values(tags, "rtng"), ["1"]);
     if (various) assert.equal(tags.cpil, true);
@@ -248,6 +254,8 @@ function assertPicardFields(tags: Record<string, unknown>, extension: string, va
   assert.equal(values(tags, "TXXX:Track Number").length, 0);
   assert.equal(values(tags, "TXXX:DISCOGENIUS_ALBUMARTIST_MBIDS").length, 0);
   assert.equal(values(tags, "TXXX:RELEASETIME").length, 0);
+  assert.equal(values(tags, "TXXX:Acoustid Fingerprint").length, 0);
+  assert.deepEqual(values(tags, "TXXX:Acoustid Id"), ["2b3c4d5e-6f70-8192-a3b4-c5d6e7f8091a"]);
   assert.deepEqual(values(tags, "TXXX:DISCOGENIUS_CUSTOM"), ["keep me"]);
   if (various) assert.deepEqual(values(tags, "TCMP"), ["1"]);
 }
@@ -269,6 +277,8 @@ for (const format of FORMATS) {
             tag("legacy_itunesadvisory", "ITUNESADVISORY", "1"),
             tag("album_artist_mbids", "DISCOGENIUS_ALBUMARTIST_MBIDS", `${A}; ${B}`),
             tag("legacy_release_time", "RELEASETIME", "2020-01-02"),
+            tag("acoustid_fingerprint", "ACOUSTID_FINGERPRINT", "AQAAAA"),
+            tag("acoustid_id", "ACOUSTID_ID", "2b3c4d5e-6f70-8192-a3b4-c5d6e7f8091a"),
             tag("custom", "DISCOGENIUS_CUSTOM", "keep me"),
           ], format.extension);
           const seeded = await writeMediaTagsWithTagLib(mediaPath, legacy);
