@@ -53,6 +53,11 @@ test("MP4 video retag uses exact provider identity, all recording ISRCs and an i
     "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.2", "-c:v", "libx264", "-c:a", "aac", mediaPath],
     { windowsHide: true, encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
+  const { writeMetadata } = await import("./audioUtils.js");
+  assert.equal(await writeMetadata(mediaPath, {
+    "----:com.apple.iTunes:PROVIDER": "tidal",
+    "----:com.apple.iTunes:YOUTUBE_VIDEO_ID": "abcdefghijk",
+  }), true);
   const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'video-tag-artist'").get() as { id: number };
   const recording = db.prepare(`INSERT INTO Recordings (mbid, title, is_video, artist_metadata_id, isrcs)
     VALUES ('video-recording-mbid', 'Catalog video', 1, ?, ?) RETURNING id`)
@@ -71,14 +76,47 @@ test("MP4 video retag uses exact provider identity, all recording ISRCs and an i
   const { parseFile } = await import("music-metadata");
   const tags = await parseFile(mediaPath);
   assert.equal(tags.common.title, "Catalog video");
+  assert.equal(tags.common.artist, "Video Tag Artist");
   assert.equal(tags.common.musicbrainz_recordingid, "video-recording-mbid");
   assert.deepEqual(tags.common.isrc, ["USUM70722793", "USUM70809583"]);
   assert.ok(Object.values(tags.native).flat().some(tag => tag.id === "stik" && tag.value === 6));
-  assert.ok(Object.values(tags.native).flat().some(tag => tag.id === "----:com.apple.iTunes:PROVIDER" && tag.value === "tidal"));
+  assert.equal(Object.values(tags.native).flat().some(tag => String(tag.id).includes("PROVIDER")), false);
+  const probed = spawnSync("ffprobe", ["-v", "error", "-show_entries", "format_tags", "-of", "json", mediaPath], { windowsHide: true, encoding: "utf8" });
+  assert.equal(probed.status, 0, probed.stderr);
+  const formatTags = JSON.parse(probed.stdout).format.tags as Record<string, string>;
+  assert.equal(formatTags.title, "Catalog video");
+  assert.equal(formatTags.artist, "Video Tag Artist");
   assert.deepEqual(await VideoTagService.apply([file.id]), { retagged: 0, skipped: 1, missing: 0, errors: [] });
   const afterHash = spawnSync("ffmpeg", ["-v", "error", "-i", mediaPath, "-map", "0", "-c", "copy", "-f", "hash", "-hash", "sha256", "-"], { windowsHide: true, encoding: "utf8" });
   assert.equal(before.status, 0, before.stderr);
   assert.equal(afterHash.status, 0, afterHash.stderr);
   assert.match(before.stdout, /^SHA256=/);
   assert.equal(afterHash.stdout, before.stdout);
+});
+
+test("MKV music video tags are ffprobe-visible and a second retag skips", {
+  skip: spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status !== 0,
+}, async () => {
+  const mediaPath = path.join(tempDir, "catalog-video.mkv");
+  const generated = spawnSync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=10",
+    "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.2", "-c:v", "libx264", "-c:a", "aac",
+    "-metadata", "PROVIDER=tidal", "-metadata", "TITLE=Old title", mediaPath],
+    { windowsHide: true, encoding: "utf8" });
+  assert.equal(generated.status, 0, generated.stderr);
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'video-tag-artist'").get() as { id: number };
+  const recording = db.prepare(`INSERT INTO Recordings (mbid, title, is_video, artist_metadata_id)
+    VALUES ('video-mkv-recording', 'MKV video', 1, ?) RETURNING id`).get(artist.id) as { id: number };
+  const file = db.prepare(`INSERT INTO TrackFiles (artist_metadata_id, recording_id,
+    file_path, relative_path, library_root, filename, extension, file_type)
+    VALUES (?, ?, ?, 'catalog-video.mkv', ?, 'catalog-video.mkv', 'mkv', 'video') RETURNING id`)
+    .get(artist.id, recording.id, mediaPath, tempDir) as { id: number };
+  assert.deepEqual(await VideoTagService.apply([file.id]), { retagged: 1, skipped: 0, missing: 0, errors: [] });
+  const probed = spawnSync("ffprobe", ["-v", "error", "-show_entries", "format_tags", "-of", "json", mediaPath], { windowsHide: true, encoding: "utf8" });
+  assert.equal(probed.status, 0, probed.stderr);
+  const formatTags = JSON.parse(probed.stdout).format.tags as Record<string, string>;
+  assert.equal(formatTags.TITLE || formatTags.title, "MKV video");
+  assert.equal(formatTags.ARTIST || formatTags.artist, "Video Tag Artist");
+  assert.equal(formatTags.MUSICBRAINZ_TRACKID, "video-mkv-recording");
+  assert.equal(formatTags.PROVIDER, undefined);
+  assert.deepEqual(await VideoTagService.apply([file.id]), { retagged: 0, skipped: 1, missing: 0, errors: [] });
 });

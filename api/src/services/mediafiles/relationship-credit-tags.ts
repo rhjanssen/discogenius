@@ -18,7 +18,8 @@ type TagFamily = "vorbis" | "id3" | "mp4";
 export function creditTagFamily(extension: string): TagFamily | null {
   const dotted = String(extension || "").toLowerCase();
   const ext = dotted.startsWith(".") ? dotted : `.${dotted}`;
-  if ([".flac", ".ogg", ".oga", ".opus"].includes(ext)) return "vorbis";
+  // Matroska simple tags use the same uppercase names as Vorbis comments.
+  if ([".flac", ".ogg", ".oga", ".opus", ".mkv", ".webm"].includes(ext)) return "vorbis";
   if ([".mp3", ".aac", ".wav", ".aif", ".aiff"].includes(ext)) return "id3";
   if ([".m4a", ".mp4"].includes(ext)) return "mp4";
   return null;

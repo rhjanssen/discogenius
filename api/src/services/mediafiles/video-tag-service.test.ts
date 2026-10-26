@@ -3,7 +3,7 @@ import test from "node:test";
 import { AudioTagService } from "./audio-tag-service.js";
 import { buildVideoManagedTags } from "./video-tag-service.js";
 
-test("video tags preserve canonical and provider identity in MP4 freeform fields", () => {
+test("video tags use player fields and drop provider identity", () => {
   const tags = buildVideoManagedTags({
     id: 1,
     file_path: "/library/video.mp4",
@@ -21,14 +21,21 @@ test("video tags preserve canonical and provider identity in MP4 freeform fields
     artist_mbid: "f59c5520-5f46-4d2c-b2c4-822eabf53419",
     recording_mbid: "3ccf19be-8a25-4127-8d57-e0e86b344dfb",
     recording_credits: JSON.stringify([{ name: "Linkin Park", join_phrase: " & " }, { name: "Steve Aoki" }]),
+    album_title: "Recharged",
+    album_genres: JSON.stringify(["Electronic", "Rock"]),
   });
   const output = AudioTagService.buildAudioTagWriteMap(tags, ".mp4");
 
+  assert.equal(output.stik, "6");
   assert.equal(output.title, "A Light That Never Comes");
-  assert.equal(output.artist, "Linkin Park; Steve Aoki");
+  assert.equal(output.artist, "Linkin Park & Steve Aoki");
+  assert.equal(output["----:com.apple.iTunes:ARTISTS"], "Linkin Park; Steve Aoki");
+  assert.equal(output.album, "Recharged");
   assert.equal(output.date, "2013-10-17");
+  assert.equal(output.genre, "Electronic; Rock");
   assert.equal(output["----:com.apple.iTunes:MusicBrainz Track Id"], "3ccf19be-8a25-4127-8d57-e0e86b344dfb");
   assert.equal(output["----:com.apple.iTunes:MusicBrainz Artist Id"], "f59c5520-5f46-4d2c-b2c4-822eabf53419");
-  assert.equal(output["----:com.apple.iTunes:PROVIDER_URL"], "https://listen.tidal.com/video/23282282");
-  assert.equal(output["----:com.apple.iTunes:PROVIDER_ID"], "23282282");
+  assert.equal(output["----:com.apple.iTunes:PROVIDER_URL"], undefined);
+  assert.equal(output["----:com.apple.iTunes:PROVIDER"], undefined);
+  assert.equal(output["----:com.apple.iTunes:PROVIDER_ID"], undefined);
 });

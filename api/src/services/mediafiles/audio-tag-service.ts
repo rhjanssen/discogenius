@@ -3185,6 +3185,16 @@ export class AudioTagService {
         // describes the encoded stream and must survive metadata cleanup.
         if (/^(APIC(?::.*)?|METADATA_BLOCK_PICTURE|covr|COVERART|COVERARTMIME)$/i.test(key)
           || key === "----:com.apple.iTunes:iTunSMPB" || isNumericMp4NativeId(key)) continue;
+        // music-metadata prefixes Matroska simple tags with track: or segment:.
+        // ENCODER and DURATION are stream facts ffmpeg writes back on every remux.
+        if (format === "matroska") {
+          const bare = key.includes(":") ? key.slice(key.lastIndexOf(":") + 1) : key;
+          const bareName = bare.toLowerCase();
+          if (bareName === "encoder" || bareName === "duration" || bareName === "bps"
+            || bareName === "number_of_frames" || bareName === "number_of_bytes"
+            || bareName.startsWith("statistics_")) continue;
+          if (allowed.has(keyIdentity(bare)) || owned.has(semanticKey(bare))) continue;
+        }
         if (allowed.has(keyIdentity(key))) continue;
         if (owned.has(semanticKey(key))) obsolete.add(key);
         else if (scrub) unmanaged.add(key);

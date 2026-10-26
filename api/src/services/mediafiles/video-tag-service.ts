@@ -3,7 +3,9 @@ import path from "path";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
 import { writeMetadata } from "./audioUtils.js";
-import { AudioTagService, parseArtistCreditNames, parseArtistCreditIds, type ManagedTag, type RetagApplyResult } from "./audio-tag-service.js";
+import { AudioTagService, parseArtistCreditNames, parseArtistCreditIds, parseArtistCreditString, type ManagedTag, type RetagApplyResult } from "./audio-tag-service.js";
+import { loadCreditSnapshot } from "../metadata/relationship-credit-store.js";
+import { relationshipCreditRemovalTags, relationshipManagedTags } from "./relationship-credit-tags.js";
 import { getConfigSection } from "../config/config.js";
 import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
@@ -28,9 +30,45 @@ type VideoTagRow = {
   isrcs?: string | null;
   youtube_video_id?: string | null;
   album_title?: string | null;
+  album_genres?: string | null;
   release_mbid?: string | null;
   release_group_mbid?: string | null;
 };
+
+function dottedExtension(extension: string | null | undefined): string {
+  const raw = String(extension || "").trim().toLowerCase();
+  if (!raw) return "";
+  return raw.startsWith(".") ? raw : `.${raw}`;
+}
+
+function jsonNames(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => (typeof item === "string" ? item.trim() : "")).filter((item) => item.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+const MP4_FAMILY = new Set([".mp4", ".m4v", ".mov", ".m4a"]);
+
+/** Fields this writer used to store and players do not read as music-video tags. */
+export function buildVideoLegacyRemovals(): ManagedTag[] {
+  const item = (key: string, ffmpegKey: string): ManagedTag => ({ key, label: key, ffmpegKey, targetValue: "" });
+  return [
+    item("provider_url", "PROVIDER_URL"),
+    item("youtube_video_id", "YOUTUBE_VIDEO_ID"),
+    item("provider", "PROVIDER"),
+    item("provider_id", "PROVIDER_ID"),
+    item("quality", "QUALITY"),
+    item("copyright", "copyright"),
+    item("album_artist", "album_artist"),
+    item("musicbrainz_albumid", "musicbrainz_albumid"),
+    item("musicbrainz_releasegroupid", "musicbrainz_releasegroupid"),
+  ];
+}
 
 function normalizedDate(value: string | null): string {
   const raw = String(value || "").trim();
@@ -40,33 +78,50 @@ function normalizedDate(value: string | null): string {
 export function buildVideoManagedTags(row: VideoTagRow): ManagedTag[] {
   const creditedArtists = parseArtistCreditNames(null, row.recording_credits);
   const artistMbids = parseArtistCreditIds(row.recording_credits);
-  const artist = creditedArtists.join("; ") || String(row.artist_name || "Unknown Artist");
+  const artist = parseArtistCreditString(row.recording_credits)
+    || creditedArtists.join("; ")
+    || String(row.artist_name || "Unknown Artist");
+  const artistList = creditedArtists.length > 0 ? creditedArtists : [artist];
   const tags: ManagedTag[] = [
-    { key: "media_kind", label: "Media kind", ffmpegKey: "stik", targetValue: "6" },
     { key: "title", label: "Title", ffmpegKey: "title", targetValue: String(row.title || "Unknown Video") },
     { key: "artist", label: "Artist", ffmpegKey: "artist", targetValue: artist },
-    { key: "album_artist", label: "Album Artist", ffmpegKey: "album_artist", targetValue: String(row.artist_name || artist) },
+    { key: "artists", label: "Artists", ffmpegKey: "ARTISTS", targetValue: artistList.join("; ") },
   ];
+  if (MP4_FAMILY.has(dottedExtension(row.extension))) {
+    tags.unshift({ key: "media_kind", label: "Media kind", ffmpegKey: "stik", targetValue: "6" });
+  }
 
   const add = (key: string, label: string, ffmpegKey: string, value: string | null | undefined) => {
     const targetValue = String(value || "").trim();
     if (targetValue) tags.push({ key, label, ffmpegKey, targetValue });
   };
 
-  add("date", "Date", "date", normalizedDate(row.release_date));
-  add("copyright", "Copyright", "copyright", row.copyright);
-  add("musicbrainz_recordingid", "MusicBrainz Recording ID", "musicbrainz_recordingid", row.recording_mbid);
-  add("musicbrainz_artistid", "MusicBrainz Artist ID", "musicbrainz_artistid", artistMbids.join("; ") || row.artist_mbid);
-  add("isrc", "ISRC", "ISRC", parseRecordingIsrcs(row.isrcs).join("; "));
-  add("youtube_video_id", "YouTube Video ID", "YOUTUBE_VIDEO_ID", row.youtube_video_id);
   add("album", "Album", "album", row.album_title);
-  add("musicbrainz_albumid", "MusicBrainz Release ID", "musicbrainz_albumid", row.release_mbid);
-  add("musicbrainz_releasegroupid", "MusicBrainz Release Group ID", "musicbrainz_releasegroupid", row.release_group_mbid);
-  add("provider_url", "Provider URL", "PROVIDER_URL", row.provider_url);
-  add("provider", "Provider", "PROVIDER", row.provider);
-  add("provider_id", "Provider Video ID", "PROVIDER_ID", row.provider_id);
-  add("quality", "Quality", "QUALITY", row.quality);
+  add("date", "Date", "date", normalizedDate(row.release_date));
+  add("genre", "Genre", "genre", jsonNames(row.album_genres).join("; "));
+  add("musicbrainz_recordingid", "MusicBrainz Recording ID", "MUSICBRAINZ_TRACKID", row.recording_mbid);
+  add("musicbrainz_artistid", "MusicBrainz Artist ID", "MUSICBRAINZ_ARTISTID", artistMbids.join("; ") || row.artist_mbid);
+  add("isrc", "ISRC", "ISRC", parseRecordingIsrcs(row.isrcs).join("; "));
   return tags;
+}
+
+function relationshipTagsForVideo(row: VideoTagRow, snapshot: ReturnType<typeof loadCreditSnapshot>): ManagedTag[] {
+  if (!snapshot) return [];
+  const recording = String(row.recording_mbid || "").trim().toLowerCase();
+  const release = String(row.release_mbid || "").trim().toLowerCase();
+  if (!recording || !snapshot.known.has(recording)) return [];
+  const works = snapshot.works.filter((work) => work.recordingMbid === recording);
+  const workIds = new Set(works.map((work) => work.workMbid));
+  const credits = snapshot.credits.filter((credit) =>
+    (credit.scope === "recording" && credit.entityMbid === recording)
+    || (credit.scope === "release" && credit.entityMbid === release)
+    || (credit.scope === "work" && workIds.has(credit.entityMbid)));
+  return relationshipManagedTags({
+    credits,
+    works,
+    extension: dottedExtension(row.extension),
+    mediumPosition: null,
+  });
 }
 
 export class VideoTagService {
@@ -92,6 +147,7 @@ export class VideoTagService {
         COALESCE(NULLIF(recording.isrcs, '[]'), provider_item.isrc) AS isrcs,
         recording.youtube_video_id,
         COALESCE(edition.title, album.title) AS album_title,
+        album.genres AS album_genres,
         edition.mbid AS release_mbid,
         album.mbid AS release_group_mbid
       FROM TrackFiles file
@@ -152,6 +208,11 @@ export class VideoTagService {
     const result: RetagApplyResult = { retagged: 0, skipped: 0, missing: 0, errors: [] };
     const config = getConfigSection("metadata");
     if ((config.write_audio_tags_policy ?? "no") === "no") return { ...result, skipped: rows.length };
+    const creditSnapshot = loadCreditSnapshot(
+      db,
+      rows.map((row) => row.recording_mbid),
+      rows.map((row) => row.release_mbid),
+    );
     const update = db.prepare(`
       UPDATE TrackFiles SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP WHERE id = ?
     `);
@@ -170,8 +231,15 @@ export class VideoTagService {
         }
 
         const extension = row.extension || path.extname(resolvedPath);
-        const managedTags = buildVideoManagedTags(row).filter(tag => config.write_tidal_url || tag.key !== "provider_url");
-        const removals = AudioTagService.buildManagedTagRemovals(config);
+        const taggedRow = { ...row, extension };
+        const knownCredits = relationshipTagsForVideo(taggedRow, creditSnapshot);
+        const creditsKnown = creditSnapshot?.known.has(String(row.recording_mbid || "").trim().toLowerCase()) === true;
+        const managedTags = [...buildVideoManagedTags(taggedRow), ...knownCredits];
+        const removals = [
+          ...AudioTagService.buildManagedTagRemovals(config),
+          ...buildVideoLegacyRemovals(),
+          ...(creditsKnown ? relationshipCreditRemovalTags(dottedExtension(extension)) : []),
+        ];
         const diff = await AudioTagService.evaluateFileTags(resolvedPath, managedTags, removals, config.scrub_audio_tags === true);
         if (diff.changes.length === 0) { result.skipped++; continue; }
         const tags = AudioTagService.buildAudioTagWriteMap(managedTags, extension);
