@@ -28,6 +28,9 @@ export type UpcTargetValue = (typeof UPC_TARGET_VALUES)[number];
 export const VIDEO_FOLDER_LAYOUT_VALUES = ["separated", "inline", "inline_only"] as const;
 export type VideoFolderLayoutValue = (typeof VIDEO_FOLDER_LAYOUT_VALUES)[number];
 
+export const ALBUM_ARTIST_MODE_VALUES = ["plex_jellyfin", "picard"] as const;
+export type AlbumArtistModeValue = (typeof ALBUM_ARTIST_MODE_VALUES)[number];
+
 export const WRITE_AUDIO_TAGS_POLICY_VALUES = ["no", "new_files", "all_files", "sync"] as const;
 export type WriteAudioTagsPolicyValue = (typeof WRITE_AUDIO_TAGS_POLICY_VALUES)[number];
 
@@ -92,7 +95,12 @@ export interface MetadataConfigContract {
   write_audio_tags_policy?: WriteAudioTagsPolicyValue;
   embed_replaygain?: boolean;
   scrub_audio_tags?: boolean;
-  /** Write the full album-artist credit into ALBUMARTIST instead of the primary artist only. */
+  /**
+   * ALBUMARTIST spelling. `plex_jellyfin`: one primary artist, or Various Artists.
+   * `picard`: the full release credit with MusicBrainz join phrases.
+   */
+  album_artist_mode?: AlbumArtistModeValue;
+  /** Legacy. `true` migrates to album_artist_mode "picard". */
   full_album_artist_credit?: boolean;
   /** Write artist names from MusicBrainz locale aliases (Picard "translate artist names"). */
   translate_artist_names?: boolean;
@@ -261,6 +269,7 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
     write_audio_tags_policy: expectOptionalOneOf(record.write_audio_tags_policy, WRITE_AUDIO_TAGS_POLICY_VALUES, "metadata.write_audio_tags_policy"),
     embed_replaygain: expectOptionalBoolean(record.embed_replaygain, "metadata.embed_replaygain"),
     scrub_audio_tags: expectOptionalBoolean(record.scrub_audio_tags, "metadata.scrub_audio_tags"),
+    album_artist_mode: expectOptionalOneOf(record.album_artist_mode, ALBUM_ARTIST_MODE_VALUES, "metadata.album_artist_mode"),
     full_album_artist_credit: expectOptionalBoolean(record.full_album_artist_credit, "metadata.full_album_artist_credit"),
     translate_artist_names: expectOptionalBoolean(record.translate_artist_names, "metadata.translate_artist_names"),
     artist_name_locales: expectOptionalString(record.artist_name_locales, "metadata.artist_name_locales"),

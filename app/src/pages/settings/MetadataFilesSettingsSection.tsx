@@ -90,6 +90,8 @@ export const MetadataFilesSettingsSection = ({
     // expose a command-domain promise the app no longer makes.
     const storedWriteAudioTagsPolicy = metadataSettings?.write_audio_tags_policy ?? "no";
     const writeAudioTagsPolicy = storedWriteAudioTagsPolicy === "sync" ? "all_files" : storedWriteAudioTagsPolicy;
+    const albumArtistMode = metadataSettings?.album_artist_mode
+        ?? (metadataSettings?.full_album_artist_credit === true ? "picard" : "plex_jellyfin");
 
     const renderToggleRow = (options: {
         title: string;
@@ -155,12 +157,27 @@ export const MetadataFilesSettingsSection = ({
                     checked: metadataSettings?.scrub_audio_tags === true,
                     onChange: (checked) => void updateMetadataSettings({ scrub_audio_tags: checked }),
                 })}
-                {renderToggleRow({
-                    title: "Full artist credit as album artist",
-                    description: "Write every credited artist (\"Artist, Guest\") as album artist. Off keeps one album artist per discography in Plex and Jellyfin; the full credit is always kept in the ALBUMARTISTS tag.",
-                    checked: metadataSettings?.full_album_artist_credit === true,
-                    onChange: (checked) => void updateMetadataSettings({ full_album_artist_credit: checked }),
-                })}
+                <div className={styles.row}>
+                    <div className={styles.rowContent}>
+                        <Text weight="semibold">Album artist tag</Text>
+                        <Text size={200} className={styles.mutedText}>
+                            Plex and Jellyfin keep one artist per album: the primary MusicBrainz name, or Various Artists on compilations. The full credit stays in ALBUMARTISTS. Picard writes the release credit with join phrases, such as &quot;A &amp; B&quot;. Navidrome reads that full credit. Other tags are the same in both modes.
+                        </Text>
+                    </div>
+                    <div className={styles.rowControl}>
+                        <Select
+                            aria-label="Album artist tag"
+                            value={albumArtistMode}
+                            onChange={(_, data) => void updateMetadataSettings({
+                                album_artist_mode: data.value as "plex_jellyfin" | "picard",
+                            })}
+                            className={styles.control}
+                        >
+                            <option value="plex_jellyfin">Plex and Jellyfin (primary artist)</option>
+                            <option value="picard">Picard (full credit)</option>
+                        </Select>
+                    </div>
+                </div>
                 {renderToggleRow({
                     title: "Embed album covers",
                     description: "Write cover art into audio files when tags are written.",

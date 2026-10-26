@@ -25,6 +25,7 @@ import { cleanProviderText } from "./metadata-files.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
 import { classifyLyricsForSidecar, findAdjacentLyricSidecar } from "../extras/lyrics/lyric-sidecar.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
+import { TAG_STANDARD_ID, resolveAlbumArtistMode, type AlbumArtistMode } from "./album-artist-mode.js";
 
 export type ManagedTag = {
   key: string;
@@ -653,13 +654,15 @@ export function splitMultiValue(value: string | null | undefined): string[] {
 }
 
 export type AlbumArtistTagPlan = {
-  /** ALBUMARTIST: primary (owner) artist by default, the full credit when enabled. */
+  /** ALBUMARTIST: one primary artist, or the full credit in Picard mode. */
   albumArtist: string;
   /** MUSICBRAINZ_ALBUMARTISTID values matching `albumArtist`. */
   albumArtistMbids: string[];
-  /** ALBUMARTISTS: every credited album artist (lossless, multi-value). */
+  /** ALBUMARTISTSORT for the same people as `albumArtist`, or null when a sort name is missing. */
+  albumArtistSort: string | null;
+  /** ALBUMARTISTS: every credited album artist (credited-as, MusicBrainz order). */
   creditNames: string[];
-  /** All album-artist MBIDs (lossless, multi-value, ignored by Plex/Jellyfin). */
+  /** All album-artist MBIDs (multi-value). */
   creditMbids: string[];
   /** Release credited to MusicBrainz "Various Artists" (COMPILATION=1, Picard semantics). */
   compilation: boolean;
@@ -668,64 +671,108 @@ export type AlbumArtistTagPlan = {
 /** MusicBrainz special-purpose artist "Various Artists". */
 export const VARIOUS_ARTISTS_MBID = "89ad4ac3-39f7-470e-963a-56509c546377";
 
+type AlbumArtistPart = {
+  credit: string;
+  mbName: string;
+  mbid: string;
+  join: string;
+  sort: string | null;
+};
+
+/** Printed credit. An empty join phrase becomes ", ", matching Picard. */
+function printJoined(parts: AlbumArtistPart[], text: (part: AlbumArtistPart) => string): string {
+  return collapseWhitespace(parts.map((part, index) => {
+    const join = index < parts.length - 1 ? (part.join || ", ") : "";
+    return text(part) + join;
+  }).join(""));
+}
+
+function sortOf(parts: AlbumArtistPart[]): string | null {
+  if (parts.length === 0 || parts.some((part) => !part.sort)) return null;
+  return printJoined(parts, (part) => part.sort || "");
+}
+
 /**
  * Plex and Jellyfin create one artist per distinct ALBUMARTIST string, so a
- * full credit ("A, B") splits an artist's discography. By default only the
- * owning artist's MusicBrainz name is written there, never the release
- * credited-as string. The credited-as credit stays in ALBUMARTISTS and, when
- * full credit is enabled, in ALBUMARTIST. ALBUMARTISTSORT uses that artist's
- * sort name.
+ * full credit ("A & B") splits an artist's discography. `plex_jellyfin` writes
+ * one MusicBrainz name there (or Various Artists). `picard` writes the release
+ * credit with MusicBrainz join phrases. ALBUMARTISTS is the credited-as list
+ * in both modes. `fullCredit: true` is the old boolean and means `picard`.
  */
 export function planAlbumArtistTags(input: {
-  /** Release credited-as strings. Full-credit ALBUMARTIST and ALBUMARTISTS only. */
+  /** Release credited-as strings. Picard ALBUMARTIST and ALBUMARTISTS. */
   creditNames: string[];
-  /** MusicBrainz artist names, aligned with `creditMbids`. Default ALBUMARTIST reads only this list. */
+  /** MusicBrainz artist names, aligned with `creditMbids`. Plex ALBUMARTIST reads this. */
   artistNames: string[];
   creditMbids: string[];
+  /** MusicBrainz join phrases, aligned with the credit. Empty joins print as ", ". */
+  joinPhrases?: Array<string | null | undefined>;
+  /** MusicBrainz sort names, aligned with the credit. */
+  sortNames?: Array<string | null | undefined>;
   ownerMbid: string | null;
   ownerName: string | null;
-  fullCredit: boolean;
+  /** @deprecated Use `mode`. `true` selects Picard. */
+  fullCredit?: boolean;
+  mode?: AlbumArtistMode;
   fallbackName: string;
 }): AlbumArtistTagPlan {
-  const creditNames = dedupeNames(input.creditNames);
-  const artistNames = input.artistNames.map((name) => String(name || "").trim());
-  const creditMbids = input.creditMbids.map((id) => id.toLowerCase());
-  const uniqueMbids = [...new Set(creditMbids.filter(Boolean))];
-  // Picard/MusicBrainz: a VA release keeps "Various Artists" as album artist
-  // whatever folder owns the file, so players group it as one compilation.
-  const vaIndex = uniqueMbids.indexOf(VARIOUS_ARTISTS_MBID);
-  if (vaIndex >= 0) {
-    const vaName = artistNames[creditMbids.indexOf(VARIOUS_ARTISTS_MBID)] || "Various Artists";
+  const mode: AlbumArtistMode = input.mode ?? (input.fullCredit ? "picard" : "plex_jellyfin");
+  const count = Math.max(input.creditNames.length, input.artistNames.length, input.creditMbids.length);
+  const seen = new Set<string>();
+  const parts: AlbumArtistPart[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const credit = String(input.creditNames[index] || "").trim();
+    const mbName = String(input.artistNames[index] || "").trim();
+    const mbid = String(input.creditMbids[index] || "").trim().toLowerCase();
+    const key = (credit || mbName).toLocaleLowerCase();
+    if (!key && !mbid) continue;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    parts.push({
+      credit: credit || mbName,
+      mbName,
+      mbid,
+      join: String(input.joinPhrases?.[index] ?? ""),
+      sort: String(input.sortNames?.[index] || "").trim() || null,
+    });
+  }
+  const creditNames = parts.map((part) => part.credit).filter(Boolean);
+  const creditMbids = [...new Set(parts.map((part) => part.mbid).filter(Boolean))];
+  const owner = input.ownerMbid?.toLowerCase() || null;
+  const va = parts.find((part) => part.mbid === VARIOUS_ARTISTS_MBID);
+  if (va) {
     return {
-      albumArtist: vaName,
+      albumArtist: va.mbName || "Various Artists",
       albumArtistMbids: [VARIOUS_ARTISTS_MBID],
+      albumArtistSort: va.sort || "Various Artists",
       creditNames,
-      creditMbids: uniqueMbids,
+      creditMbids,
       compilation: true,
     };
   }
-  if (input.fullCredit) {
+  if (mode === "picard") {
+    const printed = parts.length > 0 ? printJoined(parts, (part) => part.credit) : "";
     return {
-      albumArtist: creditNames.join(", ") || input.ownerName || input.fallbackName,
-      albumArtistMbids: uniqueMbids.length ? uniqueMbids : (input.ownerMbid ? [input.ownerMbid] : []),
+      albumArtist: printed || input.ownerName || input.fallbackName,
+      albumArtistMbids: creditMbids.length ? creditMbids : (owner ? [owner] : []),
+      albumArtistSort: sortOf(parts),
       creditNames,
-      creditMbids: uniqueMbids,
+      creditMbids,
       compilation: false,
     };
   }
-  const owner = input.ownerMbid?.toLowerCase() || null;
-  const primaryIndex = owner ? creditMbids.indexOf(owner) : -1;
-  const primaryMbid = primaryIndex >= 0 ? creditMbids[primaryIndex] : (uniqueMbids[0] ?? owner);
-  const alignedName = primaryIndex >= 0 ? artistNames[primaryIndex] : artistNames.find((name) => name);
-  const primaryName = alignedName
+  const primary = (owner ? parts.find((part) => part.mbid === owner) : undefined) ?? parts[0];
+  const primaryMbid = primary?.mbid || owner;
+  const primaryName = primary?.mbName
     || (primaryMbid && primaryMbid === owner ? input.ownerName : null)
     || input.ownerName
     || input.fallbackName;
   return {
     albumArtist: primaryName,
     albumArtistMbids: primaryMbid ? [primaryMbid] : [],
+    albumArtistSort: primary?.sort ?? null,
     creditNames,
-    creditMbids: uniqueMbids,
+    creditMbids,
     compilation: false,
   };
 }
@@ -1489,6 +1536,8 @@ export class AudioTagService {
 
   private static retagFingerprint(config: MetadataConfig, quality: QualityConfig, tags: ManagedTag[]): string {
     return `retag:v1:${createHash("sha256").update(JSON.stringify({
+      tagStandard: TAG_STANDARD_ID,
+      albumArtistMode: resolveAlbumArtistMode(config),
       policy: config.write_audio_tags_policy ?? "no",
       scrub: config.scrub_audio_tags === true,
       replaygain: config.embed_replaygain !== false,
@@ -1827,13 +1876,22 @@ export class AudioTagService {
   }
 
   /**
-   * Album-artist roster. `name` is ArtistMetadata.name and is the only value
-   * default ALBUMARTIST may use. `credit` is the release credited-as string.
+   * Album-artist roster. `name` is ArtistMetadata.name (Plex/Jellyfin ALBUMARTIST).
+   * `credit` is the release credited-as string. `joinPhrase` and `sortName`
+   * follow that same credit so Picard mode can print "A & B".
    */
-  private static getAlbumArtistRoster(row: RetagTrackRow, fallbackArtistName: string): Array<{ name: string; credit: string; mbid: string }> {
+  private static getAlbumArtistRoster(row: RetagTrackRow, fallbackArtistName: string): Array<{
+    name: string;
+    credit: string;
+    mbid: string;
+    joinPhrase: string;
+    sortName: string | null;
+  }> {
     const queries: Array<[string, string | null | undefined]> = [
       [`SELECT artist.name AS name,
+          artist.sort_name AS sort_name,
           COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS credit,
+          credit.join_phrase AS join_phrase,
           artist.mbid AS mbid
         FROM ReleaseArtistCredits credit
         JOIN AlbumEditions edition ON edition.id = credit.edition_id
@@ -1841,7 +1899,9 @@ export class AudioTagService {
         WHERE edition.mbid = ?
         ORDER BY credit.ordinal`, row.album_mbid],
       [`SELECT artist.name AS name,
+          artist.sort_name AS sort_name,
           COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS credit,
+          credit.join_phrase AS join_phrase,
           artist.mbid AS mbid
         FROM ReleaseGroupArtistCredits credit
         JOIN Albums release_group ON release_group.id = credit.release_group_id
@@ -1849,89 +1909,94 @@ export class AudioTagService {
         WHERE release_group.mbid = ?
         ORDER BY credit.ordinal ASC`, row.album_mb_release_group_id],
       [`SELECT artist.name AS name,
+          artist.sort_name AS sort_name,
           COALESCE(NULLIF(aa.credited_name, ''), artist.name) AS credit,
+          aa.join_phrase AS join_phrase,
           artist.mbid AS mbid
         FROM AlbumArtists aa
         JOIN ArtistMetadata artist ON artist.mbid = aa.artist_mbid
         WHERE aa.release_group_mbid = ?
         ORDER BY aa.ord ASC`, row.album_mb_release_group_id],
     ];
+    const mapCredit = (credit: { name?: string | null; credit?: string | null; mbid?: string | null; join_phrase?: string | null; sort_name?: string | null }) => ({
+      name: String(credit.name || "").trim(),
+      credit: String(credit.credit || credit.name || "").trim(),
+      mbid: String(credit.mbid || "").trim(),
+      joinPhrase: String(credit.join_phrase ?? ""),
+      sortName: String(credit.sort_name || "").trim() || null,
+    });
     for (const [sql, id] of queries) {
       if (!id) continue;
-      const credits = db.prepare(sql).all(id) as Array<{ name?: string | null; credit?: string | null; mbid?: string | null }>;
-      const roster = credits.map((credit) => ({
-        name: String(credit.name || "").trim(),
-        credit: String(credit.credit || credit.name || "").trim(),
-        mbid: String(credit.mbid || "").trim(),
-      })).filter((credit) => credit.name || credit.credit);
+      const credits = db.prepare(sql).all(id) as Array<{ name?: string | null; credit?: string | null; mbid?: string | null; join_phrase?: string | null; sort_name?: string | null }>;
+      const roster = credits.map(mapCredit).filter((credit) => credit.name || credit.credit);
       if (roster.length > 0) return roster;
     }
 
     if (row.artist_mbid) {
       const artistRow = db.prepare(`
-        SELECT name, mbid
+        SELECT name, mbid, sort_name
         FROM ArtistMetadata
         WHERE mbid = ?
         LIMIT 1
-      `).get(row.artist_mbid) as { name?: string | null; mbid?: string | null } | undefined;
+      `).get(row.artist_mbid) as { name?: string | null; mbid?: string | null; sort_name?: string | null } | undefined;
       const artistName = String(artistRow?.name || "").trim();
       if (artistName) {
-        return [{ name: artistName, credit: artistName, mbid: String(artistRow?.mbid || row.artist_mbid) }];
+        return [{
+          name: artistName,
+          credit: artistName,
+          mbid: String(artistRow?.mbid || row.artist_mbid),
+          joinPhrase: "",
+          sortName: String(artistRow?.sort_name || "").trim() || null,
+        }];
       }
     }
 
-    return [{ name: fallbackArtistName, credit: fallbackArtistName, mbid: String(row.artist_mbid || "") }];
+    return [{
+      name: fallbackArtistName,
+      credit: fallbackArtistName,
+      mbid: String(row.artist_mbid || ""),
+      joinPhrase: "",
+      sortName: null,
+    }];
   }
 
-  /** MusicBrainz sort names (ArtistMetadata.sort_name) for the track and album-artist credits; null when any is unknown. */
-  private static getSortNames(row: RetagTrackRow): { artistSort: string | null; albumArtistSort: string | null } {
-    const sortOf = (mbids: string[]): string[] | null => {
-      if (mbids.length === 0) return null;
-      const result: string[] = [];
-      const translation = getArtistNameTranslationOptions();
-      for (const mbid of mbids) {
-        const found = db.prepare("SELECT name, sort_name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(mbid) as { name?: string | null; sort_name?: string | null } | undefined;
-        const value = String(translateStoredArtistName(
-          mbid,
-          String(found?.name || "").trim(),
-          String(found?.sort_name || "").trim() || null,
-          translation,
-        ).sortName || "").trim();
-        if (!value) return null;
-        result.push(value);
-      }
-      return result;
-    };
-    const plan = this.getAlbumArtistTagPlan(row, String(row.primary_artist_name || "").trim() || "Unknown Artist", false);
-    const albumSorts = sortOf(plan.albumArtistMbids);
+  /** Sort tags for this row. Album-artist sort follows the active album-artist mode. */
+  private static getSortNames(row: RetagTrackRow, mode: AlbumArtistMode): { artistSort: string | null; albumArtistSort: string | null } {
     return {
       artistSort: this.getTrackArtistTagPlan(row).artistSort,
-      albumArtistSort: albumSorts ? albumSorts.join(", ") : null,
+      albumArtistSort: this.getAlbumArtistTagPlan(row, String(row.primary_artist_name || "").trim() || "Unknown Artist", mode).albumArtistSort,
     };
   }
 
-  private static getAlbumArtistTagPlan(row: RetagTrackRow, fallbackArtistName: string, fullCredit: boolean): AlbumArtistTagPlan {
+  private static getAlbumArtistTagPlan(row: RetagTrackRow, fallbackArtistName: string, mode: AlbumArtistMode): AlbumArtistTagPlan {
     const ownerMbid = row.artist_mbid ? String(row.artist_mbid) : null;
     const ownerRow = ownerMbid
-      ? db.prepare("SELECT name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(ownerMbid) as { name?: string | null } | undefined
+      ? db.prepare("SELECT name, sort_name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(ownerMbid) as { name?: string | null; sort_name?: string | null } | undefined
       : undefined;
     const translation = getArtistNameTranslationOptions();
     const roster = this.getAlbumArtistRoster(row, fallbackArtistName).map((credit) => {
-      const translated = translateStoredArtistName(credit.mbid, credit.name, null, translation);
+      const translated = translateStoredArtistName(credit.mbid, credit.name, credit.sortName, translation);
       if (!translated.translated) return credit;
-      return { ...credit, name: translated.name, credit: credit.credit === credit.name ? translated.name : credit.credit };
+      return {
+        ...credit,
+        name: translated.name,
+        sortName: translated.sortName,
+        credit: credit.credit === credit.name ? translated.name : credit.credit,
+      };
     });
     const ownerName = String(ownerRow?.name || "").trim() || null;
-    const translatedOwnerName = ownerName && ownerMbid
-      ? translateStoredArtistName(ownerMbid, ownerName, null, translation).name
-      : ownerName;
+    const translatedOwner = ownerName && ownerMbid
+      ? translateStoredArtistName(ownerMbid, ownerName, String(ownerRow?.sort_name || "").trim() || null, translation)
+      : null;
     return planAlbumArtistTags({
       creditNames: roster.map((credit) => credit.credit),
       artistNames: roster.map((credit) => credit.name),
       creditMbids: roster.map((credit) => credit.mbid),
+      joinPhrases: roster.map((credit) => credit.joinPhrase),
+      sortNames: roster.map((credit) => credit.sortName),
       ownerMbid,
-      ownerName: translatedOwnerName,
-      fullCredit,
+      ownerName: translatedOwner?.name || ownerName,
+      mode,
       fallbackName: fallbackArtistName,
     });
   }
@@ -2303,7 +2368,7 @@ export class AudioTagService {
     }
     // Sort tags are written only from MusicBrainz sort names; otherwise drop
     // stale provider sort tags instead of leaving them inconsistent.
-    const sortNames = this.getSortNames(row);
+    const sortNames = this.getSortNames(row, resolveAlbumArtistMode(config));
     if (!sortNames.artistSort) remove("artist_sort", "Artist Sort", "ARTISTSORT");
     if (!sortNames.albumArtistSort) remove("album_artist_sort", "Album Artist Sort", "ALBUMARTISTSORT");
     if (config.embed_replaygain !== false) {
@@ -2366,7 +2431,7 @@ export class AudioTagService {
     const artistNames = trackArtists.artists;
     const artistCredit = trackArtists.artist;
     const artistMbids = trackArtists.artistMbids;
-    const albumArtistPlan = this.getAlbumArtistTagPlan(row, fallbackArtistName, config.full_album_artist_credit === true);
+    const albumArtistPlan = this.getAlbumArtistTagPlan(row, fallbackArtistName, resolveAlbumArtistMode(config));
     const discNumber = Number(row.media_volume_number || 1);
     const discCount = Number(row.album_num_volumes || 1);
     const trackCount = this.getTrackCountForDisc(row.album_id, discNumber, row.canonical_release_mbid || row.album_mbid);
@@ -2438,12 +2503,11 @@ export class AudioTagService {
           aliases: ["albumartists"],
         },
       );
-      const sortNames = this.getSortNames(row);
-      if (sortNames.artistSort) {
-        tags.push({ key: "artist_sort", label: "Artist Sort", ffmpegKey: "ARTISTSORT", targetValue: sortNames.artistSort, aliases: ["artistsort", "tsop", "soar"] });
+      if (trackArtists.artistSort) {
+        tags.push({ key: "artist_sort", label: "Artist Sort", ffmpegKey: "ARTISTSORT", targetValue: trackArtists.artistSort, aliases: ["artistsort", "tsop", "soar"] });
       }
-      if (sortNames.albumArtistSort) {
-        tags.push({ key: "album_artist_sort", label: "Album Artist Sort", ffmpegKey: "ALBUMARTISTSORT", targetValue: sortNames.albumArtistSort, aliases: ["albumartistsort", "tso2", "soaa"] });
+      if (albumArtistPlan.albumArtistSort) {
+        tags.push({ key: "album_artist_sort", label: "Album Artist Sort", ffmpegKey: "ALBUMARTISTSORT", targetValue: albumArtistPlan.albumArtistSort, aliases: ["albumartistsort", "tso2", "soaa"] });
       }
       if (albumArtistPlan.compilation) {
         tags.push({ key: "compilation", label: "Compilation", ffmpegKey: "COMPILATION", targetValue: "1", aliases: ["compilation", "tcmp", "cpil"] });

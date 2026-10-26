@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { resolveAlbumArtistMode } from "./album-artist-mode.js";
 import {
   dedupeNames,
   isTagValueEqual,
@@ -119,6 +120,39 @@ test("default album artist is the MusicBrainz artist name when the credit differ
     fallbackName: "x",
   });
   assert.equal(full.albumArtist, "The Golden Earrings");
+});
+
+test("Picard mode prints MusicBrainz join phrases; Plex mode keeps one artist", () => {
+  const shared = {
+    creditNames: ["A", "B"],
+    artistNames: ["A", "B"],
+    creditMbids: [AFROJACK, EVA],
+    joinPhrases: [" & ", ""],
+    sortNames: ["A, Sort", "B, Sort"],
+    ownerMbid: AFROJACK,
+    ownerName: "A",
+    fallbackName: "x",
+  };
+  const picard = planAlbumArtistTags({ ...shared, mode: "picard" });
+  assert.equal(picard.albumArtist, "A & B");
+  assert.equal(picard.albumArtistSort, "A, Sort & B, Sort");
+  assert.deepEqual(picard.albumArtistMbids, [AFROJACK, EVA]);
+  assert.deepEqual(picard.creditNames, ["A", "B"]);
+  const plex = planAlbumArtistTags({ ...shared, mode: "plex_jellyfin" });
+  assert.equal(plex.albumArtist, "A");
+  assert.equal(plex.albumArtistSort, "A, Sort");
+  assert.deepEqual(plex.albumArtistMbids, [AFROJACK]);
+  assert.deepEqual(plex.creditNames, ["A", "B"]);
+  const feat = planAlbumArtistTags({ ...shared, joinPhrases: [" feat. ", ""], mode: "picard" });
+  assert.equal(feat.albumArtist, "A feat. B");
+});
+
+test("album artist mode migrates the old full-credit boolean to Picard", () => {
+  assert.equal(resolveAlbumArtistMode(undefined), "plex_jellyfin");
+  assert.equal(resolveAlbumArtistMode({ full_album_artist_credit: true }), "picard");
+  assert.equal(resolveAlbumArtistMode({ album_artist_mode: "plex_jellyfin", full_album_artist_credit: true }), "picard");
+  assert.equal(resolveAlbumArtistMode({ album_artist_mode: "picard" }), "picard");
+  assert.equal(resolveAlbumArtistMode({ album_artist_mode: "plex_jellyfin" }), "plex_jellyfin");
 });
 
 test("a full-credit album artist on disk differs from the primary-only target", () => {

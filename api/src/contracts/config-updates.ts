@@ -74,6 +74,7 @@ const METADATA_UPDATE_KEYS = [
   "write_audio_tags_policy",
   "embed_replaygain",
   "scrub_audio_tags",
+  "album_artist_mode",
   "full_album_artist_credit",
   "translate_artist_names",
   "artist_name_locales",

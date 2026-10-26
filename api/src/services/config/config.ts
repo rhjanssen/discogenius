@@ -5,6 +5,7 @@ import path from "path";
 import { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR } from "./bootstrap.js";
 export { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR };
 import { normalizeMbHost } from "../catalog/mb-connection.js";
+import { resolveAlbumArtistMode, type AlbumArtistMode } from "../mediafiles/album-artist-mode.js";
 
 export interface AppConfig {
   admin_password: string;
@@ -128,7 +129,12 @@ export interface MetadataConfig {
   write_audio_tags_policy?: WriteAudioTagsPolicy;
   /** Remove all existing tags before writing desired ones (scrub existing tags first). */
   scrub_audio_tags?: boolean;
-  /** ALBUMARTIST = full credit ("A, B") instead of the primary artist. Off: media servers keep one artist per discography. */
+  /**
+   * ALBUMARTIST spelling. `plex_jellyfin` (default): one primary MusicBrainz
+   * name, or Various Artists. `picard`: the release credit with join phrases.
+   */
+  album_artist_mode: AlbumArtistMode;
+  /** Legacy. `true` migrates to `album_artist_mode: "picard"` and is not saved again. */
   full_album_artist_credit?: boolean;
   /** Artist names from MusicBrainz locale aliases (Picard "translate artist names"). On: "Tchaikovsky", not "Пётр Ильич Чайковский". */
   translate_artist_names?: boolean;
@@ -315,7 +321,7 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     embed_replaygain: true,
     write_audio_tags_policy: "new_files",
     scrub_audio_tags: false,
-    full_album_artist_credit: false,
+    album_artist_mode: "plex_jellyfin",
     translate_artist_names: true,
     artist_name_locales: "en,nl",
     translate_artist_names_skip_latin: true,
@@ -422,7 +428,7 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
       ? writeAudioTagsPolicy
       : DEFAULT_CONFIG.metadata.write_audio_tags_policy,
     scrub_audio_tags: raw?.scrub_audio_tags ?? DEFAULT_CONFIG.metadata.scrub_audio_tags,
-    full_album_artist_credit: raw?.full_album_artist_credit ?? DEFAULT_CONFIG.metadata.full_album_artist_credit,
+    album_artist_mode: resolveAlbumArtistMode(raw),
     translate_artist_names: raw?.translate_artist_names ?? DEFAULT_CONFIG.metadata.translate_artist_names,
     artist_name_locales: typeof raw?.artist_name_locales === "string" && raw.artist_name_locales.trim()
       ? raw.artist_name_locales.trim()
