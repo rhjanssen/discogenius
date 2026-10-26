@@ -1,4 +1,5 @@
 import { normalizeComparableText, stringSimilarity } from "../mediafiles/import-matching-utils.js";
+import { isDerivativeProviderRelease } from "./derivative-release.js";
 import { providerResourceKey } from "./provider-url-identity.js";
 
 export type ProviderAlbumForReleaseGroupMatching = {
@@ -8,6 +9,10 @@ export type ProviderAlbumForReleaseGroupMatching = {
     providerUrl?: string | null;
     providerUrls?: string[] | null;
     version?: string | null;
+    /** Credited artists, including "Originally Performed by …". */
+    artistCredit?: string | null;
+    /** Record label, when the provider has one separate from the title. */
+    label?: string | null;
     releaseDate?: string | null;
     type?: string | null;
     quality?: string | null;
@@ -631,6 +636,29 @@ export function matchProviderAlbumToReleaseGroup(
     album: ProviderAlbumForReleaseGroupMatching,
     releaseGroups: MusicBrainzReleaseGroupForMatching[],
 ): ProviderReleaseGroupMatch {
+    // Karaoke, tribute, and "originally performed by" products are not this
+    // release. URL, UPC, and ISRC do not override that. Matcher version stays
+    // put: stored accepted rows are not rewritten, so a replay cannot drop them.
+    if (isDerivativeProviderRelease(album)) {
+        return {
+            providerId: album.providerId,
+            status: "unmatched",
+            confidence: 0,
+            method: "derivative-release",
+            releaseMbid: null,
+            evidence: {
+                providerTitle: album.title,
+                providerVersion: album.version ?? null,
+                providerReleaseDate: album.releaseDate ?? null,
+                providerType: album.type ?? null,
+                providerUrlMatched: false,
+                releaseTitleMatched: false,
+                upcMatched: false,
+                isrcOverlap: 0,
+            },
+        };
+    }
+
     const scored = releaseGroups
         .map((releaseGroup) => scoreAlbumAgainstReleaseGroup(album, releaseGroup))
         .filter((candidate) => candidate.providerUrlMatched || candidate.upcMatched || candidate.isrcOverlap >= 1 || candidate.confidence >= 0.78)

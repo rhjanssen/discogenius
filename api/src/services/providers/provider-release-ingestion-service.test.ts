@@ -1383,3 +1383,88 @@ test("two provider items with the same title and runtime still match both slots"
     assert.equal(result.acceptedTrackCount, 2, "distinct provider items stay distinct downloads");
   });
 });
+
+test("automatic karaoke ingest does not accept the release or retire a stored match", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-k', 'Bastille');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-k', 1, 'Song'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-k', 1, 'Song'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES (1, 'rec-song-k', 'Song', 200000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES
+        (1, 't-song-k', 1, 1, 1, 1, 'Song', 200000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
+    `);
+    const item = db.prepare(`
+      INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+      VALUES ('tidal', 'release', 'karaoke-song', 'Song [Karaoke Version]')
+      RETURNING id
+    `).get() as { id: number };
+    db.prepare(`
+      INSERT INTO ProviderEditionMatches (
+        provider_edition_item_id, edition_id, relation, match_state,
+        decision_source, confidence, method, matcher_version
+      ) VALUES (?, 1, 'exact', 'accepted', 'automatic', 1, 'prior', 5)
+    `).run(item.id);
+
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 5,
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "karaoke-song",
+        title: "Song (Originally Performed by Bastille) [Karaoke Version]",
+        availability: "available",
+      },
+      releaseCredits: [{ providerId: "credit-karaoke", name: "Originally Performed by Bastille", ordinal: 0 }],
+      members: [trackMember({ providerId: "p-song-k", title: "Song", durationMs: 200000, mediumPosition: 1, position: 1 })],
+    });
+
+    assert.equal(result.acceptedTrackCount, 0);
+    assert.equal(result.releaseMatchId, null);
+    const match = db.prepare(`
+      SELECT match_state, method FROM ProviderEditionMatches
+    `).get() as { match_state: string; method: string };
+    assert.equal(match.match_state, "accepted");
+    assert.equal(match.method, "prior");
+  });
+});
+
+test("a manual karaoke decision is still stored", () => {
+  withDb((db) => {
+    db.exec(`
+      INSERT INTO ArtistMetadata (id, mbid, name) VALUES (1, 'artist-m', 'Bastille');
+      WITH fixture(id,mbid,artist_metadata_id,title) AS (VALUES (1, 'group-m', 1, 'Song'))
+      INSERT INTO Albums (id,mbid,artist_metadata_id,title,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.artist_metadata_id,fixture.title,(SELECT mbid FROM ArtistMetadata WHERE id=fixture.artist_metadata_id) FROM fixture;
+      WITH fixture(id,mbid,release_group_id,title) AS (VALUES (1, 'release-m', 1, 'Song'))
+      INSERT INTO AlbumEditions (id,mbid,release_group_id,title,release_group_mbid,artist_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.release_group_id,fixture.title,(SELECT mbid FROM Albums WHERE id=fixture.release_group_id),(SELECT artist_mbid FROM Albums WHERE id=fixture.release_group_id) FROM fixture;
+      INSERT INTO Recordings (id, mbid, title, length_ms) VALUES (1, 'rec-song-m', 'Song', 200000);
+      WITH fixture(id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms) AS (VALUES
+        (1, 't-song-m', 1, 1, 1, 1, 'Song', 200000))
+      INSERT INTO Tracks (id,mbid,album_edition_id,recording_id,medium_position,position,title,length_ms,release_mbid,recording_mbid)
+      SELECT fixture.id,fixture.mbid,fixture.album_edition_id,fixture.recording_id,fixture.medium_position,fixture.position,fixture.title,fixture.length_ms,(SELECT mbid FROM AlbumEditions WHERE id=fixture.album_edition_id),(SELECT mbid FROM Recordings WHERE id=fixture.recording_id) FROM fixture;
+    `);
+    const result = new ProviderReleaseIngestionService(db).ingest({
+      canonicalReleaseId: 1,
+      matcherVersion: 5,
+      decisionSource: "manual",
+      release: {
+        provider: "tidal",
+        entityType: "release",
+        providerId: "manual-karaoke",
+        title: "Song [Karaoke Version]",
+        availability: "available",
+      },
+      members: [trackMember({ providerId: "p-song-m", title: "Song", durationMs: 200000, mediumPosition: 1, position: 1 })],
+    });
+    assert.equal(result.acceptedTrackCount, 1);
+  });
+});

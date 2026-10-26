@@ -23,6 +23,7 @@ import {
 import { replanMonitoredEditions, type MonitoredEditionRef } from "../music/acquisition-planning-service.js";
 import { PROVIDER_TRACK_MATCHER_VERSION } from "../music/provider-track-matcher.js";
 import { jsonList, SQL_JSON_LIST } from "../../utils/sql-id-list.js";
+import { isDerivativeProviderRelease } from "../metadata/derivative-release.js";
 
 const MIN_AMBIGUITY_MARGIN = 0.1;
 
@@ -358,7 +359,6 @@ export class ProviderReleaseIngestionService {
     let droppedEditions: Array<{ libraryId: number; editionId: number }> = [];
     const result = this.db.transaction(() => {
       const providerEditionItemId = this.catalog.upsertItem(input.release);
-      droppedEditions = this.invalidateDependentAcquisitionPlans(providerEditionItemId);
       if (input.releaseAudioVariants) {
         this.catalog.replaceAudioVariants(providerEditionItemId, input.releaseAudioVariants,
           { provider: input.release.provider });
@@ -369,6 +369,23 @@ export class ProviderReleaseIngestionService {
           this.materializeCredits(input.release.provider, input.releaseCredits),
         );
       }
+      const decisionSource = input.decisionSource || "automatic";
+      // Store the provider row so it can be reported. Do not invalidate plans
+      // and do not write a match: an existing accepted karaoke row stays until
+      // someone decides, and a replay must not retire it.
+      if (decisionSource !== "manual" && isDerivativeProviderRelease({
+        title: input.release.title,
+        version: input.release.version,
+        artistCredit: (input.releaseCredits ?? []).map((credit) => credit.name).join(" "),
+      })) {
+        return {
+          providerEditionItemId,
+          releaseMatchId: null,
+          acceptedTrackCount: 0,
+          ambiguousTrackCount: 0,
+        };
+      }
+      droppedEditions = this.invalidateDependentAcquisitionPlans(providerEditionItemId);
 
       const memberRows = input.members.map((member) => {
         const memberItemId = this.catalog.upsertItem({
@@ -402,7 +419,6 @@ export class ProviderReleaseIngestionService {
         .map(({ member }, index) => ({ member, memberId: memberIds[index] }))
         .filter(({ member }) => member.item.entityType === "track");
 
-      const decisionSource = input.decisionSource || "automatic";
       const upcNorm = normalizeBarcodeDigits(input.release.upc);
       const upcEditionIds = upcNorm ? this.findEditionIdsByBarcode(upcNorm) : [];
       const identityMode = upcEditionIds.length > 0;

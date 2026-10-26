@@ -83,6 +83,40 @@ test("matches expanded provider editions to the MusicBrainz release group", () =
     assert.ok(match.confidence >= 0.78);
 });
 
+test("karaoke, tribute, and originally-performed-by releases are not the album", () => {
+    // On 95475504 the exact title still scores as Give Me the Future.
+    const karaoke = matchProviderAlbumToReleaseGroup({
+        providerId: "karaoke-gmtf",
+        title: "Give Me the Future",
+        version: "[Karaoke Version]",
+        releaseDate: "2022-02-04",
+        type: "ALBUM",
+        trackCount: 13,
+        volumeCount: 1,
+    }, releaseGroups);
+    assert.equal(karaoke.status, "unmatched");
+    assert.equal(karaoke.method, "derivative-release");
+
+    const credited = matchProviderAlbumToReleaseGroup({
+        providerId: "performed-by",
+        title: "Give Me the Future",
+        artistCredit: "Originally Performed by Bastille",
+        releaseDate: "2022-02-04",
+        type: "ALBUM",
+        trackCount: 13,
+    }, releaseGroups);
+    assert.equal(credited.status, "unmatched");
+
+    const tribute = matchProviderAlbumToReleaseGroup({
+        providerId: "tribute",
+        title: "Give Me the Future",
+        label: "Tribute to Bastille",
+        type: "ALBUM",
+        trackCount: 13,
+    }, releaseGroups);
+    assert.equal(tribute.status, "unmatched");
+});
+
 test("keeps one shared ISRC as a hybrid candidate when track counts differ", () => {
     const match = matchProviderAlbumToReleaseGroup({
         providerId: "short-remix",
