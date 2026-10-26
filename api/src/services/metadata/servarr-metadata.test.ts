@@ -718,6 +718,31 @@ test("a preserved identity conflict leaves the release group incomplete instead 
   assert.equal((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash, null);
 });
 
+test("catalog refresh relocates video artwork on a recording redirect and commits the rest of the edition", async () => {
+  resetCatalog();
+  const { db, payload } = redirectFixture();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  const source = db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original) as { id: number };
+  db.prepare("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url) VALUES('Video',?,'cover','https://example.test/radiohead.jpg')").run(String(source.id));
+  db.prepare("INSERT INTO ArtworkLibraryLinks(cover_entity,entity_id,cover_type,file_path,content_hash) VALUES('Video',?,'cover','/library/radiohead-cover.jpg','hash-live')").run(String(source.id));
+  Object.assign(payload.Releases[0].Tracks[0], { RecordingId: "redirect-target", OldRecordingIds: [original] });
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const target = db.prepare("SELECT id FROM Recordings WHERE mbid = 'redirect-target'").get() as { id: number };
+  assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original), undefined);
+  assert.deepEqual(db.prepare("SELECT entity_id,source_url FROM ArtworkSources WHERE cover_entity='Video'").get(), {
+    entity_id: String(target.id),
+    source_url: "https://example.test/radiohead.jpg",
+  });
+  assert.deepEqual(db.prepare("SELECT entity_id,file_path FROM ArtworkLibraryLinks WHERE cover_entity='Video'").get(), {
+    entity_id: String(target.id),
+    file_path: "/library/radiohead-cover.jpg",
+  });
+  assert.equal((db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid='trk-2'").get() as { recording_mbid: string }).recording_mbid, "rec-2");
+  assert.notEqual((db.prepare("SELECT content_hash FROM Albums WHERE mbid='rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+});
+
 test("differing derived recording credits do not block a MusicBrainz recording merge", async () => {
   resetCatalog();
   const { db, payload } = redirectFixture();

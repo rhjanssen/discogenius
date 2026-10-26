@@ -126,10 +126,38 @@ test('identical credits consolidate without choosing between conflicting facts',
     assert.deepEqual(db.prepare('SELECT recording_id,artist_id,ordinal,credited_name FROM RecordingArtistCredits').all(),[{recording_id:2,artist_id:1,ordinal:0,credited_name:'Artist'}]);
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
 }));
-test('artwork URL identities survive until their file relocation is reconciled',()=>fixture(()=>{
-    db.exec("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url) VALUES('Video','1','cover','https://example.test/source.jpg')");
-    const before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/artwork requiring identity relocation/);assert.equal(snapshot(),before);
-    assert.equal((db.prepare("SELECT entity_id FROM ArtworkSources WHERE cover_entity='Video'").get() as {entity_id:string}).entity_id,'1');
+test('recording redirect re-keys video artwork onto the surviving recording',()=>fixture(()=>{
+    db.exec("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url,content_hash) VALUES('Video','1','cover','https://example.test/source.jpg','hash-old')");
+    db.exec("INSERT INTO ArtworkLibraryLinks(cover_entity,entity_id,cover_type,file_path,content_hash) VALUES('Video','1','cover','/music/MetadataFiles.jpg','hash-old')");
+    db.exec("INSERT INTO ArtworkProxyVariants(cover_entity,entity_id,cover_type,height,source_hash,content_hash,byte_size) VALUES('Video','1','cover',250,'hash-old','proxy-old',12)");
+    db.exec("INSERT INTO ArtworkMutationJournal(id,cover_entity,entity_id,cover_type,destination_path,staged_path,backup_path,replacement_identity,database_snapshot) VALUES('intent','Video','1','cover','/music/MetadataFiles.jpg','/music/.staged.jpg','/music/.backup.jpg','{\"hash\":\"next\"}','{\"source\":{\"entity_id\":\"1\"},\"links\":[{\"entity_id\":\"1\"}],\"file\":null}')");
+    assert.equal(reconcileRecordingRedirects(db,incoming),1);
+    assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid='old'").get(),undefined);
+    assert.deepEqual(db.prepare("SELECT entity_id,source_url,content_hash FROM ArtworkSources WHERE cover_entity='Video'").get(),{entity_id:'2',source_url:'https://example.test/source.jpg',content_hash:'hash-old'});
+    assert.deepEqual(db.prepare("SELECT entity_id,file_path,content_hash FROM ArtworkLibraryLinks WHERE cover_entity='Video'").get(),{entity_id:'2',file_path:'/music/MetadataFiles.jpg',content_hash:'hash-old'});
+    assert.deepEqual(db.prepare("SELECT entity_id,height FROM ArtworkProxyVariants").get(),{entity_id:'2',height:250});
+    assert.deepEqual(db.prepare("SELECT entity_id FROM ArtworkMutationJournal").get(),{entity_id:'2'});
+    const snapshot=JSON.parse((db.prepare("SELECT database_snapshot FROM ArtworkMutationJournal").get() as {database_snapshot:string}).database_snapshot);
+    assert.equal(snapshot.source.entity_id,'2');
+    assert.equal(snapshot.links[0].entity_id,'2');
+    assert.equal(db.prepare("SELECT 1 FROM ArtworkSources WHERE entity_id IN ('1','old')").get(),undefined);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+test('recording redirect keeps the target artwork source and transfers a unique library link',()=>fixture(()=>{
+    db.exec("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url,content_hash) VALUES('Video','1','cover','https://example.test/old.jpg','hash-old'),('Video','2','cover','https://example.test/new.jpg','hash-new')");
+    db.exec("INSERT INTO ArtworkLibraryLinks(cover_entity,entity_id,cover_type,file_path,content_hash) VALUES('Video','1','cover','/music/old-cover.jpg','hash-old'),('Video','2','cover','/music/new-cover.jpg','hash-new')");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare("SELECT entity_id,source_url,content_hash FROM ArtworkSources WHERE cover_entity='Video'").get(),{entity_id:'2',source_url:'https://example.test/new.jpg',content_hash:'hash-new'});
+    assert.deepEqual(db.prepare("SELECT entity_id,file_path FROM ArtworkLibraryLinks ORDER BY file_path").all(),[
+        {entity_id:'2',file_path:'/music/new-cover.jpg'},
+        {entity_id:'2',file_path:'/music/old-cover.jpg'},
+    ]);
+    assert.equal(db.prepare("SELECT 1 FROM ArtworkSources WHERE entity_id='1'").get(),undefined);
+}));
+test('recording redirect keyed by recording MBID still lands on the integer URL identity',()=>fixture(()=>{
+    db.exec("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url) VALUES('Video','old','cover','https://example.test/mbid.jpg')");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare("SELECT entity_id,source_url FROM ArtworkSources WHERE cover_entity='Video'").get(),{entity_id:'2',source_url:'https://example.test/mbid.jpg'});
 }));
 test('video redirects preserve exact provider decision and manual placement',()=>fixture(()=>{
     db.exec("DELETE FROM ProviderTrackMatches; UPDATE Recordings SET is_video=1 WHERE id IN (1,2); INSERT INTO ProviderItems(id,provider,entity_type,provider_id) VALUES(3,'tidal','video','video'); INSERT INTO ProviderVideoMatches(id,provider_video_item_id,recording_id,match_state,decision_source,confidence,method,matcher_version) VALUES(1,3,1,'accepted','manual',1,'test',1)");

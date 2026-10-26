@@ -20,6 +20,58 @@ export function isPreservedCatalogIdentityConflict(error: unknown): boolean {
     return /^(?:UNIQUE constraint failed: (?:RecordingArtistCredits|RecordingRelations|ProviderVideoMatches|ProviderTrackMatches|LibraryVideos|ArtistTopTracks|TrackLibraryIndex)\b|Conflicting recording presentation identity\b)/.test(message);
 }
 
+/** Rebuild a journal snapshot the same way ArtworkMutationJournal recovery does,
+ * after entity_id has already moved. File bytes are not touched. */
+function artworkJournalSnapshot(db:Database.Database, entityId:string, coverType:string, destination:string): string {
+    return JSON.stringify({
+        source: db.prepare("SELECT * FROM ArtworkSources WHERE cover_entity='Video' AND entity_id=? AND cover_type=?").get(entityId,coverType) ?? null,
+        links: db.prepare("SELECT * FROM ArtworkLibraryLinks WHERE file_path=? ORDER BY cover_entity,entity_id,cover_type").all(destination),
+        file: db.prepare(`SELECT id,artist_id,track_file_id,file_path,relative_path,library_root,library_slot,extension,type,file_type,
+            canonical_artist_mbid,canonical_release_group_mbid,canonical_release_mbid,canonical_track_mbid,canonical_recording_mbid,
+            provider,provider_entity_type,provider_id,consumer FROM MetadataFiles WHERE file_path=?`).get(destination) ?? null,
+    });
+}
+
+/** Move video artwork identity onto the surviving recording. Target source facts
+ * win; the merged recording only fills empty preference/hash holes. Duplicate
+ * library-link paths keep the target row. Artwork files are never deleted. */
+function relocateRecordingArtwork(db:Database.Database, old:{id:number;mbid:string}, target:{id:number}): void {
+    const toId=String(target.id);
+    const fromIds=[...new Set([String(old.id),old.mbid].filter((id):id is string=>Boolean(id)&&id!==toId))];
+    for(const fromId of fromIds){
+        const sources=db.prepare("SELECT cover_type,source_url,preference,fulfilled_by,content_hash FROM ArtworkSources WHERE cover_entity='Video' AND entity_id=?").all(fromId) as Array<{
+            cover_type:string;source_url:string;preference:string|null;fulfilled_by:string|null;content_hash:string|null;
+        }>;
+        for(const source of sources){
+            const existing=db.prepare("SELECT 1 FROM ArtworkSources WHERE cover_entity='Video' AND entity_id=? AND cover_type=?").get(toId,source.cover_type);
+            if(!existing){
+                db.prepare(`INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url,preference,fulfilled_by,content_hash)
+                    VALUES('Video',?,?,?,?,?,?)`).run(toId,source.cover_type,source.source_url,source.preference,source.fulfilled_by,source.content_hash);
+            }else{
+                db.prepare(`UPDATE ArtworkSources SET preference=COALESCE(preference,?),fulfilled_by=COALESCE(fulfilled_by,?),content_hash=COALESCE(content_hash,?)
+                    WHERE cover_entity='Video' AND entity_id=? AND cover_type=?`).run(source.preference,source.fulfilled_by,source.content_hash,toId,source.cover_type);
+            }
+        }
+        db.prepare(`DELETE FROM ArtworkLibraryLinks WHERE cover_entity='Video' AND entity_id=? AND EXISTS (
+            SELECT 1 FROM ArtworkLibraryLinks kept WHERE kept.cover_entity='Video' AND kept.entity_id=?
+              AND kept.cover_type=ArtworkLibraryLinks.cover_type AND kept.file_path=ArtworkLibraryLinks.file_path)`).run(fromId,toId);
+        db.prepare("UPDATE ArtworkLibraryLinks SET entity_id=? WHERE cover_entity='Video' AND entity_id=?").run(toId,fromId);
+        db.prepare(`DELETE FROM ArtworkProxyVariants WHERE cover_entity='Video' AND entity_id=? AND EXISTS (
+            SELECT 1 FROM ArtworkProxyVariants kept WHERE kept.cover_entity='Video' AND kept.entity_id=?
+              AND kept.cover_type=ArtworkProxyVariants.cover_type AND kept.height=ArtworkProxyVariants.height)`).run(fromId,toId);
+        db.prepare("UPDATE ArtworkProxyVariants SET entity_id=? WHERE cover_entity='Video' AND entity_id=?").run(toId,fromId);
+        const journals=db.prepare("SELECT id,cover_type,destination_path FROM ArtworkMutationJournal WHERE cover_entity='Video' AND entity_id=?").all(fromId) as Array<{
+            id:string;cover_type:string;destination_path:string;
+        }>;
+        db.prepare("UPDATE ArtworkMutationJournal SET entity_id=? WHERE cover_entity='Video' AND entity_id=?").run(toId,fromId);
+        for(const journal of journals){
+            db.prepare("UPDATE ArtworkMutationJournal SET database_snapshot=? WHERE id=?")
+                .run(artworkJournalSnapshot(db,toId,journal.cover_type,journal.destination_path),journal.id);
+        }
+        db.prepare("DELETE FROM ArtworkSources WHERE cover_entity='Video' AND entity_id=?").run(fromId);
+    }
+}
+
 /** Target canonical facts must have been upserted in the SAME admitted write.
  * Uniqueness/decision collisions roll back, rather than choosing a losing owner.
  * This changes database identity only; physical tags remain a retag operation. */
@@ -29,9 +81,9 @@ export function reconcileRecordingRedirects(db:Database.Database, tracks:readonl
     return db.transaction(()=>{
         let merged=0;
         for(const [oldMbid,newMbid] of redirects){
-            const old=db.prepare('SELECT id,is_video,youtube_video_id FROM Recordings WHERE mbid=?').get(oldMbid) as {id:number;is_video:number;youtube_video_id:string|null}|undefined;
+            const old=db.prepare('SELECT id,mbid,is_video,youtube_video_id FROM Recordings WHERE mbid=?').get(oldMbid) as {id:number;mbid:string;is_video:number;youtube_video_id:string|null}|undefined;
             if(!old) continue;
-            const target=db.prepare('SELECT id,is_video,youtube_video_id FROM Recordings WHERE mbid=?').get(newMbid) as typeof old;
+            const target=db.prepare('SELECT id,mbid,is_video,youtube_video_id FROM Recordings WHERE mbid=?').get(newMbid) as typeof old;
             if(!target) throw new Error(`Missing canonical recording redirect target ${newMbid}`);
             if(old.is_video!==target.is_video || (old.youtube_video_id && target.youtube_video_id && old.youtube_video_id!==target.youtube_video_id))
                 throw new Error(`Conflicting recording presentation identity for ${oldMbid}`);
@@ -40,14 +92,6 @@ export function reconcileRecordingRedirects(db:Database.Database, tracks:readonl
                 OR (recording_mbid=? AND recording_id IS NOT NULL AND recording_id NOT IN (?,?)) LIMIT 1`)
                 .get(old.id,oldMbid,newMbid,oldMbid,old.id,target.id);
             if(conflictingTrack) throw new Error(`Recording ${oldMbid} has conflicting track identity`);
-            // Video artwork is keyed by the integer URL identity, and may have
-            // on-disk proxies or a replacement journal. It needs its own file
-            // relocation workflow; never delete that identity out from under it.
-            for(const table of ['ArtworkSources','ArtworkLibraryLinks','ArtworkMutationJournal']) {
-                const artwork=db.prepare(`SELECT 1 FROM "${table}" WHERE cover_entity='Video' AND entity_id IN (?,?) LIMIT 1`)
-                    .get(String(old.id),oldMbid);
-                if(artwork) throw new Error(`Recording ${oldMbid} has artwork requiring identity relocation`);
-            }
             // Claimed plans and executing standalone snapshots cannot be rewritten.
             const plans=(db.prepare(`SELECT DISTINCT assignment.plan_id AS id FROM AcquisitionPlanTracks assignment
                 WHERE assignment.track_id IN (SELECT id FROM Tracks WHERE recording_id=? OR recording_mbid=?)
@@ -71,6 +115,10 @@ export function reconcileRecordingRedirects(db:Database.Database, tracks:readonl
                 OR canonical_recording_mbid=? AND recording_id IS NOT NULL AND recording_id NOT IN (?,?) LIMIT 1`)
                 .get(old.id,oldMbid,newMbid,oldMbid,old.id,target.id);
             if(contradictory) throw new Error(`Recording ${oldMbid} has conflicting file identity`);
+            // Video artwork is keyed by the recording's integer URL identity.
+            // Re-key provenance in this transaction. Cache files stay on disk
+            // (proxies regenerate; retirement without a source fails closed).
+            relocateRecordingArtwork(db, old, target);
             // Tracks go first: match validation checks the track's recording FK.
             db.prepare(`UPDATE Tracks SET recording_mbid=?,recording_id=?,
                 foreign_recording_id=CASE WHEN foreign_recording_id=? THEN ? ELSE foreign_recording_id END,
