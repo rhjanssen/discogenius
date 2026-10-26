@@ -25,6 +25,9 @@ import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
 import { classifyLyricsForSidecar, findAdjacentLyricSidecar, isSynchronizedLyricContent } from "../extras/lyrics/lyric-sidecar.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 import { TAG_STANDARD_ID, resolveAlbumArtistMode, type AlbumArtistMode } from "./album-artist-mode.js";
+import { relationshipCreditRemovalTags, relationshipManagedTags } from "./relationship-credit-tags.js";
+import type { RecordingWorkLink, RelationshipCredit } from "../catalog/relationship-credit-model.js";
+import { loadCreditSnapshot } from "../metadata/relationship-credit-store.js";
 
 export type ManagedTag = {
   key: string;
@@ -197,6 +200,10 @@ type RetagTrackRow = {
   canonical_recording_mbid: string | null;
   recording_artist_credit: string | null;
   recording_data: string | null;
+  /** True after a mirror refresh has stored this recording's relationship credits. */
+  relationship_credits_known?: boolean;
+  relationship_credits?: RelationshipCredit[];
+  recording_works?: RecordingWorkLink[];
   file_hash: string | null;
   managed_tag_fingerprint: string | null;
   file_size: number | null;
@@ -1674,7 +1681,34 @@ export class AudioTagService {
       params.push(limit, offset);
     }
 
-    return db.prepare(sql).all(...params) as RetagTrackRow[];
+    return this.attachRelationshipCredits(db.prepare(sql).all(...params) as RetagTrackRow[]);
+  }
+
+  private static attachRelationshipCredits(rows: RetagTrackRow[]): RetagTrackRow[] {
+    if (rows.length === 0) return rows;
+    const snapshot = loadCreditSnapshot(
+      db,
+      rows.map((row) => row.canonical_recording_mbid),
+      rows.map((row) => row.canonical_release_mbid),
+    );
+    if (!snapshot || snapshot.known.size === 0) return rows;
+    return rows.map((row) => {
+      const recording = String(row.canonical_recording_mbid || "").trim().toLowerCase();
+      const release = String(row.canonical_release_mbid || "").trim().toLowerCase();
+      if (!recording || !snapshot.known.has(recording)) return row;
+      const works = snapshot.works.filter((work) => work.recordingMbid === recording);
+      const workIds = new Set(works.map((work) => work.workMbid));
+      const credits = snapshot.credits.filter((credit) =>
+        (credit.scope === "recording" && credit.entityMbid === recording)
+        || (credit.scope === "release" && credit.entityMbid === release)
+        || (credit.scope === "work" && workIds.has(credit.entityMbid)));
+      return {
+        ...row,
+        relationship_credits_known: true,
+        relationship_credits: credits,
+        recording_works: works,
+      };
+    });
   }
 
   private static buildTrackRowsSql(whereClause: string, includePaging = false): string {
@@ -1850,7 +1884,9 @@ export class AudioTagService {
       return [];
     }
 
-    return db.prepare(this.buildTrackRowsSql(`lf.id IN ${SQL_JSON_LIST}`, false)).all(jsonList(ids)) as RetagTrackRow[];
+    return this.attachRelationshipCredits(
+      db.prepare(this.buildTrackRowsSql(`lf.id IN ${SQL_JSON_LIST}`, false)).all(jsonList(ids)) as RetagTrackRow[],
+    );
   }
 
   /**
@@ -2110,6 +2146,21 @@ export class AudioTagService {
       artist_sort: "ARTISTSORT",
       album_artist_sort: "ALBUMARTISTSORT",
       composer_sort: "COMPOSERSORT",
+      composer: "COMPOSER",
+      lyricist: "LYRICIST",
+      writer: "WRITER",
+      arranger: "ARRANGER",
+      conductor: "CONDUCTOR",
+      remixer: "REMIXER",
+      producer: "PRODUCER",
+      engineer: "ENGINEER",
+      mixer: "MIXER",
+      djmixer: "DJMIXER",
+      performer: "PERFORMER",
+      work: "WORK",
+      musicbrainz_workid: "MUSICBRAINZ_WORKID",
+      musicbrainz_composerid: "MUSICBRAINZ_COMPOSERID",
+      director: "DIRECTOR",
       compilation: "COMPILATION",
       catalog_number: "CATALOGNUMBER",
       asin: "ASIN",
@@ -2162,6 +2213,17 @@ export class AudioTagService {
       artist_sort: "TSOP",
       album_artist_sort: "TSO2",
       composer_sort: "TSOC",
+      composer: "TCOM",
+      lyricist: "TEXT",
+      writer: "TXXX:Writer",
+      conductor: "TPE3",
+      remixer: "TPE4",
+      performer: "TMCL",
+      involved_people: "TIPL",
+      work: "TXXX:WORK",
+      musicbrainz_workid: "TXXX:MusicBrainz Work Id",
+      musicbrainz_composerid: "TXXX:MusicBrainz Composer Id",
+      director: "TXXX:DIRECTOR",
       compilation: "TCMP",
       catalog_number: "TXXX:CATALOGNUMBER",
       asin: "TXXX:ASIN",
@@ -2219,6 +2281,20 @@ export class AudioTagService {
       artist_sort: "soar",
       album_artist_sort: "soaa",
       composer_sort: "soco",
+      composer: "\u00a9wrt",
+      lyricist: "----:com.apple.iTunes:LYRICIST",
+      writer: "----:com.apple.iTunes:writer",
+      arranger: "----:com.apple.iTunes:arranger",
+      conductor: "----:com.apple.iTunes:CONDUCTOR",
+      remixer: "----:com.apple.iTunes:REMIXER",
+      producer: "----:com.apple.iTunes:PRODUCER",
+      engineer: "----:com.apple.iTunes:ENGINEER",
+      mixer: "----:com.apple.iTunes:MIXER",
+      djmixer: "----:com.apple.iTunes:DJMIXER",
+      work: "\u00a9wrk",
+      musicbrainz_workid: "----:com.apple.iTunes:MusicBrainz Work Id",
+      musicbrainz_composerid: "----:com.apple.iTunes:MusicBrainz Composer Id",
+      director: "\u00a9dir",
       compilation: "cpil",
       catalog_number: "----:com.apple.iTunes:CATALOGNUMBER",
       asin: "----:com.apple.iTunes:ASIN",
@@ -2342,6 +2418,10 @@ export class AudioTagService {
       if (tag.key === "itunesadvisory" && !isM4a) {
         continue;
       }
+      // Picard does not write performer tags to MP4.
+      if (tag.key === "performer" && isM4a) {
+        continue;
+      }
       // ID3 TRCK/TPOS and MP4 trkn/disk already contain number and total.
       if ((isId3 || isM4a) && ["track_number", "track_count", "disc_number", "disc_count"].includes(tag.key)) continue;
 
@@ -2440,6 +2520,9 @@ export class AudioTagService {
     // in every format. MP4 rtng is the itunesadvisory write key and is not
     // this removal.
     remove("acoustid_fingerprint", "AcoustID Fingerprint", "ACOUSTID_FINGERPRINT");
+    if (row.relationship_credits_known) {
+      removals.push(...relationshipCreditRemovalTags(row.extension));
+    }
     remove("provider_url", "Provider URL", "PROVIDER_URL");
     remove("album_artist_mbids", "Legacy Album Artist MBIDs", "DISCOGENIUS_ALBUMARTIST_MBIDS");
     remove("legacy_itunesadvisory", "Legacy iTunes Advisory", "ITUNESADVISORY");
@@ -3031,6 +3114,15 @@ export class AudioTagService {
           aliases: ["replaygain_track_peak"],
         });
       }
+    }
+
+    if (row.relationship_credits_known) {
+      tags.push(...relationshipManagedTags({
+        credits: row.relationship_credits ?? [],
+        works: row.recording_works ?? [],
+        extension: row.extension,
+        mediumPosition: row.media_volume_number,
+      }));
     }
 
     return tags.filter((tag) => Boolean(normalizeComparableValue(tag.targetValue)));

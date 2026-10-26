@@ -15,6 +15,8 @@ import {
   type ManagedTag,
 } from "./audio-tag-service.js";
 import { writeMediaTagsWithTagLib } from "./media-tag-io.js";
+import { relationshipCreditRemovalTags, relationshipManagedTags } from "./relationship-credit-tags.js";
+import type { RelationshipCredit, RecordingWorkLink } from "../catalog/relationship-credit-model.js";
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status === 0;
 const A = "a3ee920f-4e7f-4993-8aca-4b8538cfaa4a";
@@ -132,6 +134,9 @@ import json, sys
 path = sys.argv[1]
 ext = path.rsplit(".", 1)[-1].lower()
 def texts(frame):
+    people = getattr(frame, "people", None)
+    if people:
+        return [list(pair) for pair in people]
     text = getattr(frame, "text", None)
     if text is None:
         return None
@@ -335,6 +340,121 @@ test("AIFF-C is left unchanged when TagLib cannot open it", { skip: !hasFfmpeg }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+const CREDIT_RECORDING = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+const CREDIT_COMPOSER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+const CREDIT_WORK = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
+
+function creditFixture(): { credits: RelationshipCredit[]; works: RecordingWorkLink[] } {
+  const person = (role: string, attribute: string, artistMbid: string, creditedName: string, sortName: string | null, order: number): RelationshipCredit => ({
+    scope: "recording",
+    entityMbid: CREDIT_RECORDING,
+    role,
+    attribute,
+    artistMbid,
+    creditedName,
+    sortName,
+    order,
+    mediumPosition: null,
+  });
+  return {
+    credits: [
+      person("composer", "", CREDIT_COMPOSER, "Johann Sebastian Bach", "Bach, Johann Sebastian", 1),
+      person("lyricist", "", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3", "Line Writer", null, 2),
+      person("producer", "", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4", "Pat Producer", null, 3),
+      person("performer", "guitar", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5", "Gus Guitar", null, 4),
+      person("performer", "vocals", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6", "Vic Vocal", null, 5),
+    ],
+    works: [{
+      recordingMbid: CREDIT_RECORDING,
+      workMbid: CREDIT_WORK,
+      title: "The Well-Tempered Clavier",
+      order: 1,
+      instrumental: false,
+    }],
+  };
+}
+
+function assertCreditFields(tags: Record<string, unknown>, extension: string): void {
+  const people = (key: string): unknown[] => {
+    const value = tags[key];
+    return Array.isArray(value) ? value : [];
+  };
+  if (extension === ".flac" || extension === ".ogg" || extension === ".opus") {
+    assert.deepEqual(values(tags, "COMPOSER"), ["Johann Sebastian Bach"]);
+    assert.deepEqual(values(tags, "COMPOSERSORT"), ["Bach, Johann Sebastian"]);
+    assert.deepEqual(values(tags, "LYRICIST"), ["Line Writer"]);
+    assert.deepEqual(values(tags, "PRODUCER"), ["Pat Producer"]);
+    assert.deepEqual(values(tags, "PERFORMER"), ["Gus Guitar (guitar)", "Vic Vocal (vocals)"]);
+    assert.deepEqual(values(tags, "WORK"), ["The Well-Tempered Clavier"]);
+    assert.deepEqual(values(tags, "MUSICBRAINZ_WORKID"), [CREDIT_WORK]);
+    assert.deepEqual(values(tags, "MUSICBRAINZ_COMPOSERID"), [CREDIT_COMPOSER]);
+    return;
+  }
+  if (extension === ".m4a") {
+    assert.deepEqual(values(tags, "\u00a9wrt"), ["Johann Sebastian Bach"]);
+    assert.deepEqual(values(tags, "soco"), ["Bach, Johann Sebastian"]);
+    assert.deepEqual(values(tags, "----:com.apple.iTunes:LYRICIST"), ["Line Writer"]);
+    assert.deepEqual(values(tags, "----:com.apple.iTunes:PRODUCER"), ["Pat Producer"]);
+    assert.deepEqual(values(tags, "\u00a9wrk"), ["The Well-Tempered Clavier"]);
+    assert.deepEqual(values(tags, "----:com.apple.iTunes:MusicBrainz Work Id"), [CREDIT_WORK]);
+    assert.deepEqual(values(tags, "----:com.apple.iTunes:MusicBrainz Composer Id"), [CREDIT_COMPOSER]);
+    const performerKeys = Object.keys(tags).filter((key) => /performer/i.test(key));
+    assert.deepEqual(performerKeys, []);
+    return;
+  }
+  assert.deepEqual(values(tags, "TCOM"), ["Johann Sebastian Bach"]);
+  assert.deepEqual(values(tags, "TSOC"), ["Bach, Johann Sebastian"]);
+  assert.deepEqual(values(tags, "TEXT"), ["Line Writer"]);
+  assert.deepEqual(people("TIPL"), [["producer", "Pat Producer"]]);
+  assert.deepEqual(people("TMCL"), [["guitar", "Gus Guitar"], ["vocals", "Vic Vocal"]]);
+  assert.deepEqual(values(tags, "TXXX:WORK"), ["The Well-Tempered Clavier"]);
+  assert.deepEqual(values(tags, "TXXX:MusicBrainz Work Id"), [CREDIT_WORK]);
+  assert.deepEqual(values(tags, "TXXX:MusicBrainz Composer Id"), [CREDIT_COMPOSER]);
+}
+
+for (const format of FORMATS) {
+  const label = "label" in format ? format.label : format.extension;
+  test(`Picard credits ${label}`, { skip: !hasFfmpeg }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-credits-"));
+    try {
+      const mediaPath = path.join(tempDir, `sample${format.extension}`);
+      generateAudio(mediaPath, format.codec);
+      const fixture = creditFixture();
+      const stalePerformer = relationshipManagedTags({
+        credits: [{
+          scope: "recording",
+          entityMbid: CREDIT_RECORDING,
+          role: "performer",
+          attribute: "piano",
+          artistMbid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9",
+          creditedName: "Old Pianist",
+          sortName: null,
+          order: 1,
+          mediumPosition: null,
+        }],
+        works: [],
+        extension: format.extension,
+        mediumPosition: 1,
+      });
+      if (stalePerformer.length > 0) {
+        const seeded = await writeMediaTagsWithTagLib(
+          mediaPath,
+          AudioTagService.buildAudioTagWriteMap(stalePerformer, format.extension),
+        );
+        assert.equal(seeded.success, true, seeded.error);
+      }
+      const desired = relationshipManagedTags({ ...fixture, extension: format.extension, mediumPosition: 1 });
+      const written = AudioTagService.buildAudioTagWriteMap(desired, format.extension);
+      const removed = AudioTagService.buildAudioTagRemovalKeys(relationshipCreditRemovalTags(format.extension), format.extension);
+      const result = await writeMediaTagsWithTagLib(mediaPath, written, removed);
+      assert.equal(result.success, true, result.error);
+      assertCreditFields(readMutagen(mediaPath), format.extension);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+}
 
 test("wma, ape, mp2, and alac are not half-tagged", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-untaggable-"));

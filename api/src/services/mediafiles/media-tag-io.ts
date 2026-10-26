@@ -19,6 +19,7 @@ import {
   Id3v2FrameClassType,
   Id3v2FrameIdentifiers,
   Id3v2Tag,
+  Id3v2TextInformationFrame,
   Id3v2UserTextInformationFrame,
   Id3v2UniqueFileIdentifierFrame,
   Mpeg4AppleTag,
@@ -70,6 +71,8 @@ const ID3_TEXT_KEYS: Record<string, string> = {
   text: "TEXT",
   tpe3: "TPE3",
   tpe4: "TPE4",
+  tmcl: "TMCL",
+  tipl: "TIPL",
   isrc: "TSRC",
   copyright: "TCOP",
   publisher: "TPUB",
@@ -100,6 +103,9 @@ const MP4_TEXT_KEYS: Record<string, string> = {
   soco: "soco",
   "\xa9pub": "\xa9pub",
   composer: "\xa9wrt",
+  "\xa9wrt": "\xa9wrt",
+  "\xa9wrk": "\xa9wrk",
+  "\xa9dir": "\xa9dir",
   lyrics: "\xa9lyr",
   "lyrics-eng": "\xa9lyr",
   isrc: "isrc",
@@ -114,6 +120,12 @@ const MULTI_VALUE_FIELD_NAMES = new Set([
   "artists", "albumartists", "discogenius_albumartist_mbids",
   "genre", "tcon", "\xa9gen", "releasetype", "musicbrainz album type",
   "label", "publisher", "tpub", "catalognumber",
+  "composer", "composersort", "lyricist", "writer", "arranger", "conductor",
+  "producer", "engineer", "mixer", "djmixer", "remixer", "performer", "work",
+  "director", "musicbrainz_workid", "musicbrainz_composerid",
+  "musicbrainz work id", "musicbrainz composer id",
+  "tcom", "text", "tsoc", "tpe3", "tpe4",
+  "\xa9wrt", "\xa9wrk", "\xa9dir", "soco",
 ]);
 const SLASH_LIST_FIELD_NAMES = new Set(["genre", "tcon", "\xa9gen", "releasetype", "musicbrainz album type"]);
 
@@ -297,6 +309,27 @@ function findUserTextFrame(
   );
 }
 
+const guardedPeopleTags = new WeakSet<Id3v2Tag>();
+
+/** TagLib's render() deletes TMCL when performersRole is empty. Keep a frame we just wrote. */
+function keepWrittenPeopleFrames(tag: Id3v2Tag): void {
+  if (guardedPeopleTags.has(tag)) return;
+  guardedPeopleTags.add(tag);
+  const original = tag.setTextFrame.bind(tag);
+  tag.setTextFrame = ((ident: unknown, ...text: string[]) => {
+    if (String(ident) === "TMCL" && text.every((item) => !item)) return;
+    return original(ident as never, ...text);
+  }) as Id3v2Tag["setTextFrame"];
+}
+
+function readPeopleFrame(tag: Id3v2Tag, key: string): string {
+  const identifier = id3TextIdentifier(key);
+  if (!identifier) return "";
+  const frames = tag.getFramesByClassType<Id3v2TextInformationFrame>(Id3v2FrameClassType.TextInformationFrame);
+  const frame = Id3v2TextInformationFrame.findTextInformationFrame(frames, identifier);
+  return frame?.text?.join("\0") ?? "";
+}
+
 function setId3UserText(tag: Id3v2Tag, description: string, value: string): void {
   const existing = findUserTextFrame(tag, description);
   if (!value) {
@@ -336,6 +369,17 @@ function setId3Value(tag: Id3v2Tag, rawKey: string, value: string): void {
   const lower = key.toLowerCase();
   if (lower.startsWith("txxx:")) {
     setId3UserText(tag, key.slice(5), value);
+    return;
+  }
+  if (lower === "tmcl" || lower === "tipl") {
+    const identifier = id3TextIdentifier(lower);
+    if (!identifier) return;
+    if (!value) {
+      tag.removeFrames(identifier);
+      return;
+    }
+    if (lower === "tmcl") keepWrittenPeopleFrames(tag);
+    tag.setTextFrame(identifier, ...value.split("\0"));
     return;
   }
   if (lower === "lyrics-eng" || lower === "lyrics" || lower === "unsyncedlyrics") {
@@ -386,6 +430,7 @@ function readId3Value(tag: Id3v2Tag, rawKey: string): string {
   if (lower.startsWith("txxx:")) {
     return findUserTextFrame(tag, key.slice(5))?.text?.join("; ") ?? "";
   }
+  if (lower === "tmcl" || lower === "tipl") return readPeopleFrame(tag, lower);
   if (lower === "lyrics-eng" || lower === "lyrics" || lower === "unsyncedlyrics") {
     return tag.lyrics ?? "";
   }
@@ -628,11 +673,21 @@ function verifyTagLibValuesInFile(
     }
   }
   for (const key of removeKeys) {
-    if (Object.hasOwn(tags, key)) continue;
+    // Vorbis, ID3 TXXX descriptions, and MP4 freeform names compare
+    // case-insensitively, and "composer" is the ©wrt atom. A removal key that
+    // names a field this write just set is the kept value, not a leftover.
+    if (Object.keys(tags).some((written) => tagKeysNameSameField(extension, key, written))) continue;
     if (normalizeTagValue(readTagLibValueFromFile(file, extension, key))) {
       throw new Error(`TagLib removal verification failed for ${key}`);
     }
   }
+}
+
+function tagKeysNameSameField(extension: string, left: string, right: string): boolean {
+  if (left.toLowerCase() === right.toLowerCase()) return true;
+  const leftNative = nativeMediaTagKeys(left, extension).map((key) => key.toLowerCase());
+  const rightNative = nativeMediaTagKeys(right, extension).map((key) => key.toLowerCase());
+  return leftNative.some((key) => rightNative.includes(key));
 }
 
 const IN_PLACE_PROBE_TAIL_BYTES = 256 * 1024;
