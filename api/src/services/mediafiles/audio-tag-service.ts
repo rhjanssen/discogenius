@@ -19,11 +19,10 @@ import { embedAudioCover, compareEmbeddedAudioCover, type CoverImageInfo, type E
 import { resolveUsableAlbumCover } from "./album-cover-repair.js";
 import { metadataWriteFailureKind } from "./tag-write-failure.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
-import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
 import { cleanProviderText } from "./metadata-files.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
-import { classifyLyricsForSidecar, findAdjacentLyricSidecar } from "../extras/lyrics/lyric-sidecar.js";
+import { classifyLyricsForSidecar, findAdjacentLyricSidecar, isSynchronizedLyricContent } from "../extras/lyrics/lyric-sidecar.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 import { TAG_STANDARD_ID, resolveAlbumArtistMode, type AlbumArtistMode } from "./album-artist-mode.js";
 
@@ -36,8 +35,25 @@ export type ManagedTag = {
   writeAliases?: string[];
 };
 
+/** Drop LRC timestamps and [ar:]-style metadata. The synced text stays in the .lrc sidecar. */
+function plainLyricsText(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line
+      .replace(/^\s*(?:\[\d{1,3}:[0-5]\d(?:[.:]\d{1,3})?\])+\s*/u, "")
+      .replace(/^\s*\[[a-z]{2,}:[^\]]*\]\s*/iu, ""))
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join("\n")
+    .trim();
+}
+
 export function selectEmbeddedLyricsText(lyrics: { subtitles?: string | null; text?: string | null } | null | undefined): string {
-  return classifyLyricsForSidecar(lyrics)?.content || "";
+  const classified = classifyLyricsForSidecar(lyrics);
+  if (!classified) return "";
+  if (!classified.synchronized) return classified.text || classified.content;
+  if (classified.text && !isSynchronizedLyricContent(classified.text)) return classified.text;
+  return plainLyricsText(classified.subtitles || classified.content);
 }
 
 export function buildEmbeddedLyricsManagedTag(
@@ -154,6 +170,11 @@ type RetagTrackRow = {
   album_original_date: string | null;
   media_format: string | null;
   album_label: string | null;
+  album_catalog_numbers: string | null;
+  album_asin: string | null;
+  album_script: string | null;
+  album_language: string | null;
+  disc_subtitle: string | null;
   album_review_text: string | null;
   media_credits: string | null;
   media_mbid: string | null;
@@ -368,23 +389,11 @@ async function resolveLyricsForRetagRow(
   return lyrics;
 }
 
-function buildProviderTrackUrl(row: RetagTrackRow): string {
-  const provider = String(row.file_provider || "tidal").trim() || "tidal";
-  const providerTrackId = String(row.file_provider_id || row.media_id || "").trim();
-
-  try {
-    return buildStreamingMediaUrl("track", providerTrackId, provider);
-  } catch {
-    return "";
-  }
-}
-
 function shouldSkipEmbeddedAudioTagWrite(row: RetagTrackRow): boolean {
-  // ffmpeg has no APE (Monkey's Audio) muxer/encoder in this build (decode-only,
-  // confirmed live: `ffmpeg -formats` lists "ape" with demuxer support only) —
-  // a stream-copy metadata rewrite has no container to write back into. APE
-  // files still import/play fine; they just can't carry Discogenius's tags.
-  return String(row.extension || "").toLowerCase().replace(/^\./, "") === "ape";
+  // These containers cannot store Picard's multi-value fields. ffmpeg would
+  // write one joined string or fail the mux. Leave the file unchanged.
+  const extension = String(row.extension || "").toLowerCase().replace(/^\./, "");
+  return extension === "ape" || extension === "wma" || extension === "mp2" || extension === "alac";
 }
 
 function resolveTagPolicy(config: MetadataConfig): WriteAudioTagsPolicy {
@@ -644,7 +653,9 @@ export function dedupeNames(names: string[]): string[] {
 }
 
 /** Tags written as one field per value, joined with "; " in managed tag values. */
-export const MULTI_VALUE_TAG_KEYS = new Set(["artists", "album_artists", "album_artist_mbids"]);
+export const MULTI_VALUE_TAG_KEYS = new Set([
+  "artists", "album_artists", "album_artist_mbids", "label", "catalog_number",
+]);
 /** Picard writes these as one field/value per item too; compared order-insensitively. */
 export const MULTI_VALUE_SET_TAG_KEYS = new Set(["genre", "release_type"]);
 export const MULTI_VALUE_SEPARATOR = "; ";
@@ -1205,7 +1216,15 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
   const fallback = () => getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || [])]);
 
   if (MULTI_VALUE_TAG_KEYS.has(tag.key)) {
-    return readNativeMultiValue(metadata, [tag.ffmpegKey, ...(tag.aliases || [])]);
+    const native = readNativeMultiValue(metadata, [tag.ffmpegKey, ...(tag.aliases || [])]);
+    if (native) return native;
+    // music-metadata often keeps every label on common.label and nothing in native.
+    if (tag.key === "label") {
+      const labels = Array.isArray(common.label) ? common.label : (common.label ? [common.label] : []);
+      const joined = labels.map((item: unknown) => String(item).trim()).filter(Boolean).join(MULTI_VALUE_SEPARATOR);
+      return joined || fallback();
+    }
+    return fallback();
   }
   if (tag.key === "release_type") {
     const native = readNativeMultiValue(metadata, [tag.ffmpegKey, ...(tag.aliases || []), "releasetype", "musicbrainz album type"]);
@@ -1729,6 +1748,22 @@ export class AudioTagService {
           'Digital Media'
         ) AS media_format,
         canonical_release.label AS album_label,
+        canonical_release.catalog_numbers AS album_catalog_numbers,
+        canonical_release.asin AS album_asin,
+        canonical_release.script AS album_script,
+        canonical_release.language AS album_language,
+        (SELECT MAX(COALESCE(
+          NULLIF(TRIM(json_extract(subtitle.value, '$.Name')), ''),
+          NULLIF(TRIM(json_extract(subtitle.value, '$.name')), ''),
+          NULLIF(TRIM(json_extract(subtitle.value, '$.title')), ''),
+          NULLIF(TRIM(json_extract(subtitle.value, '$.Title')), '')
+        )) FROM json_each(CASE WHEN json_valid(canonical_release.media) THEN canonical_release.media ELSE '[]' END) subtitle
+        WHERE COALESCE(
+          json_extract(subtitle.value, '$.position'),
+          json_extract(subtitle.value, '$.Position'),
+          CAST(subtitle.key AS INTEGER) + 1
+        ) = COALESCE(canonical_track.medium_position, 1)
+        HAVING COUNT(*) = 1) AS disc_subtitle,
         COALESCE(
           canonical_group.review_text,
           canonical_group.overview
@@ -2029,7 +2064,8 @@ export class AudioTagService {
     // .opus is Ogg-container Vorbis comments, same scheme as FLAC/OGG
     // (matches Xiph tag-type handling, which covers Opus identically).
     const isFlac = [".flac", ".ogg", ".oga", ".opus"].includes(ext);
-    const isMp3 = ext === ".mp3" || ext === ".aac";
+    // WAV and classic AIFF store the same ID3v2 frames as MP3/AAC.
+    const isId3 = [".mp3", ".aac", ".wav", ".aif", ".aiff"].includes(ext);
     const isM4a = ext === ".m4a" || ext === ".mp4";
     const isWma = ext === ".wma";
     const isApe = ext === ".ape";
@@ -2074,6 +2110,15 @@ export class AudioTagService {
       artist_sort: "ARTISTSORT",
       album_artist_sort: "ALBUMARTISTSORT",
       compilation: "COMPILATION",
+      catalog_number: "CATALOGNUMBER",
+      asin: "ASIN",
+      script: "SCRIPT",
+      language: "LANGUAGE",
+      disc_subtitle: "DISCSUBTITLE",
+      original_year: "ORIGINALYEAR",
+      legacy_itunesadvisory: "ITUNESADVISORY",
+      album_artist_mbids: "DISCOGENIUS_ALBUMARTIST_MBIDS",
+      legacy_release_time: "RELEASETIME",
     };
 
     const mp3Map: Record<string, string> = {
@@ -2116,6 +2161,15 @@ export class AudioTagService {
       artist_sort: "TSOP",
       album_artist_sort: "TSO2",
       compilation: "TCMP",
+      catalog_number: "TXXX:CATALOGNUMBER",
+      asin: "TXXX:ASIN",
+      script: "TXXX:SCRIPT",
+      language: "TLAN",
+      disc_subtitle: "TSST",
+      original_year: "TXXX:originalyear",
+      legacy_itunesadvisory: "TXXX:ITUNESADVISORY",
+      album_artist_mbids: "TXXX:DISCOGENIUS_ALBUMARTIST_MBIDS",
+      legacy_release_time: "TXXX:RELEASETIME",
       legacy_track_number: "TXXX:Track Number",
       legacy_track_count: "TXXX:Track Count",
       legacy_disc_number: "TXXX:Disc Number",
@@ -2163,6 +2217,14 @@ export class AudioTagService {
       artist_sort: "soar",
       album_artist_sort: "soaa",
       compilation: "cpil",
+      catalog_number: "----:com.apple.iTunes:CATALOGNUMBER",
+      asin: "----:com.apple.iTunes:ASIN",
+      script: "----:com.apple.iTunes:SCRIPT",
+      language: "----:com.apple.iTunes:LANGUAGE",
+      disc_subtitle: "----:com.apple.iTunes:DISCSUBTITLE",
+      original_year: "----:com.apple.iTunes:originalyear",
+      legacy_itunesadvisory: "----:com.apple.iTunes:ITUNESADVISORY",
+      album_artist_mbids: "----:com.apple.iTunes:DISCOGENIUS_ALBUMARTIST_MBIDS",
       legacy_track_number: "----:com.apple.iTunes:Track Number",
       legacy_track_count: "----:com.apple.iTunes:Track Count",
       legacy_disc_number: "----:com.apple.iTunes:Disc Number",
@@ -2229,7 +2291,7 @@ export class AudioTagService {
       if (isFlac) {
         return flacMap[tag.key] || tag.ffmpegKey.toUpperCase();
       }
-      if (isMp3) {
+      if (isId3) {
         const mapped = mp3Map[tag.key];
         if (mapped) return mapped;
         if (tag.ffmpegKey.toUpperCase().startsWith("TXXX:")) return tag.ffmpegKey;
@@ -2272,8 +2334,13 @@ export class AudioTagService {
       if (isFlac && (tag.key === "track" || tag.key === "disc")) {
         continue;
       }
+      // Explicit content is the MP4 rtng atom. Vorbis/ID3 TXXX:ITUNESADVISORY
+      // is removed, not written.
+      if (tag.key === "itunesadvisory" && !isM4a) {
+        continue;
+      }
       // ID3 TRCK/TPOS and MP4 trkn/disk already contain number and total.
-      if ((isMp3 || isM4a) && ["track_number", "track_count", "disc_number", "disc_count"].includes(tag.key)) continue;
+      if ((isId3 || isM4a) && ["track_number", "track_count", "disc_number", "disc_count"].includes(tag.key)) continue;
 
       const formatKey = getFormatKey(tag);
       output[formatKey] = value;
@@ -2363,9 +2430,13 @@ export class AudioTagService {
     // Provider duplicates of fields we manage; only removed when we write the
     // managed value so no unique information is lost.
     if (parseJsonStringList(row.album_label).length > 0) remove("legacy_publisher", "Legacy Publisher", "\u00a9pub");
-    if (normalizeReleaseDate(row.media_release_date || row.album_release_date)) {
-      remove("legacy_release_time", "Legacy Release Time", "----:com.apple.iTunes:RELEASETIME");
-    }
+    // Custom frames from earlier Discogenius releases. A retag deletes them
+    // in every format. MP4 rtng is the itunesadvisory write key and is not
+    // this removal.
+    remove("provider_url", "Provider URL", "PROVIDER_URL");
+    remove("album_artist_mbids", "Legacy Album Artist MBIDs", "DISCOGENIUS_ALBUMARTIST_MBIDS");
+    remove("legacy_itunesadvisory", "Legacy iTunes Advisory", "ITUNESADVISORY");
+    remove("legacy_release_time", "Legacy Release Time", "RELEASETIME");
     // Sort tags are written only from MusicBrainz sort names; otherwise drop
     // stale provider sort tags instead of leaving them inconsistent.
     const sortNames = this.getSortNames(row, resolveAlbumArtistMode(config));
@@ -2614,6 +2685,27 @@ export class AudioTagService {
             "original date",
           ],
         });
+        const originalYear = /^(\d{4})/.exec(originalDate)?.[1];
+        if (originalYear) {
+          tags.push({
+            key: "original_year",
+            label: "Original Year",
+            ffmpegKey: "ORIGINALYEAR",
+            targetValue: originalYear,
+            aliases: ["originalyear"],
+          });
+        }
+      }
+
+      const discSubtitle = String(row.disc_subtitle || "").trim();
+      if (discSubtitle) {
+        tags.push({
+          key: "disc_subtitle",
+          label: "Disc Subtitle",
+          ffmpegKey: "DISCSUBTITLE",
+          targetValue: discSubtitle,
+          aliases: ["discsubtitle", "tsst"],
+        });
       }
 
       const mediaFormat = String(row.media_format || "Digital Media").trim();
@@ -2627,8 +2719,6 @@ export class AudioTagService {
         });
       }
 
-      // Kodi/Jellyfin/Picard read genre from embedded tags (not album.nfo for
-      // Jellyfin). Join with " / " — Kodi's default multi-value divider.
       const albumGenres = parseJsonStringList(row.album_genres);
       if (albumGenres.length > 0) {
         tags.push({
@@ -2667,26 +2757,37 @@ export class AudioTagService {
         });
       }
 
-      // Picard/Kodi LABEL / publisher — first label from AlbumEditions.label JSON.
       const albumLabels = parseJsonStringList(row.album_label);
       if (albumLabels.length > 0) {
         tags.push({
           key: "label",
           label: "Label",
           ffmpegKey: "LABEL",
-          targetValue: albumLabels[0],
+          targetValue: albumLabels.join(MULTI_VALUE_SEPARATOR),
           aliases: ["publisher"],
         });
       }
-
-      if (config.write_tidal_url) {
+      const catalogNumbers = parseJsonStringList(row.album_catalog_numbers);
+      if (catalogNumbers.length > 0) {
         tags.push({
-          key: "provider_url",
-          label: "provider URL",
-          ffmpegKey: "PROVIDER_URL",
-          targetValue: buildProviderTrackUrl(row),
-          aliases: ["provider_url", "tidal_url", "url", "purl"],
+          key: "catalog_number",
+          label: "Catalog Number",
+          ffmpegKey: "CATALOGNUMBER",
+          targetValue: catalogNumbers.join(MULTI_VALUE_SEPARATOR),
+          aliases: ["catalognumber"],
         });
+      }
+      const asin = String(row.album_asin || "").trim();
+      if (asin) {
+        tags.push({ key: "asin", label: "ASIN", ffmpegKey: "ASIN", targetValue: asin, aliases: ["asin"] });
+      }
+      const script = String(row.album_script || "").trim();
+      if (script) {
+        tags.push({ key: "script", label: "Script", ffmpegKey: "SCRIPT", targetValue: script, aliases: ["script"] });
+      }
+      const language = String(row.album_language || "").trim();
+      if (language) {
+        tags.push({ key: "language", label: "Language", ffmpegKey: "LANGUAGE", targetValue: language, aliases: ["language", "tlan"] });
       }
 
       if (row.media_mbid) {
@@ -2722,15 +2823,6 @@ export class AudioTagService {
         });
       }
 
-      if (albumArtistPlan.creditMbids.length) {
-        tags.push({
-          key: "album_artist_mbids",
-          label: "Album Artist Credit MBIDs",
-          ffmpegKey: "DISCOGENIUS_ALBUMARTIST_MBIDS",
-          targetValue: albumArtistPlan.creditMbids.join(MULTI_VALUE_SEPARATOR),
-          aliases: ["discogenius_albumartist_mbids"],
-        });
-      }
       if (albumArtistPlan.albumArtistMbids.length) {
         tags.push({
           key: "musicbrainz_albumartistid",
@@ -2874,7 +2966,10 @@ export class AudioTagService {
       // tag. The fingerprint stays in TrackFiles for
       // matching/verification but is not surfaced as an embedded tag.
 
-      if (row.media_explicit !== null && row.media_explicit !== undefined) {
+      // Explicit content is the MP4 rtng atom. Other containers drop the old
+      // TXXX/Vorbis ITUNESADVISORY field instead of writing a custom tag.
+      const container = String(row.extension || "").toLowerCase().replace(/^\./, "");
+      if ((container === "m4a" || container === "mp4") && row.media_explicit !== null && row.media_explicit !== undefined) {
         tags.push({
           key: "itunesadvisory",
           label: "iTunes Advisory",
@@ -3453,7 +3548,7 @@ export class AudioTagService {
           if (shouldSkipEmbeddedAudioTagWrite(row)) {
             result.errors.push({
               id,
-              error: `${row.extension || "file"} ${row.file_codec || "audio"} metadata is not safely writable with ffmpeg stream copy`,
+              error: `${row.extension || "file"} cannot store Picard multi-value tags; the file was left unchanged`,
             });
             return;
           }

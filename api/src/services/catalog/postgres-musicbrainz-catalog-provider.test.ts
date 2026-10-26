@@ -74,6 +74,9 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
         recording_length: 205000,
         video: false,
         isrcs: "GBUMTEST00001",
+        script_iso: "Latn",
+        language_iso: "eng",
+        amazon_asin: "B000123456",
       }];
     }
     if (sql.includes("release_unknown_country")) {
@@ -89,7 +92,7 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
       || sql.includes("l_genre_release_group") || sql.includes("release_group_tag")
       || sql.includes("l_release_group_url") || sql.includes("release_group_alias")) {
       if (sql.includes("JOIN release_label")) {
-        return [{ release_gid: "d75f9d41-a70a-4ee1-9343-b58a628d5130", label_name: "Island" }];
+        return [{ release_gid: "d75f9d41-a70a-4ee1-9343-b58a628d5130", label_name: "Island", catalog_number: "I-1" }];
       }
       if (sql.includes("l_release_url")) {
         return [{
@@ -125,6 +128,10 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
     assert.equal(entry.detail.releasedate, "2020-05-15");
     assert.equal(entry.detail.Releases[0].ReleaseDate, "2021-06-24");
     assert.deepEqual(entry.detail.Releases[0].Label, ["Island"]);
+    assert.deepEqual(entry.detail.Releases[0].CatalogNumbers, ["I-1"]);
+    assert.equal(entry.detail.Releases[0].Asin, "B000123456");
+    assert.equal(entry.detail.Releases[0].Script, "Latn");
+    assert.equal(entry.detail.Releases[0].Language, "eng");
     assert.deepEqual(entry.detail.Releases[0].ExternalUrls, ["https://tidal.com/album/123"]);
     assert.deepEqual(entry.detail.Releases[0].Tracks[0].Isrcs, ["GBUMTEST00001"]);
     assert.deepEqual(entry.detail.Releases[0].Tracks[0].OldIds,["old-track-id"]);

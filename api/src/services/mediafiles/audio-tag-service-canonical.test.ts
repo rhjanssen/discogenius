@@ -190,14 +190,15 @@ dbModule.db.prepare(`
   assert.equal(byKey.get("isrc"), "TESTISRC1234");
   assert.equal(byKey.get("copyright"), "(P) 2024 Canonical Recording");
   assert.equal(byKey.get("comment"), "Canonical review\ntext");
-  assert.equal(byKey.get("provider_url"), "https://tidal.com/browse/track/provider-track-1");
+  assert.equal(byKey.get("provider_url"), undefined);
+  assert.equal(byKey.has("album_artist_mbids"), false);
   assert.equal(byKey.get("musicbrainz_recordingid"), "recording-mbid-1");
   assert.equal(byKey.get("musicbrainz_albumid"), "release-mbid-1");
   assert.equal(byKey.get("musicbrainz_releasegroupid"), "release-group-mbid-1");
   assert.equal(byKey.get("musicbrainz_releasetrackid"), "track-mbid-1");
   assert.equal(byKey.get("release_status"), "official");
   assert.equal(byKey.get("release_type"), "album; compilation");
-  assert.equal(byKey.get("itunesadvisory"), "1");
+  assert.equal(byKey.get("itunesadvisory"), undefined);
   assert.equal(byKey.get("replaygain_track_gain"), "-7.31 dB");
   assert.equal(byKey.get("replaygain_track_peak"), "0.967717");
 
@@ -452,7 +453,9 @@ for (const extension of ["flac", "m4a", "mp3"]) {
     assert.deepEqual(metadata.common.isrc?.flatMap(value => value.split(/\s*\/\s*|;\s*/)).sort(),
       ["USUM70722793", "USUM70809583"]);
     const embedded = Object.values(metadata.native).flat().find(tag => ["LYRICS", "©lyr", "USLT"].includes(tag.id));
-    assert.equal(extension === "mp3" ? (embedded?.value as { text?: string } | undefined)?.text : embedded?.value, lyrics);
+    const plainLyrics = "A test melody\nAnother test line";
+    assert.equal(extension === "mp3" ? (embedded?.value as { text?: string } | undefined)?.text : embedded?.value, plainLyrics);
+    assert.equal(fs.readFileSync(sidecarPath, "utf8"), lyrics);
     assert.deepEqual(await audioTagServiceModule.AudioTagService.apply([row.id]), {
       retagged: 0, skipped: 1, missing: 0, errors: [],
     });

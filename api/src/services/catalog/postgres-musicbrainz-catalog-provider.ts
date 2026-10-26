@@ -357,11 +357,13 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       recording_gid: string; recording_name: string; recording_length: number | null; video: boolean;
       recording_comment: string | null; isrcs: string | null;
       old_track_ids: string[]; old_recording_ids: string[];
+      script_iso?: string | null; language_iso?: string | null; amazon_asin?: string | null;
     }>(
       `SELECT
           r.release_group AS rg_id,
           r.id AS edition_id, r.gid AS release_gid, r.name AS release_name, rst.name AS status,
           r.barcode, r.comment AS release_comment,
+          scr.iso_code AS script_iso, lang.iso_code_3 AS language_iso, rm.amazon_asin AS amazon_asin,
           m.position AS medium_pos, mf.name AS format, m.name AS medium_name,
           t.gid AS track_gid, t.position AS track_pos, t.number AS track_number, t.name AS track_name, t.length AS track_length,
           rec.gid AS recording_gid, rec.name AS recording_name, rec.length AS recording_length, rec.video,
@@ -371,6 +373,9 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           (SELECT string_agg(i.isrc::text, ',') FROM isrc i WHERE i.recording = rec.id) AS isrcs
        FROM release r
        LEFT JOIN release_status rst ON rst.id = r.status
+       LEFT JOIN script scr ON scr.id = r.script
+       LEFT JOIN language lang ON lang.id = r.language
+       LEFT JOIN release_meta rm ON rm.id = r.id
        JOIN medium m ON m.release = r.id
        LEFT JOIN medium_format mf ON mf.id = m.format
        JOIN track t ON t.medium = m.id AND t.is_data_track = false
@@ -408,22 +413,27 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       releaseCountries.set(row.release_gid, list);
     }
 
-    const labelRows = await this.query<{ release_gid: string; label_name: string }>(
-      `SELECT r.gid AS release_gid, lab.name AS label_name
+    const labelRows = await this.query<{ release_gid: string; label_name: string | null; catalog_number: string | null }>(
+      `SELECT r.gid AS release_gid, lab.name AS label_name, rl.catalog_number AS catalog_number
        FROM release r
        JOIN release_label rl ON rl.release = r.id
-       JOIN label lab ON lab.id = rl.label
+       LEFT JOIN label lab ON lab.id = rl.label
        WHERE r.release_group = ANY($1::int[])
        ORDER BY r.gid, rl.id`,
       [ids],
     );
-    const labelsByRelease = new Map<string, Array<{ label?: { name?: string } }>>();
+    const labelsByRelease = new Map<string, Array<{ label?: { name?: string }; catalog_number?: string | null }>>();
     for (const row of labelRows) {
       const list = labelsByRelease.get(row.release_gid) ?? [];
       const name = String(row.label_name || "").trim();
-      if (name && !list.some((entry) => entry.label?.name === name)) {
-        list.push({ label: { name } });
-      }
+      const catalog = String(row.catalog_number || "").trim();
+      if (!name && !catalog) continue;
+      const key = `${name}\0${catalog}`;
+      if (list.some((entry) => `${entry.label?.name || ""}\0${entry.catalog_number || ""}` === key)) continue;
+      list.push({
+        ...(name ? { label: { name } } : {}),
+        ...(catalog ? { catalog_number: catalog } : {}),
+      });
       labelsByRelease.set(row.release_gid, list);
     }
 
@@ -461,6 +471,9 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           // All ISO territories for this release (sorted later in mapping).
           country: (releaseCountries.get(row.release_gid) || []).join(","),
           barcode: row.barcode,
+          asin: String(row.amazon_asin || "").trim() || null,
+          script: String(row.script_iso || "").trim() || null,
+          language: String(row.language_iso || "").trim() || null,
           date: releaseDate.get(row.release_gid) ?? null,
           disambiguation: row.release_comment || null,
           "label-info": labelsByRelease.get(row.release_gid) ?? [],

@@ -33,6 +33,8 @@ import {
 
 const TAGLIB_EXTENSIONS = new Set([
   ".aac",
+  ".aif",
+  ".aiff",
   ".flac",
   ".m4a",
   ".mp3",
@@ -40,7 +42,10 @@ const TAGLIB_EXTENSIONS = new Set([
   ".oga",
   ".ogg",
   ".opus",
+  ".wav",
 ]);
+
+const ID3_EXTENSIONS = new Set([".aac", ".aif", ".aiff", ".mp3", ".wav"]);
 
 const XIPH_EXTENSIONS = new Set([".flac", ".oga", ".ogg", ".opus"]);
 const MP4_EXTENSIONS = new Set([".m4a", ".mp4"]);
@@ -63,8 +68,14 @@ const ID3_TEXT_KEYS: Record<string, string> = {
   isrc: "TSRC",
   copyright: "TCOP",
   publisher: "TPUB",
+  tpub: "TPUB",
+  label: "TPUB",
   tmed: "TMED",
   tkey: "TKEY",
+  language: "TLAN",
+  tlan: "TLAN",
+  discsubtitle: "TSST",
+  tsst: "TSST",
 };
 
 const MP4_TEXT_KEYS: Record<string, string> = {
@@ -93,10 +104,11 @@ function isArtistIdList(key: string): boolean {
   return /musicbrainz(?:album)?artistid$/i.test(key.replace(/[^a-z0-9]/gi, ""));
 }
 
-/** Fields written as one value per credited artist (ARTISTS, ALBUMARTISTS, DISCOGENIUS_ALBUMARTIST_MBIDS). */
+/** One Vorbis field / ID3v2.4 text value / MP4 data atom per item. */
 const MULTI_VALUE_FIELD_NAMES = new Set([
   "artists", "albumartists", "discogenius_albumartist_mbids",
   "genre", "tcon", "\xa9gen", "releasetype", "musicbrainz album type",
+  "label", "publisher", "tpub", "catalognumber",
 ]);
 const SLASH_LIST_FIELD_NAMES = new Set(["genre", "tcon", "\xa9gen", "releasetype", "musicbrainz album type"]);
 
@@ -125,7 +137,7 @@ export function nativeMediaTagKeys(rawKey: string, extension: string): string[] 
   const ext = extension.toLowerCase().replace(/^\./, "");
   const lower = rawKey.toLowerCase();
   if (["flac", "ogg", "oga", "opus"].includes(ext)) return [rawKey.toUpperCase()];
-  if (["mp3", "aac"].includes(ext)) {
+  if (["mp3", "aac", "wav", "aif", "aiff"].includes(ext)) {
     if (["date", "year"].includes(lower)) return ["TDRC", "TYER", "TDAT", "TIME"];
     if (["original_date", "tdor"].includes(lower)) return ["TDOR", "TORY"];
     if (["lyrics", "lyrics-eng", "unsyncedlyrics"].includes(lower)) return ["USLT"];
@@ -342,6 +354,11 @@ function setId3Value(tag: Id3v2Tag, rawKey: string, value: string): void {
     return;
   }
   const identifier = id3TextIdentifier(lower);
+  // TSST exists only in ID3v2.4. v2.3 keeps the disc subtitle as TXXX.
+  if (identifier && lower === "tsst" && tag.version < 4) {
+    setId3UserText(tag, "DISCSUBTITLE", value);
+    return;
+  }
   if (identifier) {
     if (value && isMultiValueList(lower)) {
       const values = tagValues(lower, value);
@@ -383,6 +400,10 @@ function readId3Value(tag: Id3v2Tag, rawKey: string): string {
       tag.getTextAsString(Id3v2FrameIdentifiers.TORY) ||
       ""
     );
+  }
+  // TSST is ID3v2.4-only. v2.3 stores the same text as TXXX:DISCSUBTITLE.
+  if ((lower === "tsst" || lower === "discsubtitle") && tag.version < 4) {
+    return findUserTextFrame(tag, "DISCSUBTITLE")?.text?.join("; ") ?? "";
   }
   const identifier = id3TextIdentifier(lower);
   if (identifier) {
@@ -509,13 +530,17 @@ function writeTagLibValues(
       for (const [key, value] of Object.entries(tags)) {
         if (value) tag.setFieldAsStrings(key, ...tagValues(key, value));
       }
-    } else if (extension === ".mp3" || extension === ".aac") {
+    } else if (ID3_EXTENSIONS.has(extension)) {
       const tag = file.getTag(TagTypes.Id3v2, true) as Id3v2Tag;
+      // New tags (AIFF/WAV start at v2.2, AAC/MP3 at v2.3) need v2.4 for
+      // null-separated text and TSST. An existing v2.3 tag keeps its version.
+      if (tag.version < 3 || (tag.version < 4 && tag.isEmpty)) tag.version = 4;
       for (const key of removeKeys) {
         if (key === "ID3v1") continue;
         const identifier = !key.includes(":") ? id3TextIdentifier(key) : undefined;
         if (identifier) tag.removeFrames(identifier);
-        else setId3Value(tag, key, "");
+        if (key.toUpperCase() === "TSST") setId3UserText(tag, "DISCSUBTITLE", "");
+        if (!identifier) setId3Value(tag, key, "");
       }
       for (const [key, value] of Object.entries(tags)) {
         if (value) setId3Value(tag, key, value);
@@ -541,7 +566,7 @@ function readTagLibValueFromFile(file: TagLibFile, extension: string, rawKey: st
       return (file.getTag(TagTypes.Xiph, false) as XiphComment)
         ?.getField(rawKey)?.join("; ") ?? "";
     }
-    if (extension === ".mp3" || extension === ".aac") {
+    if (ID3_EXTENSIONS.has(extension)) {
       return readId3Value(file.getTag(TagTypes.Id3v2, false) as Id3v2Tag, rawKey);
     }
     return readMp4Value(file.getTag(TagTypes.Apple, false) as Mpeg4AppleTag, rawKey);

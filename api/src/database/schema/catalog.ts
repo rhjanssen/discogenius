@@ -221,6 +221,11 @@ export function createCatalogSchema(db: Database.Database): void {
       -- media[] disc structure (used by NFO writing + edition selection), plus
       -- oldids. country already lives as a JSON-array TEXT column above.
       label TEXT,
+      -- Picard release fields. JSON string array, same shape as label.
+      catalog_numbers TEXT,
+      asin TEXT,
+      script TEXT,
+      language TEXT,
       media TEXT,
       old_foreign_ids TEXT,
       -- No monitored here. LibraryEditions row existence is the monitoring statement.

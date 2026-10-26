@@ -28,11 +28,15 @@ test("audio tag maintenance includes cover-only work and permits a true no-op po
   assert.equal(isAudioTagMaintenanceEnabled(metadata, { embed_cover: false } as any), false);
 });
 
-test("embedded lyrics prefer synced subtitles with plain text fallback", () => {
+test("embedded lyrics keep plain text and leave timestamps to the sidecar", () => {
   assert.equal(selectEmbeddedLyricsText({
     subtitles: "[00:01.00]Synced line",
     text: "Plain line",
-  }), "[00:01.00]Synced line");
+  }), "Plain line");
+  assert.equal(selectEmbeddedLyricsText({
+    subtitles: "[00:01.00]Synced line\n[ar:Artist]",
+    text: "",
+  }), "Synced line");
   assert.equal(selectEmbeddedLyricsText({
     subtitles: "",
     text: "Plain line",
@@ -259,7 +263,7 @@ test("resolved sidecar lyrics become the managed embedded-lyrics tag", () => {
     key: "lyrics",
     label: "Lyrics",
     ffmpegKey: "lyrics-eng",
-    targetValue: "[00:01.00]Synced line",
+    targetValue: "Plain line",
     aliases: ["lyrics", "LYRICS", "unsyncedlyrics", "©lyr", "USLT"],
   });
   assert.equal(buildEmbeddedLyricsManagedTag(null), null);
@@ -496,7 +500,7 @@ test("getCurrentTagValue extracts all managed tags from common and native metada
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "original_date", label: "Original Date", ffmpegKey: "originaldate", targetValue: "" }), "1976-01-01");
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "genre", label: "Genre", ffmpegKey: "genre", targetValue: "" }), "Rock / Art Rock / Pop Rock");
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "barcode", label: "Barcode", ffmpegKey: "barcode", targetValue: "" }), "042283449323");
-  assert.equal(getCurrentTagValue(metadata, lookup, { key: "label", label: "Label", ffmpegKey: "label", targetValue: "" }), "Mercury");
+  assert.equal(getCurrentTagValue(metadata, lookup, { key: "label", label: "Label", ffmpegKey: "label", targetValue: "" }), "Mercury; Phonogram");
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "media_format", label: "Media Format", ffmpegKey: "media_format", targetValue: "" }), "Digital Media");
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "comment", label: "Comment", ffmpegKey: "comment", targetValue: "" }), "Classic album");
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "release_country", label: "Release Country", ffmpegKey: "release_country", targetValue: "" }), "US");
@@ -560,14 +564,12 @@ test("buildAudioTagWriteMap maps comment, itunesadvisory, and replaygain across 
 
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".flac"), {
     COMMENT: "My review",
-    ITUNESADVISORY: "1",
     REPLAYGAIN_TRACK_GAIN: "-7.31 dB",
     REPLAYGAIN_TRACK_PEAK: "0.967717",
   });
 
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".mp3"), {
     comment: "My review",
-    "TXXX:ITUNESADVISORY": "1",
     "TXXX:REPLAYGAIN_TRACK_GAIN": "-7.31 dB",
     "TXXX:REPLAYGAIN_TRACK_PEAK": "0.967717",
   });
@@ -581,7 +583,6 @@ test("buildAudioTagWriteMap maps comment, itunesadvisory, and replaygain across 
 
   assert.deepEqual(AudioTagService.buildAudioTagWriteMap(tags, ".wma"), {
     Description: "My review",
-    "WM/ContentAdvisoryRating": "1",
     "WM/ReplayGainTrackGain": "-7.31 dB",
     "WM/ReplayGainTrackPeak": "0.967717",
   });

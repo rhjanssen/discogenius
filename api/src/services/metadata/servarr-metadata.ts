@@ -104,6 +104,11 @@ export interface LidarrRelease {
   Barcode?: string;
   barcode?: string;
   Label: string[];
+  /** MusicBrainz release_label.catalog_number values, independent of the label name. */
+  CatalogNumbers?: string[];
+  Asin?: string;
+  Script?: string;
+  Language?: string;
   Media: Array<{ Position: number; Format: string; Name: string }>;
   ReleaseDate: string;
   TrackCount: number;
@@ -892,9 +897,9 @@ export class ServarrMetadataService {
       INSERT INTO AlbumEditions (
         mbid, release_group_mbid, artist_mbid, title, status, country,
         date, barcode, disambiguation, media_count, track_count,
-        label, media, old_foreign_ids, updated_at
+        label, media, old_foreign_ids, catalog_numbers, asin, script, language, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         status = excluded.status,
@@ -908,6 +913,10 @@ export class ServarrMetadataService {
         label = excluded.label,
         media = excluded.media,
         old_foreign_ids = excluded.old_foreign_ids,
+        catalog_numbers = COALESCE(excluded.catalog_numbers, AlbumEditions.catalog_numbers),
+        asin = COALESCE(excluded.asin, AlbumEditions.asin),
+        script = COALESCE(excluded.script, AlbumEditions.script),
+        language = COALESCE(excluded.language, AlbumEditions.language),
         updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -995,6 +1004,10 @@ export class ServarrMetadataService {
             JSON.stringify(release.Label ?? rawRelease.label ?? []),
             JSON.stringify(release.Media ?? rawRelease.media ?? []),
             JSON.stringify(rawRelease.OldIds ?? rawRelease.oldids ?? []),
+            release.CatalogNumbers?.length ? JSON.stringify(release.CatalogNumbers) : null,
+            release.Asin || null,
+            release.Script || null,
+            release.Language || null,
           );
         }
         MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);

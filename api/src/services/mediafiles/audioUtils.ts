@@ -28,6 +28,9 @@ export const AUDIO_COVER_EMBED_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".m
 const MUTAGEN_MP4_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".m4v"]);
 const OGG_COVER_EXTENSIONS = new Set([".ogg", ".oga", ".opus"]);
 const XIPH_EXTENSIONS = new Set(['.flac', '.ogg', '.oga', '.opus']);
+// TagLib cannot write these, and ffmpeg would store one joined string.
+// Leave the file unchanged and report the failure instead of half-tagging.
+const UNTAGGABLE_AUDIO_EXTENSIONS = new Set([".wma", ".ape", ".mp2", ".alac"]);
 const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
 const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
 const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
@@ -526,6 +529,10 @@ export async function writeMetadataWithCover(
 }
 
 async function writeMetadataUnlocked(filePath: string, tags: Record<string, string>, removeKeys: string[]): Promise<MetadataWriteOutcome> {
+    const extension = path.extname(filePath).toLowerCase();
+    if (UNTAGGABLE_AUDIO_EXTENSIONS.has(extension)) {
+        return { success: false, error: `Discogenius cannot write Picard multi-value tags for ${extension} files` };
+    }
     const tagLibResult = await writeMediaTagsWithTagLib(filePath, tags, removeKeys);
     if (tagLibResult.success) {
         return { success: true };
@@ -572,6 +579,7 @@ export async function removeAllTags(filePath: string): Promise<boolean> {
 }
 
 async function removeAllTagsUnlocked(filePath: string): Promise<boolean> {
+    if (UNTAGGABLE_AUDIO_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return false;
     const tagLibResult = await clearMediaTagsWithTagLib(filePath);
     if (tagLibResult.success) {
         return true;

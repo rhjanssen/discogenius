@@ -88,7 +88,10 @@ export interface MbRelease {
   barcode?: string | null;
   date?: string | null;
   disambiguation?: string | null;
-  "label-info"?: Array<{ label?: { name?: string } }>;
+  "label-info"?: Array<{ label?: { name?: string }; catalog_number?: string | null }>;
+  asin?: string | null;
+  script?: string | null;
+  language?: string | null;
   relations?: Array<{ type?: string; url?: { resource?: string | null } | null }>;
   "release-group"?: MbReleaseGroupStub & { "artist-credit"?: MbArtistCreditName[] };
   media?: MbMedium[];
@@ -202,6 +205,14 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
   const labels = (release["label-info"] || [])
     .map((info) => String(info.label?.name || "").trim())
     .filter(Boolean);
+  const catalogNumbers: string[] = [];
+  const seenCatalogs = new Set<string>();
+  for (const info of release["label-info"] || []) {
+    const catalog = String(info.catalog_number || "").trim();
+    if (!catalog || seenCatalogs.has(catalog)) continue;
+    seenCatalogs.add(catalog);
+    catalogNumbers.push(catalog);
+  }
   // Prefer every ISO code we know about. Postgres bulk hydration joins them
   // with commas; WS payloads may only have the primary `country` field.
   // release-events (when present) are the full multi-territory truth.
@@ -230,6 +241,10 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
     Country: [...countries].sort(),
     Barcode: release.barcode ?? undefined,
     Label: labels,
+    ...(catalogNumbers.length > 0 ? { CatalogNumbers: catalogNumbers } : {}),
+    ...(release.asin ? { Asin: String(release.asin).trim() } : {}),
+    ...(release.script ? { Script: String(release.script).trim() } : {}),
+    ...(release.language ? { Language: String(release.language).trim() } : {}),
     Media: media.map((medium) => ({
       Position: Number(medium.position ?? 1),
       Format: medium.format ?? "",

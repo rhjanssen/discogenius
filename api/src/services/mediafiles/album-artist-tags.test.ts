@@ -191,6 +191,13 @@ test("sort credit follows MusicBrainz join phrases when credits line up", () => 
   assert.equal(joinSortCredit(null, ["Who, The", "Doe, John"]), "Who, The, Doe, John");
 });
 
+test("label and catalog number compare as ordered multi-value fields", () => {
+  assert.equal(isTagValueEqual("label", "Island; Virgin", "Island; Virgin"), true);
+  assert.equal(isTagValueEqual("label", "Virgin; Island", "Island; Virgin"), false);
+  assert.equal(isTagValueEqual("label", "Island/Def Jam", "Island; Def Jam"), false);
+  assert.equal(isTagValueEqual("catalog_number", "ABC-1; ABC-2", "ABC-1; ABC-2"), true);
+});
+
 test("genre and release type compare as sets; compilation flags compare by truthiness", () => {
   assert.equal(isTagValueEqual("genre", "Rock, Pop", "Pop; Rock"), true);
   assert.equal(isTagValueEqual("compilation", "true", "1"), true);
