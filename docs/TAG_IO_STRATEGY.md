@@ -185,6 +185,19 @@ are removed in the same write. Cover art follows its separate policy, and
 MP4 iTunSMPB playback information is preserved. The TagLib read-back is the
 only post-write check; retag does not parse the file again with music-metadata.
 
+Deploying a new tag-standard id does not rewrite the library by itself.
+`write_audio_tags_policy = "all_files"` still only writes tags for files an
+explicit Retag opens: Retag artist, Retag files, or Regenerate tags. Scan,
+catalog refresh, curation, and importing a sibling do not compare
+`managed_tag_fingerprint` and do not open existing audio to apply the new
+standard. A download import writes tags only on the file ids that import just
+inserted. A poisoned import repairs only the file ids it had already placed.
+An already queued RetagArtist that resumes after the deploy does rewrite the
+files it has not finished, because those stored fingerprints no longer match.
+That is the explicit retag continuing, not a scan. Cover sync can still
+replace an embedded cover when artwork refresh asks it to; it does not retag
+the other fields.
+
 A read-back that does not match the requested text is a warning, not a file
 error. The original file is kept: in-place undo restores it, and a copy that
 fails verification is discarded. That covers `TagLib verification failed`,
