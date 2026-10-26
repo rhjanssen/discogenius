@@ -298,6 +298,24 @@ for (const format of FORMATS) {
   }
 }
 
+test("composer sort uses Picard keys; soal, sonm, and pub stay removable", () => {
+  const value = "Bach, Johann Sebastian";
+  const sort = tag("composer_sort", "COMPOSERSORT", value);
+  assert.equal(AudioTagService.buildAudioTagWriteMap([sort], ".flac").COMPOSERSORT, value);
+  assert.equal(AudioTagService.buildAudioTagWriteMap([sort], ".mp3").TSOC, value);
+  assert.equal(AudioTagService.buildAudioTagWriteMap([sort], ".m4a").soco, value);
+  const removed = AudioTagService.buildAudioTagRemovalKeys([
+    tag("legacy_album_sort", "soal", ""),
+    tag("legacy_title_sort", "sonm", ""),
+    tag("legacy_publisher", "\u00a9pub", ""),
+  ], ".m4a");
+  assert.equal(removed.includes("soal"), true);
+  assert.equal(removed.includes("sonm"), true);
+  assert.equal(removed.includes("\u00a9pub"), true);
+  assert.equal(removed.includes("soco"), false);
+  assert.equal(removed.includes("COMPOSERSORT"), false);
+});
+
 test("AIFF-C is left unchanged when TagLib cannot open it", { skip: !hasFfmpeg }, async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-aifc-"));
   try {

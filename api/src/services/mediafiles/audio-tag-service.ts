@@ -2109,6 +2109,7 @@ export class AudioTagService {
       initialkey: "INITIALKEY",
       artist_sort: "ARTISTSORT",
       album_artist_sort: "ALBUMARTISTSORT",
+      composer_sort: "COMPOSERSORT",
       compilation: "COMPILATION",
       catalog_number: "CATALOGNUMBER",
       asin: "ASIN",
@@ -2160,6 +2161,7 @@ export class AudioTagService {
       initialkey: "TKEY",
       artist_sort: "TSOP",
       album_artist_sort: "TSO2",
+      composer_sort: "TSOC",
       compilation: "TCMP",
       catalog_number: "TXXX:CATALOGNUMBER",
       asin: "TXXX:ASIN",
@@ -2216,6 +2218,7 @@ export class AudioTagService {
       initialkey: "----:com.apple.iTunes:initialkey",
       artist_sort: "soar",
       album_artist_sort: "soaa",
+      composer_sort: "soco",
       compilation: "cpil",
       catalog_number: "----:com.apple.iTunes:CATALOGNUMBER",
       asin: "----:com.apple.iTunes:ASIN",
@@ -2422,13 +2425,16 @@ export class AudioTagService {
     remove("legacy_track_count", "Legacy Track Count", "TXXX:Track Count");
     remove("legacy_disc_number", "Legacy Disc Number", "TXXX:Disc Number");
     remove("legacy_disc_count", "Legacy Disc Count", "TXXX:Disc Count");
-    // Provider (Apple/iTunes) sort atoms that do not come from MusicBrainz and
-    // can contradict the managed title/album (soal "… (Deluxe Edition)").
+    // Picard writes soal only for an album sort name and sonm only for a title
+    // sort name. MusicBrainz releases and recordings have no separate sort
+    // title in this catalogue, and Apple's atoms often append edition text
+    // ("… (Deluxe Edition)"). Strip both. soco is Picard's composersort, so it
+    // is not in this list: a retag rewrites it from composer sort names.
     remove("legacy_album_sort", "Legacy Album Sort", "soal");
     remove("legacy_title_sort", "Legacy Title Sort", "sonm");
-    remove("legacy_composer_sort", "Legacy Composer Sort", "soco");
-    // Provider duplicates of fields we manage; only removed when we write the
-    // managed value so no unique information is lost.
+    // Picard writes the label as LABEL / TPUB, never the Apple ©pub atom.
+    // Drop ©pub only when a MusicBrainz label is written, so a file with no
+    // label keeps a publisher another tool stored.
     if (parseJsonStringList(row.album_label).length > 0) remove("legacy_publisher", "Legacy Publisher", "\u00a9pub");
     // Custom frames from earlier Discogenius releases. A retag deletes them
     // in every format. MP4 rtng is the itunesadvisory write key and is not

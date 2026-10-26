@@ -249,9 +249,20 @@ does not join those values.
 A retag removes fields Discogenius used to write and no longer owns:
 PROVIDER_URL, TXXX/freeform Track Number, Track Count, Disc Number, Disc Count,
 ITUNESADVISORY (the MP4 `rtng` atom stays), DISCOGENIUS_ALBUMARTIST_MBIDS,
-RELEASETIME, ACOUSTID_FINGERPRINT (Vorbis `ACOUSTID_FINGERPRINT`, ID3
-`TXXX:Acoustid Fingerprint`, MP4 `----:com.apple.iTunes:Acoustid Fingerprint`),
-and the provider sort atoms soal, sonm, and soco. `ACOUSTID_ID` is written.
+RELEASETIME, and ACOUSTID_FINGERPRINT (Vorbis `ACOUSTID_FINGERPRINT`, ID3
+`TXXX:Acoustid Fingerprint`, MP4 `----:com.apple.iTunes:Acoustid Fingerprint`).
+`ACOUSTID_ID` is written. Provider sort atoms:
+
+- `soal` (MP4 album sort) is stripped. Picard writes it only for an album sort
+  name. MusicBrainz releases have no sort-name field here, and Apple's atom
+  often appends edition text.
+- `sonm` (MP4 title sort) is stripped for the same reason. Recordings have no
+  separate sort title in this catalogue.
+- `soco` is Picard's composersort (`COMPOSERSORT` / `TSOC` / `soco`). A retag
+  writes it from MusicBrainz composer sort names and does not treat it as legacy.
+- `©pub` is stripped only when a MusicBrainz label is written. Picard stores
+  the label as `LABEL` / `TPUB`, not `©pub`. A file with no label keeps the atom.
+
 The chromaprint stays in `TrackFiles.fingerprint` for matching. Picard leaves
 the fingerprint out unless "Save AcoustID fingerprints" is on, and that option
 defaults off. A user tag such as DISCOGENIUS_CUSTOM is left in place unless
