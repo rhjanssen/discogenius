@@ -125,6 +125,20 @@ test("mapMbReleaseGroupToLidarrDetail carries owning artist + releases", () => {
   assert.equal(detail.Releases[0].Id, "be7f42ee-1234-4567-89ab-000000000001");
 });
 
+test("mapMbReleaseToLidarr keeps an explicit empty ASIN and omits a missing one", () => {
+  const cleared = mapMbReleaseToLidarr({ ...RELEASE_FIXTURE, asin: null, script: "", language: null, "label-info": [] });
+  assert.equal(Object.prototype.hasOwnProperty.call(cleared, "Asin"), true);
+  assert.equal(cleared.Asin, null);
+  assert.equal(cleared.Script, null);
+  assert.equal(cleared.Language, null);
+  assert.deepEqual(cleared.CatalogNumbers, []);
+
+  const absent = mapMbReleaseToLidarr(RELEASE_FIXTURE);
+  assert.equal(Object.prototype.hasOwnProperty.call(absent, "Asin"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(absent, "CatalogNumbers"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(absent, "Script"), false);
+});
+
 test("mapMbReleaseToLidarr flattens media/tracks/recording", () => {
   const release = mapMbReleaseToLidarr(RELEASE_FIXTURE);
   assert.equal(release.Id, "be7f42ee-1234-4567-89ab-000000000001");

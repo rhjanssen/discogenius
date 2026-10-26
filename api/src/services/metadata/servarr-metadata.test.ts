@@ -519,6 +519,63 @@ test("syncArtist skips rewriting an unchanged artist (diff-reconcile)", async ()
   assert.equal(artist.name, "SENTINEL", "unchanged artist should be skipped, not rewritten");
 });
 
+test("refresh with ASIN removed clears it, and a payload that omits ASIN keeps it", async () => {
+  const { db } = dbModule;
+  resetCatalog();
+  const withAsin = {
+    ...DOOM_DAYS_PAYLOAD,
+    title: "Doom Days (asin)",
+    Releases: [{
+      ...DOOM_DAYS_PAYLOAD.Releases[0],
+      CatalogNumbers: ["ABC-1"],
+      Asin: "B000123456",
+      Script: "Latn",
+      Language: "eng",
+    }],
+  };
+  fetchReturning(withAsin);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const read = () => db.prepare(`
+    SELECT catalog_numbers, asin, script, language FROM AlbumEditions WHERE mbid = 'rel-1'
+  `).get() as { catalog_numbers: string | null; asin: string | null; script: string | null; language: string | null };
+  assert.deepEqual(read(), {
+    catalog_numbers: JSON.stringify(["ABC-1"]),
+    asin: "B000123456",
+    script: "Latn",
+    language: "eng",
+  });
+
+  fetchReturning({
+    ...withAsin,
+    title: "Doom Days (asin cleared)",
+    Releases: [{
+      ...withAsin.Releases[0],
+      CatalogNumbers: [],
+      Asin: null,
+      Script: null,
+      Language: null,
+    }],
+  });
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(read(), { catalog_numbers: null, asin: null, script: null, language: null });
+
+  fetchReturning(withAsin);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const { CatalogNumbers: _catalog, Asin: _asin, Script: _script, Language: _language, ...withoutFields } = withAsin.Releases[0];
+  fetchReturning({
+    ...DOOM_DAYS_PAYLOAD,
+    title: "Doom Days (ws without asin)",
+    Releases: [withoutFields],
+  });
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(read(), {
+    catalog_numbers: JSON.stringify(["ABC-1"]),
+    asin: "B000123456",
+    script: "Latn",
+    language: "eng",
+  });
+});
+
 test("syncReleaseGroup populates curated release columns from the payload", async () => {
   const { db } = dbModule;
   resetCatalog();

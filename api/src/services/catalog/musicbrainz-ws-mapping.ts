@@ -192,6 +192,17 @@ export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): Lidarr
   };
 }
 
+function carriedMbText(
+  release: MbRelease,
+  sourceKey: "asin" | "script" | "language",
+  targetKey: "Asin" | "Script" | "Language",
+): Partial<Pick<LidarrRelease, "Asin" | "Script" | "Language">> {
+  if (!Object.prototype.hasOwnProperty.call(release, sourceKey)) return {};
+  const raw = release[sourceKey];
+  const value = raw == null ? null : String(raw).trim() || null;
+  return { [targetKey]: value };
+}
+
 export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
   const media = release.media || [];
   const tracks: LidarrTrack[] = [];
@@ -241,10 +252,13 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
     Country: [...countries].sort(),
     Barcode: release.barcode ?? undefined,
     Label: labels,
-    ...(catalogNumbers.length > 0 ? { CatalogNumbers: catalogNumbers } : {}),
-    ...(release.asin ? { Asin: String(release.asin).trim() } : {}),
-    ...(release.script ? { Script: String(release.script).trim() } : {}),
-    ...(release.language ? { Language: String(release.language).trim() } : {}),
+    // A present `label-info` array is the catalog-number field, even when every
+    // number is blank. Omitting the key is reserved for payloads that never
+    // asked for labels (WS without that include).
+    ...(Array.isArray(release["label-info"]) ? { CatalogNumbers: catalogNumbers } : {}),
+    ...carriedMbText(release, "asin", "Asin"),
+    ...carriedMbText(release, "script", "Script"),
+    ...carriedMbText(release, "language", "Language"),
     Media: media.map((medium) => ({
       Position: Number(medium.position ?? 1),
       Format: medium.format ?? "",

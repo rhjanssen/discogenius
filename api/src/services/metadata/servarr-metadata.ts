@@ -104,11 +104,15 @@ export interface LidarrRelease {
   Barcode?: string;
   barcode?: string;
   Label: string[];
-  /** MusicBrainz release_label.catalog_number values, independent of the label name. */
-  CatalogNumbers?: string[];
-  Asin?: string;
-  Script?: string;
-  Language?: string;
+  /**
+   * Present only when the source payload carried the field. `null` or `[]`
+   * clears the stored value. An omitted property leaves the stored value
+   * (a WS payload without `asin` must not wipe a mirror import).
+   */
+  CatalogNumbers?: string[] | null;
+  Asin?: string | null;
+  Script?: string | null;
+  Language?: string | null;
   Media: Array<{ Position: number; Format: string; Name: string }>;
   ReleaseDate: string;
   TrackCount: number;
@@ -230,6 +234,23 @@ class ServarrMetadataRequestError extends Error {
  */
 export function computeContentHash(payload: unknown): string {
   return createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+}
+
+/**
+ * Bind a release field that may be absent.
+ * SQL NULL keeps the stored value. `''` clears it. A JSON array or text is the
+ * new value. Callers pass the raw release object so a missing key stays NULL.
+ */
+export function carriedReleaseColumn(record: object, key: string): string | null {
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return null;
+  const raw = (record as Record<string, unknown>)[key];
+  if (Array.isArray(raw)) {
+    const values = raw.map((item) => String(item ?? "").trim()).filter(Boolean);
+    return values.length > 0 ? JSON.stringify(values) : "";
+  }
+  if (raw == null) return "";
+  const text = String(raw).trim();
+  return text || "";
 }
 
 export function mapServarrMetadataImages(images?: any[] | null): MediaCover[] {
@@ -913,10 +934,28 @@ export class ServarrMetadataService {
         label = excluded.label,
         media = excluded.media,
         old_foreign_ids = excluded.old_foreign_ids,
-        catalog_numbers = COALESCE(excluded.catalog_numbers, AlbumEditions.catalog_numbers),
-        asin = COALESCE(excluded.asin, AlbumEditions.asin),
-        script = COALESCE(excluded.script, AlbumEditions.script),
-        language = COALESCE(excluded.language, AlbumEditions.language),
+        -- NULL in the INSERT means the payload did not carry the field (keep).
+        -- '' means the payload carried it empty (MusicBrainz removed it).
+        catalog_numbers = CASE
+          WHEN excluded.catalog_numbers IS NULL THEN AlbumEditions.catalog_numbers
+          WHEN excluded.catalog_numbers = '' THEN NULL
+          ELSE excluded.catalog_numbers
+        END,
+        asin = CASE
+          WHEN excluded.asin IS NULL THEN AlbumEditions.asin
+          WHEN excluded.asin = '' THEN NULL
+          ELSE excluded.asin
+        END,
+        script = CASE
+          WHEN excluded.script IS NULL THEN AlbumEditions.script
+          WHEN excluded.script = '' THEN NULL
+          ELSE excluded.script
+        END,
+        language = CASE
+          WHEN excluded.language IS NULL THEN AlbumEditions.language
+          WHEN excluded.language = '' THEN NULL
+          ELSE excluded.language
+        END,
         updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -1004,10 +1043,10 @@ export class ServarrMetadataService {
             JSON.stringify(release.Label ?? rawRelease.label ?? []),
             JSON.stringify(release.Media ?? rawRelease.media ?? []),
             JSON.stringify(rawRelease.OldIds ?? rawRelease.oldids ?? []),
-            release.CatalogNumbers?.length ? JSON.stringify(release.CatalogNumbers) : null,
-            release.Asin || null,
-            release.Script || null,
-            release.Language || null,
+            carriedReleaseColumn(rawRelease, "CatalogNumbers"),
+            carriedReleaseColumn(rawRelease, "Asin"),
+            carriedReleaseColumn(rawRelease, "Script"),
+            carriedReleaseColumn(rawRelease, "Language"),
           );
         }
         MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);

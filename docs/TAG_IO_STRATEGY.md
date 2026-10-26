@@ -258,7 +258,10 @@ FLAC, Ogg Vorbis, Opus, MP3, AAC ADTS, WAV, classic AIFF (FORM AIFF), and M4A
 (AAC or ALAC in an MP4) round-trip these fields. WMA, APE, MP2, a bare `.alac`
 file, and AIFF-C are left unchanged: TagLib cannot store this tag set there,
 and ffmpeg is not used as a half-tag fallback. Catalog number, ASIN, script,
-and language are empty until the next MusicBrainz mirror import. Disc subtitle
+and language are empty until the next MusicBrainz mirror import. A mirror
+payload that carries the field overwrites it, including a removal (empty ASIN,
+script, language, or catalog-number list). A WS or Servarr payload that omits
+the field keeps the stored value. Disc subtitle
 and the release-group first release date were already stored. `user_version`
 stays 46.
 
