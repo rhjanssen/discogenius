@@ -11,13 +11,14 @@ export const RECORDING_OWNERS = [
     ['RecordingArtistCredits','recording_id'], ['LibraryVideos','video_recording_id'],
     ['RecordingRelations','source_recording_id'], ['RecordingRelations','target_recording_id'],
     ['ArtistTopTracks','recording_id'], ['TrackLibraryIndex','recording_id'],
+    ['CatalogRelationshipCredits','recording_id'], ['RecordingWorks','recording_id'],
 ] as const;
 
 /** A merge that would pick a winner between two owners. The edition transaction
  * rolls back. Callers may continue with the next edition and leave this one. */
 export function isPreservedCatalogIdentityConflict(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error ?? "");
-    return /^(?:UNIQUE constraint failed: (?:RecordingArtistCredits|RecordingRelations|ProviderVideoMatches|ProviderTrackMatches|LibraryVideos|ArtistTopTracks|TrackLibraryIndex)\b|Conflicting recording presentation identity\b)/.test(message);
+    return /^(?:UNIQUE constraint failed: (?:RecordingArtistCredits|RecordingRelations|ProviderVideoMatches|ProviderTrackMatches|LibraryVideos|ArtistTopTracks|TrackLibraryIndex|RecordingWorks)\b|Conflicting recording presentation identity\b)/.test(message);
 }
 
 /** Rebuild a journal snapshot the same way ArtworkMutationJournal recovery does,
@@ -133,6 +134,10 @@ export function reconcileRecordingRedirects(db:Database.Database, tracks:readonl
             // two sets per ordinal would produce a credit list neither source has.
             const targetHasCredits=db.prepare('SELECT 1 FROM RecordingArtistCredits WHERE recording_id=? LIMIT 1').get(target.id);
             if(targetHasCredits) db.prepare('DELETE FROM RecordingArtistCredits WHERE recording_id=?').run(old.id);
+            // RecordingWorks is keyed by (recording_id, work_mbid). The target's
+            // row for a shared work wins; the rest of the source works move.
+            db.prepare(`DELETE FROM RecordingWorks WHERE recording_id=? AND work_mbid IN (
+                SELECT work_mbid FROM RecordingWorks WHERE recording_id=?)`).run(old.id, target.id);
             for(const [table,column] of RECORDING_OWNERS){
                 if(table==='Tracks') continue;
                 db.prepare(`UPDATE "${table}" SET "${column}"=? WHERE "${column}"=?`).run(target.id,old.id);

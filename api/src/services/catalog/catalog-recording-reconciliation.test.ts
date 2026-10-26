@@ -176,9 +176,23 @@ test('a refresh may skip a preserved identity collision and must still fail othe
     assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: ProviderVideoMatches.provider_video_item_id, ProviderVideoMatches.recording_id')),true);
     assert.equal(isPreservedCatalogIdentityConflict(new Error('Conflicting recording presentation identity for 4ed0911c-48be-45e6-9526-edaf0b995b22')),true);
     assert.equal(isPreservedCatalogIdentityConflict(new Error('test edition write failure')),false);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: RecordingWorks.recording_id, RecordingWorks.work_mbid')),true);
     assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: Tracks.mbid')),false);
 });
 
+test('recording redirect keeps the target work and moves a unique work and its credit',()=>fixture(()=>{
+    db.exec(`INSERT INTO RecordingWorks(recording_id,work_mbid,work_title,link_order,instrumental)
+        VALUES(1,'shared','Old title',1,0),(2,'shared','New title',2,1),(1,'only-old','Source work',3,0);
+        INSERT INTO CatalogRelationshipCredits(scope,recording_id,role,artist_mbid,credited_name,credit_order)
+        VALUES('recording',1,'composer','artist','Old Composer',1);`);
+    assert.equal(reconcileRecordingRedirects(db,incoming),1);
+    assert.deepEqual(db.prepare('SELECT recording_id,work_mbid,work_title FROM RecordingWorks ORDER BY work_mbid').all(),[
+        {recording_id:2,work_mbid:'only-old',work_title:'Source work'},
+        {recording_id:2,work_mbid:'shared',work_title:'New title'},
+    ]);
+    assert.deepEqual(db.prepare('SELECT recording_id,credited_name FROM CatalogRelationshipCredits').get(),{recording_id:2,credited_name:'Old Composer'});
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
 test('recording owners cover every active runtime recording foreign key',()=>{
     const expected=new Set(RECORDING_OWNERS.map(([table,col])=>table+'.'+col));
     const actual=new Set<string>();
