@@ -43,7 +43,14 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   inline loops.
 - Validate external boundaries explicitly.
 - Respect `monitored_lock` / `monitor_lock`: automation must never flip
-  user-locked monitor state.
+  user-locked monitor state. Automatic curation (`enable_redundancy_filter`,
+  default on) is optional. Off monitors one edition per release group and
+  never auto-unmonitors. A user unmonitor writes `LibraryUserExclusions` and
+  curation does not put that album or edition back. With Remove unmonitored
+  files on, a user unmonitor deletes that album's files immediately; a
+  curation unmonitor deletes a file only when the same recording is already
+  on a monitored edition. A stale automatic match never unmonitors a
+  file-owning edition and never deletes its files.
 - **Provider tooling** stays inside the provider adapter/backend. TIDAL's `tiddl`
   lives in `api/src/services/providers/tidal/`; its auth/config live under
   `config/providers/tidal/.tiddl`. tiddl steering = config (global) + args
