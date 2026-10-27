@@ -66,7 +66,7 @@ export class ManualImportService {
         const { streamingProviderManager } = await import("../providers/index.js");
         const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
         const { Config } = await import("../config/config.js");
-        const { getNamingConfig, renderRelativePath, resolveArtistFolderFromRecord } = await import("../config/naming.js");
+        const { getNamingConfig, joinCappedFileName, renderRelativePath, resolveArtistFolderFromRecord } = await import("../config/naming.js");
         const { resolveArtistFolderForPersistence } = await import("../music/artist-paths.js");
         const { calculateFingerprint, parseAudioFile, deriveQuality, deriveVideoQuality } = await import("./audioUtils.js");
         const { isSpatialAudioQuality } = await import("../../utils/spatial-audio.js");
@@ -461,7 +461,7 @@ export class ManualImportService {
                     : undefined;
                 const videoTitle = videoVariant?.recording_title || trackData.title;
 
-                const expectedRelPath = renderRelativePath(fullPathTemplate, {
+                const expectedRelPath = joinCappedFileName(renderRelativePath(fullPathTemplate, {
                     artistName: artistRow?.name || trackData.artist?.name || trackData.artist_name || "Unknown Artist",
                     artistMbId: artistRow?.mbid || null,
                     albumTitle: canonicalAlbum?.title || trackData.album?.title || trackData.album_title || "Unknown Album",
@@ -487,7 +487,7 @@ export class ManualImportService {
                     videoType: isVideo
                         ? resolveVideoTypeSuffix(videoTitle, videoVariant?.video_variant)
                         : undefined,
-                }) + "." + extension;
+                }), extension);
 
                 let rootPath = options?.libraryRootPath || Config.getMusicPath();
                 if (!options?.libraryRootPath && libraryRootKey === "videos") rootPath = Config.getVideoPath();

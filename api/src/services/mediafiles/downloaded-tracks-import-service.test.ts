@@ -197,3 +197,13 @@ test("hybrid import names each offered track the organizer did not place", async
         cause: "not organized",
     }]);
 });
+
+test("import gaps keep the organizer cause for a path-too-long offered track", async () => {
+    const { listUnorganizedTrackGaps } = await import("./downloaded-tracks-import-service.js");
+    const missing = listUnorganizedTrackGaps([
+        { provider: "tidal", providerTrackId: "108", title: "Firebird", trackNum: 108, volumeNum: 1 },
+    ], [], "path component too long (276 bytes): 108 - Firebird.flac");
+    assert.equal(missing[0].cause.startsWith("path component too long"), true);
+    assert.equal(missing[0].providerId, "tidal:108");
+    assert.equal(missing[0].position, "1-108");
+});

@@ -1,4 +1,5 @@
-import { db } from "../../database.js";
+import { db, isDatabaseOpen } from "../../database.js";
+import { getConfigSection } from "../config/config.js";
 
 /**
  * "Translate artist names to locale" (Picard semantics).
@@ -12,8 +13,9 @@ import { db } from "../../database.js";
  * "ignore if the name is already in Latin script"), so only names like
  * "Пётр Ильич Чайковский" or "坂本龍一" are translated.
  *
- * Only names and sort names change. MBIDs, folders and ArtistMetadata are not
- * touched; translation happens when tags are planned.
+ * One resolver: folders, file-name tokens, tags, and UI display all use
+ * resolveArtistDisplayName so ALBUMARTIST matches the artist folder. ArtistMetadata
+ * keeps the MusicBrainz name; only the display spelling changes.
  */
 
 export type ArtistLocaleAlias = {
@@ -101,10 +103,26 @@ export function translateArtistName(
   };
 }
 
+export type ArtistNameTranslationConfig = {
+  translate_artist_names?: boolean;
+  artist_name_locales?: string;
+  translate_artist_names_skip_latin?: boolean;
+};
+
+/** Artist-name translation settings (metadata.translate_artist_names*). */
+export function getArtistNameTranslationOptions(config?: ArtistNameTranslationConfig): ArtistNameTranslationOptions {
+  const metadata = (config ?? getConfigSection("metadata")) as ArtistNameTranslationConfig;
+  return {
+    enabled: metadata.translate_artist_names === true,
+    locales: normalizeLocaleList(metadata.artist_name_locales ?? "en,nl"),
+    skipLatin: metadata.translate_artist_names_skip_latin !== false,
+  };
+}
+
 /** Stored locale aliases of one artist (ArtistLocaleAliases). */
 export function readArtistLocaleAliases(artistMbid: string): ArtistLocaleAlias[] {
   const mbid = String(artistMbid || "").trim().toLowerCase();
-  if (!mbid) return [];
+  if (!mbid || !isDatabaseOpen()) return [];
   try {
     const rows = db.prepare(`
       SELECT name, sort_name, locale, primary_for_locale, alias_type
@@ -132,4 +150,15 @@ export function translateStoredArtistName(
   if (!options.enabled || !artistMbid || !name) return { name, sortName, translated: false };
   if (options.skipLatin && isLatinScript(name)) return { name, sortName, translated: false };
   return translateArtistName(name, sortName, readArtistLocaleAliases(artistMbid), options);
+}
+
+/** Display spelling for folders, file tokens, tags, and UI. */
+export function resolveArtistDisplayName(
+  artistMbid: string | null | undefined,
+  name: string,
+  sortName: string | null = null,
+  config?: ArtistNameTranslationConfig,
+): string {
+  const resolved = String(name || "").trim() || "Unknown Artist";
+  return translateStoredArtistName(artistMbid, resolved, sortName, getArtistNameTranslationOptions(config)).name;
 }

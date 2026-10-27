@@ -15,7 +15,8 @@ import {
 } from "./video-folder-layout.js";
 import { mainVideoMayFollowAudioRelationSql } from "../music/live-performance-markers.js";
 import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "../music/video-album-association.js";
-import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext, type library_root } from "../config/naming.js";
+import { getNamingConfig, joinCappedFileName, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext, type library_root } from "../config/naming.js";
+import { resolveArtistFolderForExpectedPath } from "../music/artist-paths.js";
 import {
   getCurrentLibraryRootPath,
   resolveLibraryRootKey,
@@ -436,6 +437,34 @@ export type RenameStatusSummary = {
   sample: RenamePreviewItem[];
 };
 
+export type RenameDryRunMove = {
+  from: string;
+  to: string;
+  fileType: string;
+  conflict: boolean;
+};
+
+export type RenameDryRunAlbum = {
+  artistId: number;
+  artistName: string;
+  artistMbid: string | null;
+  albumId: string | null;
+  moves: RenameDryRunMove[];
+  collisions: number;
+  overlongComponents: number;
+  mbidFolderMerges: number;
+};
+
+export type RenameDryRunReport = {
+  artists: number;
+  albums: number;
+  moves: number;
+  collisions: number;
+  overlongComponents: number;
+  mbidFolderMerges: number;
+  byAlbum: RenameDryRunAlbum[];
+};
+
 type LibraryFileEventInput = {
   libraryFileId?: number | null;
   artistId: string | number;
@@ -569,10 +598,10 @@ function resolveCanonicalInlineAudioExpectedPath(
 
   const naming = cache?.configSnapshot.naming ?? getNamingConfig();
   const artistName = String(artist.name || "Unknown Artist");
-  const artistFolder = resolveArtistFolderFromRecord({
-    name: artistName,
-    mbid: artistMbId,
-    path: artist.path || null,
+  const artistFolder = resolveArtistFolderForExpectedPath({
+    artistName,
+    artistMbId,
+    existingPath: artist.path || null,
   });
   const renderedTrackPath = renderRelativePath(naming.album_track_path_single, {
     artistName,
@@ -592,7 +621,7 @@ function resolveCanonicalInlineAudioExpectedPath(
   return path.join(
     cache?.libraryRoots.music ?? getCurrentLibraryRootPath("music"),
     artistFolder,
-    `${renderedTrackPath}.flac`,
+    joinCappedFileName(renderedTrackPath, ".flac"),
   );
 }
 
@@ -1376,15 +1405,21 @@ export class LibraryFilesService {
     const artistName = (artist?.name as string | undefined) || "Unknown Artist";
     const artistMbId = artist?.mbid ? String(artist.mbid) : null;
     const artistFolder = ((): string => {
+      const resolveFolder = () => resolveArtistFolderForExpectedPath({
+        artistId: row.artist_metadata_id,
+        artistName,
+        artistMbId,
+        existingPath: artist?.path || null,
+      });
       if (cache) {
         const key = String(row.artist_metadata_id);
         const hit = cache.artistFolders.get(key);
         if (hit !== undefined) return hit;
-        const resolved = resolveArtistFolderFromRecord({ name: artistName, mbid: artistMbId, path: artist?.path || null });
+        const resolved = resolveFolder();
         cache.artistFolders.set(key, resolved);
         return resolved;
       }
-      return resolveArtistFolderFromRecord({ name: artistName, mbid: artistMbId, path: artist?.path || null });
+      return resolveFolder();
     })();
 
     // Provider ids collide across services and entity types. A file row that
@@ -1424,7 +1459,7 @@ export class LibraryFilesService {
       // Separated layout: the naming template owns the Plex type suffix via
       // {Video Type}. Do not append a second suffix after render.
       const fileStem = renderFileStem(naming.video_file, context);
-      const fileName = `${fileStem}.${ext}`;
+      const fileName = joinCappedFileName(fileStem, ext);
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -1455,7 +1490,7 @@ export class LibraryFilesService {
       // Sidecars must share the video file's stem (including any Plex extras
       // suffix from the template) so Plex/Kodi pair them with the video.
       const fileStem = renderFileStem(naming.video_file, context);
-      const fileName = `${fileStem}.${ext}`;
+      const fileName = joinCappedFileName(fileStem, ext);
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -1480,7 +1515,7 @@ export class LibraryFilesService {
           channels: row.channels || null,
         };
         const fileStem = renderFileStem(naming.video_file, context);
-        return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}.nfo`) };
+        return { expectedPath: path.join(libraryRootPath, artistFolder, joinCappedFileName(fileStem, ".nfo")) };
       }
     }
 
@@ -1694,7 +1729,7 @@ export class LibraryFilesService {
 
       const trackTemplate = pickTrackTemplate(Number(canonicalAlbum.volumeCount || 1));
       const renderedTrackPath = renderRelativePath(trackTemplate, trackContext);
-      const baseExpectedPath = path.join(libraryRootPath, artistFolder, `${renderedTrackPath}.${ext}`);
+      const baseExpectedPath = path.join(libraryRootPath, artistFolder, joinCappedFileName(renderedTrackPath, ext));
       const relativeTrackPath = renderAudioRelativePathForLibrary({
         relativePath: renderedTrackPath,
         quality: row.quality,
@@ -1702,7 +1737,7 @@ export class LibraryFilesService {
         spatialRoot: cache?.libraryRoots.spatial ?? getCurrentLibraryRootPath("spatial"),
         mustDisambiguate: mustDisambiguateTrackPath(baseExpectedPath, row.id, cache),
       });
-      const fileName = `${relativeTrackPath}.${ext}`;
+      const fileName = joinCappedFileName(relativeTrackPath, ext);
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -1828,7 +1863,7 @@ export class LibraryFilesService {
         musicRoot: cache?.libraryRoots.music ?? getCurrentLibraryRootPath("music"),
         spatialRoot: cache?.libraryRoots.spatial ?? getCurrentLibraryRootPath("spatial"),
       });
-      const trackPath = path.join(libraryRootPath, artistFolder, `${relativeTrackPath}.${ext}`);
+      const trackPath = path.join(libraryRootPath, artistFolder, joinCappedFileName(relativeTrackPath, ext));
       const lyricExtension = String(row.extension || "lrc").toLowerCase() === "txt" ? ".txt" : ".lrc";
       const lyricPath = trackPath.replace(new RegExp(`${path.extname(trackPath)}$`), lyricExtension);
       return { expectedPath: lyricPath };

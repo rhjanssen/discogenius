@@ -1,6 +1,7 @@
 import path from "path";
 import { getConfigSection, type NamingConfig } from "./config.js";
 import { streamingProviderManager } from "../providers/index.js";
+import { getArtistNameTranslationOptions, translateStoredArtistName } from "../metadata/artist-locale-names.js";
 
 export type library_root = "music" | "spatial" | "videos";
 
@@ -132,6 +133,84 @@ export function cleanPathSegment(segment: string): string {
   return result.replace(ReservedDeviceNameRegex, (match) => `${match.slice(0, -1)}_.`);
 }
 
+/** ZFS, ext4, and most others cap a single path component at 255 UTF-8 bytes. */
+export const MAX_PATH_COMPONENT_BYTES = 255;
+
+const MBID_COMPONENT_SUFFIX_RE = /(\s*\{mbid-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})$/i;
+const TRACK_NUMBER_PREFIX_RE = /^(\d+(?:-\d+)? - )/;
+
+function utf8ByteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
+/** Truncate to maxBytes without splitting a UTF-8 sequence. */
+export function truncateUtf8Bytes(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  const buf = Buffer.from(text, "utf8");
+  if (buf.length <= maxBytes) return text;
+  let end = maxBytes;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end -= 1;
+  return buf.subarray(0, end).toString("utf8");
+}
+
+/**
+ * Cap one path component to 255 UTF-8 bytes (Lidarr/Sonarr style).
+ * Keeps a track-number prefix (`108 - ` / `1-08 - `), a `{mbid-…}` suffix,
+ * and `reservedSuffix` (the file extension). Truncates the title in the middle.
+ * Deterministic so a rename of an already-capped name is a no-op.
+ */
+export function capPathComponent(component: string, reservedSuffix = ""): string {
+  const reserved = !reservedSuffix
+    ? ""
+    : reservedSuffix.startsWith(".")
+      ? reservedSuffix
+      : `.${reservedSuffix}`;
+  const maxBytes = MAX_PATH_COMPONENT_BYTES - utf8ByteLength(reserved);
+  if (maxBytes <= 0) return "";
+  if (utf8ByteLength(component) <= maxBytes) return component;
+
+  const mbidMatch = component.match(MBID_COMPONENT_SUFFIX_RE);
+  const mbidSuffix = mbidMatch ? mbidMatch[1] : "";
+  const withoutMbid = mbidMatch ? component.slice(0, component.length - mbidSuffix.length) : component;
+  const prefixMatch = withoutMbid.match(TRACK_NUMBER_PREFIX_RE);
+  const prefix = prefixMatch ? prefixMatch[1] : "";
+  const title = prefixMatch ? withoutMbid.slice(prefix.length) : withoutMbid;
+  const titleMax = maxBytes - utf8ByteLength(prefix) - utf8ByteLength(mbidSuffix);
+  let truncatedTitle = truncateUtf8Bytes(title, Math.max(0, titleMax)).replace(/[- ._]+$/u, "").trimEnd();
+  let result = `${prefix}${truncatedTitle}${mbidSuffix}`;
+  if (utf8ByteLength(result) > maxBytes) {
+    result = truncateUtf8Bytes(result, maxBytes);
+  }
+  return result;
+}
+
+/** Join a rendered relative path (or stem) with an extension, capping the last component. */
+export function joinCappedFileName(relativePath: string, extension: string): string {
+  const ext = !extension ? "" : extension.startsWith(".") ? extension : `.${extension}`;
+  const dir = path.dirname(relativePath);
+  const stem = path.basename(relativePath);
+  const capped = `${capPathComponent(stem, ext)}${ext}`;
+  if (!dir || dir === ".") return capped;
+  return path.join(dir, capped);
+}
+
+export function pathComponentByteLength(component: string): number {
+  return utf8ByteLength(component);
+}
+
+export function describeOverlongPathComponents(filePath: string): string[] {
+  return filePath
+    .split(/[\\/]+/g)
+    .filter(Boolean)
+    .filter((part) => utf8ByteLength(part) > MAX_PATH_COMPONENT_BYTES)
+    .map((part) => `path component too long (${utf8ByteLength(part)} bytes): ${part}`);
+}
+
+function displayArtistTokenName(name: string, mbid?: string | null): string {
+  const fallback = name || "Unknown Artist";
+  return translateStoredArtistName(mbid, fallback, null, getArtistNameTranslationOptions()).name;
+}
+
 function toCleanText(input: string): string {
   return cleanTitle(input);
 }
@@ -199,9 +278,9 @@ export function getPrettyProviderName(provider: string | null | undefined): stri
 }
 
 function buildDerived(context: NamingContext) {
-  const artistName = context.artistName || "Unknown Artist";
-  const artistId = context.artistId || "";
   const artistMbId = context.artistMbId || "";
+  const artistName = displayArtistTokenName(context.artistName || "Unknown Artist", artistMbId);
+  const artistId = context.artistId || "";
   const artistDisambiguation = context.artistDisambiguation || "";
   const artistGenre = context.artistGenre || "";
 
@@ -220,8 +299,8 @@ function buildDerived(context: NamingContext) {
   const releaseGroupMbId = context.releaseGroupMbId || albumMbId || "";
 
   const trackTitle = context.trackTitle || "Unknown Track";
-  const trackArtistName = context.trackArtistName || artistName;
   const trackArtistMbId = context.trackArtistMbId || artistMbId;
+  const trackArtistName = displayArtistTokenName(context.trackArtistName || artistName, trackArtistMbId);
   const trackMbId = context.trackMbId || "";
 
   const trackNumber = Number(context.trackNumber || 0);
@@ -1089,9 +1168,9 @@ export function previewNamingConfig(config: NamingConfig): NamingPreviewResult {
 
   return {
     artistFolder: displayPath(renderRelativePath(config.artist_folder, baseContext)),
-    standardTrack: `${displayPath(renderRelativePath(config.album_track_path_single, baseContext))}.flac`,
-    multiDiscTrack: `${displayPath(renderRelativePath(config.album_track_path_multi, { ...baseContext, volumeNumber: 2, trackNumber: 3 }))}.flac`,
-    video: `${displayPath(renderFileStem(config.video_file, baseContext))}.mp4`,
+    standardTrack: displayPath(joinCappedFileName(renderRelativePath(config.album_track_path_single, baseContext), ".flac")),
+    multiDiscTrack: displayPath(joinCappedFileName(renderRelativePath(config.album_track_path_multi, { ...baseContext, volumeNumber: 2, trackNumber: 3 }), ".flac")),
+    video: displayPath(joinCappedFileName(renderFileStem(config.video_file, baseContext), ".mp4")),
   };
 }
 
@@ -1102,6 +1181,7 @@ export function renderRelativePath(template: string, context: NamingContext): st
   const segments = rawSegments
     .map((segment) => cleanupRendered(segment))
     .map((segment) => cleanPathSegment(segment))
+    .map((segment) => capPathComponent(segment))
     .filter((segment) => segment.length > 0)
     .filter((segment) => segment !== "." && segment !== "..");
 
@@ -1109,7 +1189,7 @@ export function renderRelativePath(template: string, context: NamingContext): st
 }
 
 export function renderFileStem(template: string, context: NamingContext): string {
-  return cleanPathSegment(cleanupRendered(renderTokens(template, context)));
+  return capPathComponent(cleanPathSegment(cleanupRendered(renderTokens(template, context))));
 }
 
 export function getLibraryRootPath(libraryPath: string, root: library_root): string {

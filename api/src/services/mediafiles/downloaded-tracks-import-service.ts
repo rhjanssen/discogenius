@@ -133,6 +133,16 @@ export type UnorganizedTrackGap = {
   cause: string;
 };
 
+function mergeOrganizeTrackGaps(
+  organized: readonly UnorganizedTrackGap[] | undefined,
+  missing: readonly UnorganizedTrackGap[],
+): UnorganizedTrackGap[] {
+  const byId = new Map<string, UnorganizedTrackGap>();
+  for (const gap of missing) byId.set(gap.providerId, gap);
+  for (const gap of organized || []) byId.set(gap.providerId, gap);
+  return Array.from(byId.values());
+}
+
 /** One row per offered track the organizer did not place. Cause text is recorded, not repaired. */
 export function listUnorganizedTrackGaps(
   offers: readonly { provider: string; providerTrackId: string; title?: string | null; trackNum?: number | null; volumeNum?: number | null }[],
@@ -1645,9 +1655,12 @@ export class DownloadedTracksImportService {
             trackOfferCount,
         });
         const offerGaps = offerShortfall
-            ? listUnorganizedTrackGaps(
-                Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
-                organizeResult.processedTrackIds,
+            ? mergeOrganizeTrackGaps(
+                organizeResult.trackGaps,
+                listUnorganizedTrackGaps(
+                    Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
+                    organizeResult.processedTrackIds,
+                ),
             )
             : [];
 

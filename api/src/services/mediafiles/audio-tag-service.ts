@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { normalizeLocaleList, translateStoredArtistName, type ArtistNameTranslationOptions } from "../metadata/artist-locale-names.js";
+import {
+  getArtistNameTranslationOptions,
+  translateStoredArtistName,
+  type ArtistNameTranslationOptions,
+} from "../metadata/artist-locale-names.js";
+export { getArtistNameTranslationOptions };
 import fs from "fs";
 import { nativeMediaTagKeys } from "./media-tag-io.js";
 import { withMediaFileLock } from "./media-file-lock.js";
@@ -611,16 +616,6 @@ export async function syncTrackArtistCredits(trackFileIds: number[]): Promise<vo
   } catch (error) {
     console.warn(`[AudioTagService] Track credit sync skipped: ${error instanceof Error ? error.message : String(error)}`);
   }
-}
-
-/** Artist-name translation settings (metadata.translate_artist_names*). */
-export function getArtistNameTranslationOptions(config?: Partial<MetadataConfig>): ArtistNameTranslationOptions {
-  const metadata = (config ?? getConfigSection("metadata")) as Partial<MetadataConfig>;
-  return {
-    enabled: metadata.translate_artist_names === true,
-    locales: normalizeLocaleList(metadata.artist_name_locales ?? "en,nl"),
-    skipLatin: metadata.translate_artist_names_skip_latin !== false,
-  };
 }
 
 /**

@@ -4,6 +4,7 @@ import { db } from "../../database.js";
 import { resolveArtistFolder, resolveArtistFolderFromRecord } from "../config/naming.js";
 import { Config } from "../config/config.js";
 import { normalizeComparablePath } from "../mediafiles/path-utils.js";
+import { extractNamingMbid } from "../mediafiles/import-discovery.js";
 
 type ArtistFolderSeed = {
   artistId?: string | number | null;
@@ -169,6 +170,60 @@ export function findArtistPathConflict(candidatePath: string, artistId?: string 
   }
 
   return null;
+}
+
+/** Relative artist-folder names on disk whose `{mbid-…}` suffix is this artist. */
+export function findOnDiskArtistFoldersByMbid(mbid: string, root: string): string[] {
+  const wanted = String(mbid || "").trim().toLowerCase();
+  if (!wanted || !root) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const found: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (extractNamingMbid(entry.name) === wanted) found.push(entry.name);
+  }
+  return found;
+}
+
+/**
+ * Desired artist folder from the naming template (translated display name).
+ * Custom paths without this artist's `{mbid-…}` suffix stay as stored.
+ */
+export function resolveArtistFolderForExpectedPath(seed: ArtistFolderSeed): string {
+  const desired = resolveArtistFolderFromTemplate({ ...seed, existingPath: null });
+  const stored = String(seed.existingPath || "").trim();
+  if (!stored) return desired;
+  const storedMbid = extractNamingMbid(path.basename(stored));
+  const artistMbid = String(seed.artistMbId || "").trim().toLowerCase();
+  if (artistMbid && storedMbid === artistMbid) return desired;
+  return stored;
+}
+
+/**
+ * Import destination: reuse the on-disk folder of this MBID so a name change
+ * cannot create a second folder. Rename later merges into the display name.
+ */
+export function resolveArtistFolderForImport(seed: ArtistFolderSeed, libraryRoot: string): string {
+  const desired = resolveArtistFolderForExpectedPath(seed);
+  const mbid = String(seed.artistMbId || "").trim().toLowerCase();
+  if (!mbid) return desired;
+  const existing = findOnDiskArtistFoldersByMbid(mbid, libraryRoot);
+  if (existing.length === 0) return desired;
+  const desiredBase = path.basename(desired);
+  const desiredDir = path.dirname(desired);
+  const matchDesired = existing.find((name) => name === desiredBase);
+  if (matchDesired) {
+    return !desiredDir || desiredDir === "." ? matchDesired : path.join(desiredDir, matchDesired);
+  }
+  const storedBase = path.basename(String(seed.existingPath || "").trim());
+  const matchStored = storedBase ? existing.find((name) => name === storedBase) : undefined;
+  const chosen = matchStored || existing[0];
+  return !desiredDir || desiredDir === "." ? chosen : path.join(desiredDir, chosen);
 }
 
 export function resolveArtistFolderFromTemplate(seed: ArtistFolderSeed): string {

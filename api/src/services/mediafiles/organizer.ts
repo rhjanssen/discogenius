@@ -8,8 +8,8 @@ import { withAlbumFolder, withAlbumFolders, withHddIoPermit, type DiskAdmissionM
 import { Config } from "../config/config.js";
 import { downloadAlbumVideoCover, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveVideoNfoFile } from "./metadata-files.js";
 import { streamingProviderManager } from "../providers/index.js";
-import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "../config/naming.js";
-import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
+import { getNamingConfig, joinCappedFileName, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "../config/naming.js";
+import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForImport, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { LibraryFilesService, removeEmptyParents, resolveVideoTypeSuffix } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
@@ -261,6 +261,13 @@ export type OrganizeResult = {
    * can assign one track's quality to another's row.
    */
   importedTrackFileIds: Record<string, number>;
+  /** Offered tracks this organize did not place, with the failure cause. */
+  trackGaps?: Array<{
+    position: string | null;
+    title: string | null;
+    providerId: string;
+    cause: string;
+  }>;
 };
 
 type OrganizerArtistContext = {
@@ -775,7 +782,7 @@ export class OrganizerService {
     const videoNamingTemplate = path.join(params.artistFolder, naming.video_file);
     const sourceMetrics = await parseAudioFile(params.src);
     const sourceVideoQuality = deriveVideoQuality(sourceMetrics) ?? row.quality ?? null;
-    const destName = `${renderFileStem(naming.video_file, {
+    const destName = joinCappedFileName(renderFileStem(naming.video_file, {
       provider: params.provider,
       artistName: params.artistName,
       artistId: params.artistId,
@@ -792,7 +799,7 @@ export class OrganizerService {
       sampleRate: sourceMetrics.sampleRate || null,
       bitDepth: sourceMetrics.bitDepth || null,
       channels: sourceMetrics.channels || null,
-    })}.mp4`;
+    }), ".mp4");
     const separatedDest = path.join(params.videoRoot, params.artistFolder, destName);
     const artistMetadataId = resolveArtistMetadataId(params.artistId);
     if (artistMetadataId == null) {
@@ -1739,6 +1746,16 @@ export class OrganizerService {
     return withAlbumFolders(files.map((file) => path.dirname(file)), OrganizerService.importDiskMeta(), fn);
   }
 
+  private static describeOrganizeTrackFailure(error: unknown, destFile: string): string {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    const message = error instanceof Error ? error.message : String(error);
+    if (code === "ENAMETOOLONG" || /ENAMETOOLONG|name too long/i.test(message)) {
+      const name = path.basename(destFile);
+      return `path component too long (${Buffer.byteLength(name, "utf8")} bytes): ${name}`;
+    }
+    return message;
+  }
+
   private static moveFileBytes(sourcePath: string, destPath: string): void {
     this.ensureDir(path.dirname(destPath));
     try {
@@ -1979,11 +1996,6 @@ export class OrganizerService {
       const artistMbId = artistContext.artistMbId;
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
-      const artistFolder = resolveArtistFolderFromRecord({
-        name: resolvedArtistName,
-        mbid: artistMbId || null,
-        path: artistContext.artistPath || null,
-      });
 
       const requestedSlot = requestedTarget?.slot || raw.slot || canonicalContext?.slot;
       if (requestedSlot !== "stereo" && requestedSlot !== "spatial") {
@@ -1991,6 +2003,12 @@ export class OrganizerService {
       }
       const isSpatial = requestedSlot === "spatial";
       const targetRoot = requestedTarget?.rootPath || (isSpatial ? spatialRoot : musicRoot);
+      const artistFolder = resolveArtistFolderForImport({
+        artistId,
+        artistName: resolvedArtistName,
+        artistMbId,
+        existingPath: artistContext.artistPath || null,
+      }, targetRoot);
       const canonicalAlbumForNaming = getCanonicalAlbumMetadata({
         canonicalReleaseGroupMbid: jobReleaseGroupMbid || album.mb_release_group_id,
         canonicalReleaseMbid: jobReleaseMbid || album.mbid,
@@ -2091,6 +2109,7 @@ export class OrganizerService {
 
       const renderedTrackDirs: string[] = [];
       const destFiles: Array<{ trackId: string; destFile: string; ext: string }> = [];
+      const trackGaps: NonNullable<OrganizeResult["trackGaps"]> = [];
       const importedStereoTrackFileIds: number[] = [];
       // provider track id -> exact TrackFiles row created/updated for it.
       const importedTrackFileIds: Record<string, number> = {};
@@ -2343,7 +2362,7 @@ export class OrganizerService {
           musicRoot,
           spatialRoot,
           mustDisambiguate: this.hasConflictingMediaDestination(
-            path.join(targetRoot, artistFolder, `${baseRelativeTrackPath}${ext}`),
+            path.join(targetRoot, artistFolder, joinCappedFileName(baseRelativeTrackPath, ext)),
             trackId,
             "track",
           ),
@@ -2356,7 +2375,8 @@ export class OrganizerService {
           renderedTrackDirs.push(trackDirRel);
         }
 
-        const destFile = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
+        const destFile = path.join(targetRoot, artistFolder, joinCappedFileName(relativeTrackPath, ext));
+        try {
         const previousReleaseTracks = this.previousReleaseTrackFiles({
           trackMbid: canonicalIdentity.canonicalTrackMbid,
           releaseMbid: canonicalIdentity.canonicalReleaseMbid,
@@ -2527,6 +2547,28 @@ export class OrganizerService {
           trackStatus: "completed",
           statusMessage: `Imported ${trackTitle}`,
         });
+        } catch (error) {
+          const cause = this.describeOrganizeTrackFailure(error, destFile);
+          const provider = canonicalContext?.provider || raw.provider || getDefaultStreamingSource();
+          trackGaps.push({
+            position: trackNumber != null ? `${volumeNumber ?? 1}-${trackNumber}` : null,
+            title: trackTitle,
+            providerId: `${provider}:${trackId}`,
+            cause,
+          });
+          onProgress?.({
+            phase: "importing",
+            currentFileNum: destFiles.length + 1,
+            totalFiles: totalImportableTracks,
+            currentTrack: trackTitle,
+            currentTrackNum: trackNumber ?? null,
+            currentVolumeNum: volumeNumber ?? null,
+            currentProviderTrackId: trackId ? String(trackId) : null,
+            trackStatus: "error",
+            statusMessage: cause,
+          });
+          console.warn(`[Organizer] Failed to import offered track ${trackId}: ${cause}`);
+        }
       }
 
       onProgress?.({
@@ -2786,6 +2828,7 @@ export class OrganizerService {
         type: "album",
         providerId,
         processedTrackIds: [...destFiles.map((file) => file.trackId), ...bundledVideoIds],
+        trackGaps,
         totalTracksInStaging: files.length,
         expectedTracks,
         importedTrackFileIds,
@@ -2931,11 +2974,6 @@ export class OrganizerService {
       const artistMbId = artistContext.artistMbId;
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
-      const artistFolder = resolveArtistFolderFromRecord({
-        name: resolvedArtistName,
-        mbid: artistMbId || null,
-        path: artistContext.artistPath || null,
-      });
 
       const requestedSlot = requestedTarget?.slot || raw.slot;
       if (requestedSlot !== "stereo" && requestedSlot !== "spatial") {
@@ -2943,6 +2981,12 @@ export class OrganizerService {
       }
       const isSpatial = requestedSlot === "spatial";
       const targetRoot = requestedTarget?.rootPath || (isSpatial ? spatialRoot : musicRoot);
+      const artistFolder = resolveArtistFolderForImport({
+        artistId,
+        artistName: resolvedArtistName,
+        artistMbId,
+        existingPath: artistContext.artistPath || null,
+      }, targetRoot);
 
       const jobCanonicalTrackMbid = String(raw.canonicalTrackMbid || "").trim() || null;
       const jobCanonicalRecordingMbid = String(raw.canonicalRecordingMbid || "").trim() || null;
@@ -3054,13 +3098,13 @@ export class OrganizerService {
         musicRoot,
         spatialRoot,
         mustDisambiguate: this.hasConflictingMediaDestination(
-          path.join(targetRoot, artistFolder, `${renderedTrackPath}${ext}`),
+          path.join(targetRoot, artistFolder, joinCappedFileName(renderedTrackPath, ext)),
           providerId,
           "track",
         ),
       });
 
-      const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
+      const dest = path.join(targetRoot, artistFolder, joinCappedFileName(relativeTrackPath, ext));
       const previousReleaseTracks = this.previousReleaseTrackFiles({
         trackMbid: trackIdentity.canonicalTrackMbid,
         releaseMbid: trackIdentity.canonicalReleaseMbid,
@@ -3557,17 +3601,19 @@ export class OrganizerService {
 
       const resolvedArtistName = artistName || "Unknown Artist";
       const naming = getNamingConfig();
-      const artistFolder = resolveArtistFolderFromRecord({
-        name: resolvedArtistName,
-        mbid: artistMbId || null,
-        path: artistPath || null,
-      });
+      const videoRoot = Config.getVideoPath();
+      const artistFolder = resolveArtistFolderForImport({
+        artistId,
+        artistName: resolvedArtistName,
+        artistMbId,
+        existingPath: artistPath || null,
+      }, videoRoot || Config.getMusicPath());
       const videoNamingTemplate = path.join(artistFolder, naming.video_file);
 
       const ext = path.extname(src);
       const sourceMetrics = await parseAudioFile(src);
       const sourceVideoQuality = deriveVideoQuality(sourceMetrics) ?? video.quality ?? null;
-      const separatedDestName = `${renderFileStem(naming.video_file, {
+      const separatedDestName = joinCappedFileName(renderFileStem(naming.video_file, {
         provider: videoProvider,
         artistName: resolvedArtistName,
         artistId,
@@ -3584,7 +3630,7 @@ export class OrganizerService {
         sampleRate: sourceMetrics.sampleRate || null,
         bitDepth: sourceMetrics.bitDepth || null,
         channels: sourceMetrics.channels || null,
-      })}.mp4`;
+      }), ".mp4");
       const separatedDest = path.join(videoRoot, artistFolder, separatedDestName);
       const artistMetadataId = resolveArtistMetadataId(artistId);
       if (artistMetadataId == null) {
