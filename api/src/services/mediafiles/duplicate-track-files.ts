@@ -9,7 +9,8 @@ import { normalizeResolvedPath } from "./path-utils.js";
  * the collision is resolved instead of reported:
  *
  * - clear duplicate: the occupant is linked to the track and already sits at
- *   the path, the mover is an unlinked copy -> delete the mover;
+ *   the path, the mover is an unlinked copy or a copy in another folder of the
+ *   same edition -> delete the mover;
  * - manual import: the mover came in through manual import -> move it to the
  *   unmapped files list (file stays on disk);
  * - ambiguous: anything else (e.g. the linked file must move onto a path held
@@ -46,7 +47,10 @@ export function classifyTrackPathCollision(
   if (mover.manual && occupant.track_id != null) {
     return { kind: "unmapped", unmapIds: [mover.id], keepId: occupant.id };
   }
-  if (mover.track_id == null && occupantLinkedInPlace) {
+  // Clear: the linked file already sits at the path, and the mover is either
+  // unlinked or a stray copy in another folder (e.g. an old edition-title folder).
+  const strayFolder = path.dirname(normalizeResolvedPath(mover.file_path)) !== path.dirname(normalizeResolvedPath(targetPath));
+  if (occupantLinkedInPlace && (mover.track_id == null || strayFolder)) {
     return { kind: "delete-unlinked", deleteIds: [mover.id], keepId: occupant.id };
   }
   const artistIds = [mover.artist_metadata_id, occupant.artist_metadata_id]

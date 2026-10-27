@@ -28,6 +28,15 @@ test("The Who Summertime Blues: linked file must move onto an unlinked copy, so 
   });
 });
 
+test("Thompson Twins disc 3: a linked copy in the old-title folder is also a clear duplicate", () => {
+  const target = `${root}/Industry & Seduction (2025) {mbid-c95493b7}/314 - Love on Your Side.flac`;
+  const mover = claim({ id: 43263, track_id: 914, file_path: `${root}/Industry & Seduction (3CD) (2025) {mbid-c95493b7}/314 - Love on Your Side.flac` });
+  const occupant = claim({ id: 41460, track_id: 914, file_path: target });
+  assert.deepEqual(classifyTrackPathCollision(mover, occupant, target), {
+    kind: "delete-unlinked", deleteIds: [43263], keepId: 41460,
+  });
+});
+
 test("a manually imported file claiming an occupied track goes to unmapped files, not deleted", () => {
   const target = `${root}/A (2025) {mbid-x}/101 - A.flac`;
   const mover = claim({ id: 5, manual: true, file_path: `${root}/import/a.flac` });
