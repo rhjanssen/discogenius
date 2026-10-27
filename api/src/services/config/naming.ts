@@ -176,7 +176,7 @@ export function capPathComponent(component: string, reservedSuffix = ""): string
   const prefix = prefixMatch ? prefixMatch[1] : "";
   const title = prefixMatch ? withoutMbid.slice(prefix.length) : withoutMbid;
   const titleMax = maxBytes - utf8ByteLength(prefix) - utf8ByteLength(mbidSuffix);
-  let truncatedTitle = truncateUtf8Bytes(title, Math.max(0, titleMax)).replace(/[- ._]+$/u, "").trimEnd();
+  const truncatedTitle = truncateUtf8Bytes(title, Math.max(0, titleMax)).replace(/[- ._]+$/u, "").trimEnd();
   let result = `${prefix}${truncatedTitle}${mbidSuffix}`;
   if (utf8ByteLength(result) > maxBytes) {
     result = truncateUtf8Bytes(result, maxBytes);
