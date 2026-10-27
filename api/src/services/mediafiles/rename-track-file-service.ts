@@ -15,6 +15,8 @@ import {
   removeEmptyParents,
   type ExpectedPathCache,
   type RenameApplyResult,
+  type RenameDryRunAlbum,
+  type RenameDryRunReport,
   type RenamePreviewItem,
   type RenameScopeOptions,
   type RenameStatusSummary,
@@ -22,8 +24,11 @@ import {
 import { allowsInlineVideoPlacement } from "./video-folder-layout.js";
 import { normalizeResolvedPath } from "./path-utils.js";
 import { providerUnambiguousAlbumIdSql } from "../providers/provider-item-artist-scope.js";
-import { resolveArtistMbid } from "../music/managed-artists.js";
+import { loadArtistMetadataIdentity, resolveArtistMbid } from "../music/managed-artists.js";
 import { FileMutationJournal } from "./file-mutation-journal.js";
+import { extractNamingMbid } from "./import-discovery.js";
+import { describeOverlongPathComponents } from "../config/naming.js";
+import { resolveArtistDisplayName } from "../metadata/artist-locale-names.js";
 import { audioDuplicateCandidate, proveAudioDuplicate } from "./audio-duplicate-proof.js";
 import {
   buildRenameFilters,
@@ -157,6 +162,18 @@ function sidecarFileIdentity(file: string): string {
   const stat = fs.lstatSync(file, { bigint: true });
   if (!stat.isFile()) throw new Error(`Sidecar changed to a non-file: ${file}`);
   return [stat.dev, stat.ino, stat.size, stat.mtimeNs].join(":");
+}
+
+function firstLibraryFolder(filePath: string, libraryRoot: string | null | undefined): string {
+  const root = String(libraryRoot || "").trim();
+  const resolved = path.resolve(filePath);
+  if (root) {
+    const relative = path.relative(path.resolve(root), resolved);
+    if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+      return relative.split(/[\\/]/)[0] || "";
+    }
+  }
+  return path.basename(path.dirname(path.dirname(resolved)));
 }
 
 // Files the rename *preview* lists. Extras (cover/nfo/lyrics/thumbnails) are not
@@ -474,6 +491,86 @@ export class RenameTrackFileService {
     const scanLimit = Math.max(1, Math.min(1000, options.limit ?? 25));
     const results = this.evaluateRenameRows(this.getRenameRows({ ...options, limit: scanLimit, offset: 0 }, true, true), { persist: false });
     return buildRenameStatusSummary(total, results, sampleLimit);
+  }
+
+  /**
+   * Library-wide (or scoped) rename dry-run. Lists per-artist/album moves and
+   * counts collisions, over-long path components, and MBID folder merges.
+   * Does not touch files.
+   */
+  static getRenameDryRun(options: RenameScopeOptions = {}): RenameDryRunReport {
+    const rows = this.getRenameRows({ ...options, limit: undefined, offset: 0 }, false, true);
+    const previews = this.evaluateRenameRows(rows, { persist: false });
+    const albums = new Map<string, RenameDryRunAlbum>();
+    const mergeKeys = new Set<string>();
+
+    for (const preview of previews) {
+      const identity = loadArtistMetadataIdentity(String(preview.artist_metadata_id));
+      const artistName = resolveArtistDisplayName(identity?.mbid, identity?.name || "Unknown Artist");
+      const artistMbid = identity?.mbid ? String(identity.mbid) : null;
+      const albumKey = `${preview.artist_metadata_id}::${preview.album_id ?? ""}`;
+      let album = albums.get(albumKey);
+      if (!album) {
+        album = {
+          artistId: preview.artist_metadata_id,
+          artistName,
+          artistMbid,
+          albumId: preview.album_id == null ? null : String(preview.album_id),
+          moves: [],
+          collisions: 0,
+          overlongComponents: 0,
+          mbidFolderMerges: 0,
+        };
+        albums.set(albumKey, album);
+      }
+
+      const overlong = [
+        ...describeOverlongPathComponents(preview.file_path),
+        ...describeOverlongPathComponents(preview.expected_path || ""),
+      ];
+      album.overlongComponents += overlong.length;
+
+      if (preview.needs_rename && preview.expected_path) {
+        album.moves.push({
+          from: preview.file_path,
+          to: preview.expected_path,
+          fileType: preview.file_type,
+          conflict: preview.conflict,
+        });
+        if (preview.conflict) album.collisions += 1;
+
+        const currentArtistFolder = firstLibraryFolder(preview.file_path, preview.library_root);
+        const expectedArtistFolder = firstLibraryFolder(preview.expected_path, preview.library_root);
+        const fromMbid = extractNamingMbid(currentArtistFolder);
+        const toMbid = extractNamingMbid(expectedArtistFolder);
+        if (
+          fromMbid
+          && fromMbid === toMbid
+          && currentArtistFolder
+          && expectedArtistFolder
+          && currentArtistFolder !== expectedArtistFolder
+        ) {
+          const mergeKey = `${preview.artist_metadata_id}:${currentArtistFolder}->${expectedArtistFolder}`;
+          if (!mergeKeys.has(mergeKey)) {
+            mergeKeys.add(mergeKey);
+            album.mbidFolderMerges += 1;
+          }
+        }
+      }
+    }
+
+    const byAlbum = Array.from(albums.values()).filter((album) =>
+      album.moves.length > 0 || album.collisions > 0 || album.overlongComponents > 0 || album.mbidFolderMerges > 0
+    );
+    return {
+      artists: new Set(byAlbum.map((album) => album.artistId)).size,
+      albums: byAlbum.length,
+      moves: byAlbum.reduce((sum, album) => sum + album.moves.length, 0),
+      collisions: byAlbum.reduce((sum, album) => sum + album.collisions, 0),
+      overlongComponents: byAlbum.reduce((sum, album) => sum + album.overlongComponents, 0),
+      mbidFolderMerges: mergeKeys.size,
+      byAlbum,
+    };
   }
 
   /**

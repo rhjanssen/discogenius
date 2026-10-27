@@ -109,6 +109,23 @@ router.get("/rename/preview", (req, res) => {
   }
 });
 
+router.get("/rename/dry-run", (req, res) => {
+  try {
+    const artistId = req.query.artistId as string | undefined;
+    const albumId = req.query.albumId as string | undefined;
+    const editionId = req.query.editionId as string | undefined;
+    const releaseMbid = req.query.releaseMbid as string | undefined;
+    const libraryRoot = req.query.libraryRoot as string | undefined;
+    const fileTypes = parseFileTypes(req.query.fileTypes);
+    const report = RenameTrackFileService.getRenameDryRun({
+      artistId, albumId, editionId, releaseMbid, libraryRoot, fileTypes,
+    });
+    res.json(report);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
 router.get("/rename/status", (req, res) => {
   try {
     const artistId = req.query.artistId as string | undefined;

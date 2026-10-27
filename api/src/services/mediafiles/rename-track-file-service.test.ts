@@ -1779,6 +1779,18 @@ test("RenameTrackFileService supports albumId and editionId scopes without colum
   assert.equal(typeof statusByEdition.total, "number");
 });
 
+test("rename dry-run lists moves without touching files", () => {
+  const seeded = seedTrackedFile();
+  const before = fs.readFileSync(seeded.sourcePath);
+  const report = renameTrackFileServiceModule.RenameTrackFileService.getRenameDryRun({ artistId: "1" });
+  assert.ok(report.moves >= 1);
+  assert.equal(report.collisions, 0);
+  assert.ok(report.byAlbum.length >= 1);
+  assert.equal(report.byAlbum[0].moves[0].from, seeded.sourcePath);
+  assert.equal(fs.readFileSync(seeded.sourcePath).equals(before), true);
+  assert.equal(fs.existsSync(seeded.sourcePath), true);
+});
+
 
 test("rename waits for another database writer without failing or blocking timers", async () => {
   const seeded = seedTrackedFile();
