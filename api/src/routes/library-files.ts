@@ -1,3 +1,4 @@
+import { withSqliteWriteGate } from "../database.js";
 import { DownloadMissingService } from "../services/music/download-missing-service.js";
 import { CommandPriority, CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
@@ -142,7 +143,11 @@ router.post("/rename/resolve-duplicates", async (req, res) => {
     if (!artistId && !albumId && !editionId) {
       return res.status(400).json({ detail: "artistId, albumId or editionId is required" });
     }
-    const result = RenameTrackFileService.resolveDuplicateTrackFiles({ artistId, albumId, editionId });
+    // Deletes and unmaps write to the DB: take the global write gate like commands do.
+    const result = await withSqliteWriteGate(
+      () => RenameTrackFileService.resolveDuplicateTrackFiles({ artistId, albumId, editionId }),
+      "rename:resolve-duplicates",
+    );
     const queued = [];
     for (const id of result.redownloadArtistIds) {
       queued.push({ artistId: id, ...(await DownloadMissingService.queueMonitoredItems(id)) });
