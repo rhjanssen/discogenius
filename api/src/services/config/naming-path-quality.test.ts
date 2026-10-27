@@ -129,3 +129,14 @@ test("album folder {mbid-…} suffix is kept when the title is truncated", () =>
   assert.ok(Buffer.byteLength(folder, "utf8") <= 255);
   assert.ok(folder.endsWith(`{mbid-${editionMbid}}`));
 });
+
+test("Shostakovich: an existing Latin folder is kept while the artist's aliases were never synced", () => {
+  const mbid = "519dd32e-8f30-4380-8826-7aa99169e1bb";
+  const stored = `Shostakovich {mbid-${mbid}}`;
+  const expected = artistPaths.resolveArtistFolderForExpectedPath({
+    artistName: "Дмитрий Дмитриевич Шостакович",
+    artistMbId: mbid,
+    existingPath: stored,
+  });
+  assert.equal(expected, stored);
+});

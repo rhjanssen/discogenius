@@ -28,8 +28,14 @@ import { loadArtistMetadataIdentity, resolveArtistMbid } from "../music/managed-
 import { FileMutationJournal } from "./file-mutation-journal.js";
 import { extractNamingMbid } from "./import-discovery.js";
 import { describeOverlongPathComponents } from "../config/naming.js";
-import { resolveArtistDisplayName } from "../metadata/artist-locale-names.js";
+import { artistLocaleAliasesPending, resolveArtistDisplayName } from "../metadata/artist-locale-names.js";
 import { audioDuplicateCandidate, proveAudioDuplicate } from "./audio-duplicate-proof.js";
+import {
+  applyDuplicateResolutions,
+  planTrackPathCollision,
+  type DuplicateApplyResult,
+  type DuplicateResolution,
+} from "./duplicate-track-files.js";
 import {
   buildRenameFilters,
   buildRenameStatusSummary,
@@ -181,6 +187,12 @@ function firstLibraryFolder(filePath: string, libraryRoot: string | null | undef
 // moves extras as a side effect (ExtraService.MoveFilesAfterRename). The apply path
 // still renames extras, so this only changes what the user reviews.
 const MEDIA_RENAME_FILE_TYPES = ["track", "video"] as const;
+
+function describeDuplicateResolution(plan: DuplicateResolution, expectedPath: string): string {
+  if (plan.kind === "delete-unlinked") return `Duplicate of ${expectedPath}, which is linked to this track. Apply deletes this unlinked copy.`;
+  if (plan.kind === "unmapped") return `Manually imported duplicate of ${expectedPath}. Apply moves it to unmapped files.`;
+  return `Two files claim ${expectedPath} and it is unclear which recording is right. Apply deletes both and the track is downloaded again.`;
+}
 
 export class RenameTrackFileService {
   private static getRenameRows(
@@ -391,6 +403,7 @@ export class RenameTrackFileService {
       let verifyDuplicate = false;
       const dropDuplicate = false;
       let conflictMessage: string | undefined;
+      let duplicateResolution: DuplicateResolution | null = null;
       if (expectedPath && needsRename) {
         const decoded = decodeSyntheticId(row.id);
         const tableName = decoded.tableName;
@@ -409,6 +422,8 @@ export class RenameTrackFileService {
             const occupant = db.prepare("SELECT id FROM TrackFiles WHERE file_path=?").get(expectedPath) as { id: number } | undefined;
             verifyDuplicate = Boolean(occupant && audioDuplicateCandidate(decoded.id, occupant.id, resolvedFilePath, expectedPath));
             if (verifyDuplicate) conflictMessage = `Possible duplicate of ${expectedPath}. Apply verifies the audio and keeps the destination only if both files are identical audio from the same edition. Otherwise both files are preserved.`;
+            duplicateResolution = planTrackPathCollision(decoded.id, expectedPath);
+            if (duplicateResolution) conflictMessage = describeDuplicateResolution(duplicateResolution, expectedPath);
           }
         }
       }
@@ -447,6 +462,7 @@ export class RenameTrackFileService {
         missing,
         reason,
         conflict_message: conflictMessage,
+        duplicate_resolution: duplicateResolution ?? undefined,
       };
     });
 
@@ -518,6 +534,7 @@ export class RenameTrackFileService {
           albumId: preview.album_id == null ? null : String(preview.album_id),
           moves: [],
           collisions: 0,
+          duplicates: 0,
           overlongComponents: 0,
           mbidFolderMerges: 0,
         };
@@ -535,9 +552,11 @@ export class RenameTrackFileService {
           from: preview.file_path,
           to: preview.expected_path,
           fileType: preview.file_type,
-          conflict: preview.conflict,
+          conflict: preview.conflict && !preview.duplicate_resolution,
+          duplicateResolution: preview.duplicate_resolution?.kind,
         });
-        if (preview.conflict) album.collisions += 1;
+        if (preview.duplicate_resolution) album.duplicates += 1;
+        else if (preview.conflict) album.collisions += 1;
 
         const currentArtistFolder = firstLibraryFolder(preview.file_path, preview.library_root);
         const expectedArtistFolder = firstLibraryFolder(preview.expected_path, preview.library_root);
@@ -560,13 +579,14 @@ export class RenameTrackFileService {
     }
 
     const byAlbum = Array.from(albums.values()).filter((album) =>
-      album.moves.length > 0 || album.collisions > 0 || album.overlongComponents > 0 || album.mbidFolderMerges > 0
+      album.moves.length > 0 || album.collisions > 0 || album.duplicates > 0 || album.overlongComponents > 0 || album.mbidFolderMerges > 0
     );
     return {
       artists: new Set(byAlbum.map((album) => album.artistId)).size,
       albums: byAlbum.length,
       moves: byAlbum.reduce((sum, album) => sum + album.moves.length, 0),
       collisions: byAlbum.reduce((sum, album) => sum + album.collisions, 0),
+      duplicates: byAlbum.reduce((sum, album) => sum + album.duplicates, 0),
       overlongComponents: byAlbum.reduce((sum, album) => sum + album.overlongComponents, 0),
       mbidFolderMerges: mergeKeys.size,
       byAlbum,
@@ -636,7 +656,41 @@ export class RenameTrackFileService {
       });
   }
 
+  /**
+   * Resolve duplicate track files in scope (one file per track per library)
+   * without renaming anything else. Returns what was deleted or unmapped and
+   * which artists need their missing tracks queued again.
+   */
+  static resolveDuplicateTrackFiles(options: RenameScopeOptions = {}): DuplicateApplyResult & { plans: DuplicateResolution[] } {
+    const plans = this.evaluateRenameRows(this.getRenameRows({ ...options, limit: undefined, offset: 0 }, false, true), { persist: false })
+      .map((item) => item.duplicate_resolution)
+      .filter((plan): plan is DuplicateResolution => Boolean(plan));
+    return { ...applyDuplicateResolutions(plans), plans };
+  }
+
+  /** Fetch MusicBrainz aliases for in-scope artists whose non-Latin name was never alias-synced. */
+  private static async syncPendingArtistAliases(options: RenameScopeOptions): Promise<void> {
+    const rows = this.getRenameRows({ ...options, limit: undefined, offset: 0 }, false, true);
+    const pending = new Set<string>();
+    for (const artistId of new Set(rows.map((row) => String(row.artist_metadata_id)))) {
+      const identity = loadArtistMetadataIdentity(artistId);
+      if (identity?.mbid && artistLocaleAliasesPending(identity.mbid, String(identity.name || ""))) {
+        pending.add(String(identity.mbid));
+      }
+    }
+    if (pending.size === 0) return;
+    try {
+      const { TrackArtistCreditSync } = await import("../metadata/track-artist-credit-sync.js");
+      const { catalogProviderRegistry } = await import("../catalog/index.js");
+      await TrackArtistCreditSync.syncArtistLocaleAliases([...pending], catalogProviderRegistry.getActive());
+    } catch (error) {
+      console.warn(`[Rename] Artist alias sync skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   static async executeRenameFilesByQuery(options: RenameScopeOptions = {}): Promise<RenameApplyResult> {
+    await this.syncPendingArtistAliases(options);
+    this.resolveDuplicateTrackFiles(options);
     const ids = this.evaluateRenameRows(this.getRenameRows(options, false), { persist: false })
       .filter((item) => item.needs_rename || item.drop_duplicate)
       .map((item) => item.id);

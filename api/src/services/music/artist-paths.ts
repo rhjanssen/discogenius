@@ -1,3 +1,4 @@
+import { artistLocaleAliasesPending } from "../metadata/artist-locale-names.js";
 import path from "path";
 import fs from "fs";
 import { db } from "../../database.js";
@@ -200,7 +201,11 @@ export function resolveArtistFolderForExpectedPath(seed: ArtistFolderSeed): stri
   if (!stored) return desired;
   const storedMbid = extractNamingMbid(path.basename(stored));
   const artistMbid = String(seed.artistMbId || "").trim().toLowerCase();
-  if (artistMbid && storedMbid === artistMbid) return desired;
+  if (artistMbid && storedMbid === artistMbid) {
+    // Same artist: follow the display name, unless the alias sync has not run
+    // yet and the name is still the raw non-Latin MusicBrainz spelling.
+    return artistLocaleAliasesPending(artistMbid, seed.artistName) ? stored : desired;
+  }
   return stored;
 }
 

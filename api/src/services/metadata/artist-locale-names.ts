@@ -162,3 +162,25 @@ export function resolveArtistDisplayName(
   const resolved = String(name || "").trim() || "Unknown Artist";
   return translateStoredArtistName(artistMbid, resolved, sortName, getArtistNameTranslationOptions(config)).name;
 }
+
+/**
+ * True when this artist's name would be translated but its MusicBrainz aliases
+ * were never fetched (no ArtistLocaleAliasSync row). Aliases are only synced on
+ * retag/rename apply, so naming must not move an existing folder to the raw
+ * non-Latin name before that sync ran.
+ */
+export function artistLocaleAliasesPending(
+  artistMbid: string | null | undefined,
+  name: string,
+  config?: ArtistNameTranslationConfig,
+): boolean {
+  const options = getArtistNameTranslationOptions(config);
+  const mbid = String(artistMbid || "").trim().toLowerCase();
+  if (!options.enabled || !mbid || !name || isLatinScript(name) || !isDatabaseOpen()) return false;
+  try {
+    if (db.prepare("SELECT 1 FROM ArtistLocaleAliasSync WHERE artist_mbid = ?").get(mbid)) return false;
+    return !db.prepare("SELECT 1 FROM ArtistLocaleAliases WHERE artist_mbid = ? LIMIT 1").get(mbid);
+  } catch {
+    return false;
+  }
+}

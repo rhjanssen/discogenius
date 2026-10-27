@@ -405,6 +405,8 @@ export type RenamePreviewItem = {
   reason?: string;
   /** Human-readable conflict explanation for the preview UI. */
   conflict_message?: string;
+  /** Set when the conflict is a duplicate track file that Apply resolves (one file per track per library). */
+  duplicate_resolution?: import("./duplicate-track-files.js").DuplicateResolution;
 };
 
 export type RenameApplyResult = {
@@ -442,6 +444,7 @@ export type RenameDryRunMove = {
   to: string;
   fileType: string;
   conflict: boolean;
+  duplicateResolution?: "delete-unlinked" | "unmapped" | "ambiguous";
 };
 
 export type RenameDryRunAlbum = {
@@ -451,6 +454,7 @@ export type RenameDryRunAlbum = {
   albumId: string | null;
   moves: RenameDryRunMove[];
   collisions: number;
+  duplicates: number;
   overlongComponents: number;
   mbidFolderMerges: number;
 };
@@ -460,6 +464,7 @@ export type RenameDryRunReport = {
   albums: number;
   moves: number;
   collisions: number;
+  duplicates: number;
   overlongComponents: number;
   mbidFolderMerges: number;
   byAlbum: RenameDryRunAlbum[];

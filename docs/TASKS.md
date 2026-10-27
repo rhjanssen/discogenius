@@ -831,3 +831,9 @@ The measured ownership problems and remaining acceptance gates are in
   actual artwork source switch pass. Source CI from f53841e7 remains applicable
   to unchanged TS. Still undeployed. Positive DD+ JOC recognition is now proven;
   broader variants, cache retirement/plan reconciliation/live acceptance remain.
+
+## Backlog (added 2026-10-27, not scheduled)
+
+- **UI overhaul: information density and element use.** Learn from Sonarr/Radarr/Lidarr (dense tables, poster/overview/table views, compact status chips, bulk-select editors). Constraint (Robert): the app stays Fluent Design UI; improve within Fluent with as few deviations as possible.
+- **UltraBlur backgrounds.** Ours look duller/matte in dark mode and read as four coloured corners blending. Research how Plexamp and the main Plex app generate theirs (they differ) and match more closely. UltraBlur is an accepted, deliberate deviation from standard Fluent because it resembles Fluent's Acrylic/Mica materials; keep that Acrylic/Mica feel, otherwise stay inside Fluent Design.
+- **Recycle bin for deleted library files** (Lidarr Settings > Media Management > Recycling Bin). Duplicate resolution currently deletes permanently; ZFS snapshots are the safety net.

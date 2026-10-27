@@ -1,3 +1,4 @@
+import { DownloadMissingService } from "../services/music/download-missing-service.js";
 import { CommandPriority, CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
 import fs from "fs";
@@ -121,6 +122,32 @@ router.get("/rename/dry-run", (req, res) => {
       artistId, albumId, editionId, releaseMbid, libraryRoot, fileTypes,
     });
     res.json(report);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+/**
+ * Resolve duplicate track files for one artist or album (one file per track per
+ * library): unlinked copies are deleted, manual imports go to unmapped files,
+ * ambiguous pairs are deleted and their artist's missing tracks are re-queued.
+ * Scope is required so this never runs library-wide by accident.
+ */
+router.post("/rename/resolve-duplicates", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const artistId = typeof body.artistId === "string" ? body.artistId : undefined;
+    const albumId = typeof body.albumId === "string" ? body.albumId : undefined;
+    const editionId = typeof body.editionId === "string" ? body.editionId : undefined;
+    if (!artistId && !albumId && !editionId) {
+      return res.status(400).json({ detail: "artistId, albumId or editionId is required" });
+    }
+    const result = RenameTrackFileService.resolveDuplicateTrackFiles({ artistId, albumId, editionId });
+    const queued = [];
+    for (const id of result.redownloadArtistIds) {
+      queued.push({ artistId: id, ...(await DownloadMissingService.queueMonitoredItems(id)) });
+    }
+    res.json({ ...result, queued });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }
