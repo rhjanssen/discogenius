@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { withSqliteWriteGate } from "./database.js";
+import { retrySqliteBusyAsync, retrySqliteBusySync, withSqliteWriteGate } from "./database.js";
 
 test("withSqliteWriteGate serializes overlapping async writers", async () => {
   const order: string[] = [];
@@ -32,4 +32,24 @@ test("withSqliteWriteGate serializes overlapping async writers", async () => {
   const results = await Promise.all([first, second]);
   assert.deepEqual(results, ["a", "b"]);
   assert.deepEqual(order, ["a-start", "a-end", "b-start", "b-end"]);
+});
+
+test("retrySqliteBusySync retries SQLITE_BUSY then returns", () => {
+  let calls = 0;
+  const result = retrySqliteBusySync(() => {
+    calls += 1;
+    if (calls === 1) throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    return "queued";
+  });
+  assert.equal(result, "queued");
+  assert.equal(calls, 2);
+});
+
+test("retrySqliteBusyAsync does not swallow a persistent SQLITE_BUSY", async () => {
+  await assert.rejects(
+    () => retrySqliteBusyAsync(() => {
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    }),
+    (error: unknown) => (error as { code?: string }).code === "SQLITE_BUSY",
+  );
 });

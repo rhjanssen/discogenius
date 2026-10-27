@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, retrySqliteBusySync } from "../../database.js";
 import { CommandTrigger } from "../commands/command-trigger.js";
 import {
   CommandNames,
@@ -310,7 +310,7 @@ export class DownloadWaitQueue {
       payload.authHold = authHoldRecord(providerId);
     }
     const trackIds = input.trackIds ?? [];
-    const inserted = db.transaction(() => {
+    const inserted = retrySqliteBusySync(() => db.transaction(() => {
       const rank = position === "front" ? this.nextFrontRank() : this.nextAppendRank();
       const info = db.prepare(`
         INSERT INTO DownloadQueue (
@@ -340,7 +340,7 @@ export class DownloadWaitQueue {
         input.trigger ?? CommandTrigger.Unspecified,
       );
       return Number(info.lastInsertRowid);
-    })();
+    })());
 
     if (input.notify !== false) {
       notifyQueueChanged();

@@ -64,10 +64,48 @@ import {
 
 let _db: Database.Database | null = null;
 
+export function isDatabaseOpen(): boolean {
+  return _db != null;
+}
+
 /** Wait for writer admission without blocking HTTP. The callback runs once;
  * retrying a callback can repeat filesystem or event side effects. */
 export function withDbWrite<T>(fn: () => T): Promise<T> {
   return withSqliteWriteMutexAsync(fn);
+}
+
+const SQLITE_BUSY_RETRY_WAITS_MS = [0, 25, 50, 100, 200, 400, 800];
+
+/** Retry a short SQLite write that hit SQLITE_BUSY. Never swallows: the last error is thrown. */
+export function retrySqliteBusySync<T>(work: () => T): T {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < SQLITE_BUSY_RETRY_WAITS_MS.length; attempt += 1) {
+    const waitMs = SQLITE_BUSY_RETRY_WAITS_MS[attempt];
+    if (waitMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, waitMs);
+    try {
+      return work();
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+/** Async counterpart of retrySqliteBusySync. Used on the admitted write path. */
+export async function retrySqliteBusyAsync<T>(work: () => T | Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < SQLITE_BUSY_RETRY_WAITS_MS.length; attempt += 1) {
+    const waitMs = SQLITE_BUSY_RETRY_WAITS_MS[attempt];
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    try {
+      return await work();
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 // SQLite's own timeout only covers writers outside our shared admission queue.
