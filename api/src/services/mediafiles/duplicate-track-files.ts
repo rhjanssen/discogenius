@@ -58,11 +58,11 @@ export function classifyTrackPathCollision(
 export function loadTrackFileClaim(id: number): TrackFileClaim | null {
   const row = db.prepare(`
     SELECT id, library_id, album_edition_id, track_id, artist_metadata_id, file_path,
-           provider_item_id, source_audio_variant_id
+           provider, provider_id
     FROM TrackFiles WHERE id = ?
   `).get(id) as (Omit<TrackFileClaim, "manual"> & {
-    provider_item_id: number | null;
-    source_audio_variant_id: number | null;
+    provider: string | null;
+    provider_id: string | null;
   }) | undefined;
   if (!row) return null;
   return {
@@ -72,8 +72,9 @@ export function loadTrackFileClaim(id: number): TrackFileClaim | null {
     track_id: row.track_id,
     artist_metadata_id: row.artist_metadata_id,
     file_path: row.file_path,
-    // Manual import stores no provider acquisition (canonical-manual-import clears it).
-    manual: row.provider_item_id == null && row.source_audio_variant_id == null,
+    // Manual import clears the provider identity (canonical-manual-import-service);
+    // downloaded files keep provider + provider_id even when unlinked.
+    manual: row.provider == null && row.provider_id == null,
   };
 }
 
