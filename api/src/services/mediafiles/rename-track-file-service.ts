@@ -690,7 +690,12 @@ export class RenameTrackFileService {
 
   static async executeRenameFilesByQuery(options: RenameScopeOptions = {}): Promise<RenameApplyResult> {
     await this.syncPendingArtistAliases(options);
-    this.resolveDuplicateTrackFiles(options);
+    const duplicates = this.resolveDuplicateTrackFiles(options);
+    if (duplicates.redownloadArtistIds.length > 0) {
+      const { queueDownloadMissingPass } = await import("../commands/scheduler.js");
+      const { CommandTrigger } = await import("../commands/command-trigger.js");
+      queueDownloadMissingPass({ trigger: CommandTrigger.Scheduled, artistIds: duplicates.redownloadArtistIds });
+    }
     const ids = this.evaluateRenameRows(this.getRenameRows(options, false), { persist: false })
       .filter((item) => item.needs_rename || item.drop_duplicate)
       .map((item) => item.id);
