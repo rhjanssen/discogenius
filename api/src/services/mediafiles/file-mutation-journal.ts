@@ -190,13 +190,14 @@ export class FileMutationJournal {
             throw error;
         }
     }
-    static async recoverPending(): Promise<string[]> {
+    /** `abandonedArtworkOnly` leaves artwork intents a live commit may still own. */
+    static async recoverPending(options: { abandonedArtworkOnly?: boolean } = {}): Promise<string[]> {
         const ids = db.prepare("SELECT id FROM FileMutationJournal ORDER BY created_at, id").all() as Array<{ id: string }>;
         // In-place tag undos live in a config spool, not this table: recording
         // them would take the write gate while the retag still holds the HDD
         // permit. This is still the only startup recovery entry.
         const errors: string[] = await recoverInPlaceTagUndos();
-        errors.push(...await ArtworkMutationJournal.recoverPending());
+        errors.push(...await ArtworkMutationJournal.recoverPending({ abandonedOnly: options.abandonedArtworkOnly }));
         errors.push(...await LibraryCleanupJournal.recoverPending());
         for (const { id } of ids) {
             try { await this.recoverOne(id); }

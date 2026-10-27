@@ -183,3 +183,40 @@ test("failed local-only artwork publication restores the old image without fetch
     assert.deepEqual(fs.readdirSync(folder),["cover.jpg","new.tmp"]);
   } finally {database.db.exec("DROP TRIGGER reject_art_link");globalThis.fetch=originalFetch;fs.rmSync(master,{force:true});}
 });
+
+test("a restore that loses SQLite to another writer leaves no recovery error and the executor sweep settles it",async () => {
+  const id=await prepare();journal.publish(id);
+  const Database=(await import("better-sqlite3")).default;
+  const other=new Database(process.env.DB_PATH!);
+  other.pragma("busy_timeout = 0");
+  other.exec("BEGIN IMMEDIATE");
+  try {
+    // The owner's restore path: files are put back, the row cannot be deleted.
+    assert.throws(() => journal.recoverOneSync(id),(error:unknown) => database.dbModule.isSqliteBusyError(error));
+  } finally { other.exec("ROLLBACK");other.close(); }
+  assert.deepEqual(fs.readFileSync(destination),previous);
+  const row=database.db.prepare("SELECT recovery_error FROM ArtworkMutationJournal WHERE id=?").get(id) as {recovery_error:string|null};
+  assert.equal(row.recovery_error,null,"a busy database is not an operator problem");
+  const {CommandManager}=await import("../commands/command.js");
+  assert.equal(CommandManager.canStartCommand("ImportDownload",{}).canStart,false);
+  const {recoverAbandonedFileMutations}=await import("../commands/command-executor.js");
+  // A fresh intent may still belong to a live commit; the sweep leaves it.
+  assert.deepEqual(await recoverAbandonedFileMutations(),[]);
+  assert.equal(journal.hasPending(),true);
+  database.db.prepare("UPDATE ArtworkMutationJournal SET created_at=datetime('now','-10 minutes') WHERE id=?").run(id);
+  assert.deepEqual(await recoverAbandonedFileMutations(),[]);
+  assert.equal(journal.hasPending(),false);
+  assert.equal(CommandManager.canStartCommand("ImportDownload",{}).canStart,true);
+});
+
+test("the executor sweep retries an intent its owner abandoned with a busy error",async () => {
+  const id=await prepare();journal.publish(id);
+  // Live state of 2026-10-27: restored files, row kept with the old busy error.
+  fs.renameSync(path.join(folder,`.discogenius-artwork-${id}.previous`),destination);
+  database.db.prepare("UPDATE ArtworkMutationJournal SET recovery_error='database is locked' WHERE id=?").run(id);
+  const {recoverAbandonedFileMutations}=await import("../commands/command-executor.js");
+  assert.deepEqual(await recoverAbandonedFileMutations(),[]);
+  assert.equal(journal.hasPending(),false);
+  assert.deepEqual(fs.readFileSync(destination),previous);
+  assert.deepEqual(fs.readdirSync(folder),["cover.jpg"]);
+});

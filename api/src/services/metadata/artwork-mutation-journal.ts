@@ -1,9 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { db } from "../../database.js";
+import { db, isSqliteBusyError } from "../../database.js";
+import { tryShortSqliteWrite } from "./artwork-materialize-followup.js";
 import { artworkKey, type ArtworkIdentity } from "./media-cover-state.js";
 import { artworkLinkOwnsTrackedPath } from "./media-cover-library-storage.js";
+
+/** Longer than any synchronous commit holding an intent: hashes, one rename,
+ * and short bounded write retries. */
+const ABANDONED_INTENT_AGE_MS = 2 * 60_000;
+
+/** The row could not be settled because other writers held SQLite. */
+class SqliteBusyRecoveryError extends Error {
+  readonly code = "SQLITE_BUSY";
+  constructor() { super("database is locked while settling artwork recovery"); }
+}
 
 type Intent = {
   id: string; cover_entity: ArtworkIdentity["coverEntity"]; entity_id: string; cover_type: string;
@@ -185,16 +196,35 @@ export class ArtworkMutationJournal {
       }
       if (backup && fs.existsSync(intent.backup_path)) fs.unlinkSync(intent.backup_path);
       if (staged) fs.unlinkSync(intent.staged_path);
-      db.prepare("DELETE FROM ArtworkMutationJournal WHERE id=?").run(id);
+      // The files are settled at this point. Settle the row through the shared
+      // writer mutex: an ungated DELETE lost to busy writers and left a
+      // restored intent behind that blocked every library file job.
+      const deleted = tryShortSqliteWrite(() => db.prepare("DELETE FROM ArtworkMutationJournal WHERE id=?").run(id), "artwork:recovery");
+      if (!deleted.ok) throw new SqliteBusyRecoveryError();
     } catch (error) {
-      try { db.prepare("UPDATE ArtworkMutationJournal SET recovery_error=? WHERE id=?").run(error instanceof Error ? error.message : String(error),id); }
-      catch { /* The unsettled intent still blocks disk commands if recording the error fails. */ }
+      // A busy database is not a recovery problem: the files are consistent
+      // and the next recovery pass deletes the row. Recording it as an error
+      // would ask the operator to fix something that fixes itself.
+      if (!isSqliteBusyError(error)) {
+        const message = error instanceof Error ? error.message : String(error);
+        tryShortSqliteWrite(() => db.prepare("UPDATE ArtworkMutationJournal SET recovery_error=? WHERE id=?").run(message,id), "artwork:recovery-error");
+        // The unsettled intent still blocks disk commands if recording the error fails.
+      }
       throw error;
     }
   }
 
-  static async recoverPending(): Promise<string[]> {
-    const rows = db.prepare("SELECT id FROM ArtworkMutationJournal ORDER BY created_at,id").all() as Array<{id:string}>;
+  /**
+   * `abandonedOnly` is for recovery while commands still run. A commit owns its
+   * intent only inside one synchronous call, so an intent its owner marked with
+   * an error, or one older than that call can last, has no live owner.
+   */
+  static async recoverPending(options: { abandonedOnly?: boolean; now?: Date } = {}): Promise<string[]> {
+    const rows = (options.abandonedOnly
+      ? db.prepare(`SELECT id FROM ArtworkMutationJournal
+          WHERE recovery_error IS NOT NULL OR julianday(created_at) <= julianday(?) - ?/86400000.0
+          ORDER BY created_at,id`).all((options.now ?? new Date()).toISOString(), ABANDONED_INTENT_AGE_MS)
+      : db.prepare("SELECT id FROM ArtworkMutationJournal ORDER BY created_at,id").all()) as Array<{id:string}>;
     const errors: string[] = [];
     for (const {id} of rows) {
       // Hashes and renames stay outside the write lock. Each statement takes it

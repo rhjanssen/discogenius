@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {CommandModel} from "./command-model.js";
 import {
     NON_DOWNLOAD_COMMAND_NAMES,
+    DOWNLOAD_COMMAND_NAMES,
     DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
 } from "./command-names.js";
 import {
@@ -10,7 +11,7 @@ import {
     resolveInfrastructureMaxAttempts,
 } from "./command-liveness-policy.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
-import { withDbWrite, withSqliteWriteGate } from "../../database.js";
+import { db, withDbWrite, withSqliteWriteGate } from "../../database.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
@@ -36,6 +37,7 @@ const COMMAND_HEARTBEAT_MS = Math.min(
 // the conservative command-specific expectations below.
 const COMMAND_NO_PROGRESS_MS = readIntEnv('DISCOGENIUS_COMMAND_NO_PROGRESS_MS', 0, 0);
 const COMMAND_WATCHDOG_INTERVAL_MS = readIntEnv('DISCOGENIUS_COMMAND_WATCHDOG_INTERVAL_MS', 5_000, 100);
+const FILE_RECOVERY_SWEEP_MS = readIntEnv('DISCOGENIUS_FILE_RECOVERY_SWEEP_MS', 60_000, 100);
 const COMMAND_MAX_ATTEMPTS = readIntEnv('DISCOGENIUS_COMMAND_MAX_ATTEMPTS', 3, 1);
 const COMMAND_RETRY_BASE_MS = readIntEnv('DISCOGENIUS_COMMAND_RETRY_BASE_MS', 1_000, 0);
 const COMMAND_RETRY_MAX_MS = readIntEnv('DISCOGENIUS_COMMAND_RETRY_MAX_MS', 60_000, 0);
@@ -61,6 +63,29 @@ function retryDelayForAttempt(attempt: number, baseMs: number, maxMs: number): n
  * One deterministic lease/no-progress watchdog pass. Exported so recovery can
  * be verified without starting the executor's perpetual polling loop.
  */
+/** True while any started command may own a file mutation intent. A download
+ * in its import phase writes library files like ImportDownload. */
+function libraryFileWriterRunning(): boolean {
+    const started = db.prepare("SELECT name, progress_phase FROM commands WHERE status = 'started'")
+        .all() as Array<{ name: string; progress_phase: string | null }>;
+    return started.some((job) => {
+        if ((DOWNLOAD_COMMAND_NAMES as readonly string[]).includes(job.name)) return job.progress_phase === "importing";
+        return commandWritesLibraryFiles(CommandManager.getDefinition(job.name));
+    });
+}
+
+/**
+ * Settle file mutations nobody owns any more. Recovery used to run only at
+ * startup and after a stale library command, but a pending intent also stops
+ * every library command from starting. One intent whose owner gave up (for
+ * example on SQLITE_BUSY) then parked all imports until a restart.
+ * Exported so the deadlock can be verified without the polling loop.
+ */
+export async function recoverAbandonedFileMutations(): Promise<string[] | null> {
+    if (!FileMutationJournal.hasPending() || libraryFileWriterRunning()) return null;
+    return FileMutationJournal.recoverPending({ abandonedArtworkOnly: true });
+}
+
 export async function recoverStaleNonDownloadCommands(options: {
     now?: Date;
     noProgressMs: number;
@@ -142,6 +167,7 @@ export class CommandExecutor {
     private static isRunning = false;
     private static blockedLogAt = new Map<string, number>();
     private static lastWatchdogAt = 0;
+    private static lastFileRecoverySweepAt = 0;
     private static activeJobs = new Map<number, ActiveCommandAttempt>();
 
     static async start(): Promise<void> {
@@ -187,6 +213,7 @@ export class CommandExecutor {
         this.isRunning = false;
         this.blockedLogAt.clear();
         this.lastWatchdogAt = 0;
+        this.lastFileRecoverySweepAt = 0;
         this.activeJobs.clear();
         console.log("🛑 Command executor stopped");
     }
@@ -225,6 +252,12 @@ export class CommandExecutor {
             retryBaseMs: COMMAND_RETRY_BASE_MS,
             retryMaxMs: COMMAND_RETRY_MAX_MS,
         });
+
+        if (now - this.lastFileRecoverySweepAt >= FILE_RECOVERY_SWEEP_MS) {
+            this.lastFileRecoverySweepAt = now;
+            const errors = await recoverAbandonedFileMutations();
+            if (errors?.length) console.error("[CommandExecutor] File recovery requires attention:", errors);
+        }
     }
 
     private static async loop() {
