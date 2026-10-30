@@ -147,6 +147,16 @@ test("locking one library does not touch another library's row", () => {
   ]);
 });
 
+test("unlock-all clears every album lock and keeps the monitored editions", () => {
+  serviceModule.AlbumCommandService.setAlbumMonitored("release-group-mbid-1", true, { kind: "all-audio-libraries" });
+  serviceModule.AlbumCommandService.updateAlbum("release-group-mbid-1", undefined, true, { kind: "all-audio-libraries" });
+  const monitoredBefore = monitoredLibraryIds();
+  const result = serviceModule.AlbumCommandService.unlockAllAlbums();
+  assert.ok(result.before > 0);
+  assert.equal(result.after, 0);
+  assert.deepEqual(monitoredLibraryIds(), monitoredBefore);
+});
+
 test("unmonitoring an album withdraws the editions monitored under it", () => {
   const stereo = libraryId("Stereo");
   dbModule.db.prepare(`

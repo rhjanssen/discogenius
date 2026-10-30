@@ -209,6 +209,29 @@ export class AlbumCommandService {
     }
 
     /**
+     * Unlock curation for every album in every library. Monitored editions and
+     * user exclusions stay as they are; only the lock and the manual selection
+     * mode go, so the next curation pass may choose again. Touches no files.
+     */
+    static unlockAllAlbums(): { before: number; after: number; unlocked: number } {
+        const count = () => (db.prepare("SELECT COUNT(*) AS n FROM LibraryAlbums WHERE locked = 1").get() as { n: number }).n;
+        const before = count();
+        const unlocked = db.transaction(() => {
+            db.prepare(`
+                UPDATE LibraryEditions
+                SET selection_mode = 'auto', decision = 'curation', updated_at = CURRENT_TIMESTAMP
+                WHERE selection_mode = 'manual' OR decision = 'user'
+            `).run();
+            return db.prepare(`
+                UPDATE LibraryAlbums
+                SET locked = 0, selection_mode = 'auto', decision = 'curation', updated_at = CURRENT_TIMESTAMP
+                WHERE locked = 1 OR selection_mode = 'manual' OR decision = 'user'
+            `).run().changes;
+        })();
+        return { before, after: count(), unlocked };
+    }
+
+    /**
      * Clear a user decision and let the active monitoring mode choose again.
      * Exclusions, the album lock, and manual edition choices all go.
      */

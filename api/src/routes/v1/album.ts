@@ -322,6 +322,15 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.post("/decision/unlock-all", async (_req, res) => {
+  try {
+    const result = await runAlbumUserWrite(() => AlbumCommandService.unlockAllAlbums());
+    res.status(200).json(result);
+  } catch (error: any) {
+    res.status(albumMutationHttpStatus(error)).json({ detail: error.message });
+  }
+});
+
 router.post("/:albumId/decision/automatic", async (req, res) => {
   try {
     const result = await runAlbumUserWrite(() =>
