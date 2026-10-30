@@ -62,7 +62,7 @@ export interface CandidateQuery {
 /** Lidarr CloseAlbumMatchSpecification / CloseTrackMatchSpecification. */
 export const ALBUM_DISTANCE_THRESHOLD = 0.20;
 export const TRACK_DISTANCE_THRESHOLD = 0.40;
-/** Picard find_best_match_with_margin: the winner must be clearly better. */
+/** Candidates closer than this to the best are tied; fingerprint, then monitored edition, break the tie. */
 export const DISTANCE_MARGIN = 0.05;
 
 export type FolderAutoImportPlan =
@@ -88,10 +88,7 @@ export type FolderAutoImportPlan =
 /** AcoustID recording MBIDs per unmapped file id; a missing or empty entry means no evidence. */
 export type FingerprintEvidence = Map<number, string[]>;
 
-/** Share of fingerprinted files that must agree with the chosen release. */
-export const FINGERPRINT_MIN_AGREEMENT = 0.8;
-/** A fingerprint tie-break needs the winner to agree on this much more of the files. */
-export const FINGERPRINT_MARGIN = 0.5;
+
 
 export const DURATION_TOLERANCE_SECONDS = 10;
 
@@ -384,39 +381,25 @@ function planByDistance(
         const fp = fingerprintAgreement(c, fingerprints);
         return fp ? `${describe(c)}, fingerprint ${(fp.agreement * 100).toFixed(0)}%` : describe(c);
     };
-    let best = scored[0];
-    if (best.unmatchedFiles > 0) return { decision: "review", needsEvidence: "online", reason: `Best candidate ${describe(best)} leaves ${best.unmatchedFiles} file(s) unmatched` };
-    if (best.distance > ALBUM_DISTANCE_THRESHOLD) return { decision: "review", needsEvidence: "online", reason: `Best candidate ${describe(best)} is above ${ALBUM_DISTANCE_THRESHOLD}` };
-    // Releases with the same recordings are the same content: not a real
-    // ambiguity, so the closest edition wins outright (its titles and album
-    // name fit the files best). The monitored edition only breaks exact ties,
-    // which the sort above already does.
-    const rival = scored.find((c) => trackListKey(c.release) !== trackListKey(best.release));
-    if (rival && rival.distance - best.distance < DISTANCE_MARGIN) {
-        // ADR-13 step 3: different recordings (e.g. mono vs stereo mix) that
-        // tags cannot tell apart; the fingerprint decides, with its own margin.
-        const close = scored.filter((c) => c.unmatchedFiles === 0 && c.distance <= ALBUM_DISTANCE_THRESHOLD && c.distance - best.distance < DISTANCE_MARGIN);
-        const ranked = close
-            .map((c) => ({ c, fp: fingerprintAgreement(c, fingerprints) }))
-            .filter((x): x is { c: ScoredCandidate; fp: { agreement: number; coverage: number } } => x.fp !== null)
-            .sort((x, y) => y.fp.agreement - x.fp.agreement || x.c.distance - y.c.distance);
-        const top = ranked[0];
-        const runnerUp = ranked.find((x) => trackListKey(x.c.release) !== trackListKey(top?.c.release ?? best.release));
-        if (!top || ranked.length < close.length) {
-            return { decision: "review", needsEvidence: "fingerprint", reason: `Too close: ${describe(best)} vs ${describe(rival)}` };
-        }
-        if (top.fp.coverage < 0.5 || top.fp.agreement < FINGERPRINT_MIN_AGREEMENT
-            || (runnerUp && top.fp.agreement - runnerUp.fp.agreement < FINGERPRINT_MARGIN)) {
-            return { decision: "review", reason: `Too close even by fingerprint: ${describeFp(top.c)} vs ${describeFp(runnerUp?.c ?? rival)}` };
-        }
-        best = top.c;
+    const best = scored[0];
+    if (best.mappings.length === 0 || best.distance > ALBUM_DISTANCE_THRESHOLD) {
+        return { decision: "review", needsEvidence: "online", reason: `Best candidate ${describe(best)} is above ${ALBUM_DISTANCE_THRESHOLD}` };
     }
-    // Verification: fingerprints that clearly contradict the choice veto it.
-    const fp = fingerprintAgreement(best, fingerprints);
-    if (fp && fp.coverage >= 0.5 && fp.agreement < 0.5) {
-        return { decision: "review", reason: `Fingerprints disagree with ${describeFp(best)}` };
+    // Lidarr: the best candidate under the threshold wins; no margin over the
+    // runner-up. Near-equal candidates (within DISTANCE_MARGIN) are tied, and
+    // the fingerprint decides; then the closest; the monitored edition breaks exact ties.
+    const tied = scored.filter((c) => c.mappings.length > 0 && c.distance <= ALBUM_DISTANCE_THRESHOLD && c.distance - best.distance < DISTANCE_MARGIN);
+    const differentContent = tied.some((c) => trackListKey(c.release) !== trackListKey(best.release));
+    if (differentContent && fingerprints === undefined) {
+        return { decision: "review", needsEvidence: "fingerprint", reason: `Tied: ${tied.map(describe).join(" vs ")}` };
     }
-    return { decision: "import", libraryId, editionId: best.release.id, mappings: best.mappings, via: "distance" };
+    const agreement = (c: ScoredCandidate) => fingerprintAgreement(c, fingerprints)?.agreement ?? 0;
+    const chosen = [...tied].sort((x, y) => agreement(y) - agreement(x)
+        || (Math.abs(x.distance - y.distance) > 1e-6 ? x.distance - y.distance : 0)
+        || Number(y.release.preferred) - Number(x.release.preferred)
+        || x.release.id - y.release.id)[0];
+    // Files that do not fit the chosen release stay in Unmapped.
+    return { decision: "import", libraryId, editionId: chosen.release.id, mappings: chosen.mappings, via: "distance" };
 }
 
 function mostCommon(values: Array<string | null>): string | null {

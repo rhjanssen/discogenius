@@ -631,8 +631,8 @@ test("manual import replaces the album's existing file for the same recording an
     });
     await service.import({ libraryId: 1, editionId: 10, mappings: [{ unmappedFileId: 1, trackId: 1000 }] });
     assert.equal(duplicateSeen, false, "the old file steps aside before the importer runs");
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM TrackFiles WHERE id = 5").get().n, 0);
-    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM UnmappedFiles WHERE file_path = ?").get(oldPath).n, 0);
+    assert.equal((db.prepare("SELECT COUNT(*) AS n FROM TrackFiles WHERE id = 5").get() as any).n, 0);
+    assert.equal((db.prepare("SELECT COUNT(*) AS n FROM UnmappedFiles WHERE file_path = ?").get(oldPath) as any).n, 0);
     assert.equal(fs.existsSync(oldPath), false);
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
@@ -653,7 +653,7 @@ test("a failed manual import leaves the replaced file in Unmapped, on disk", asy
     `).run(oldPath);
     const service = new CanonicalManualImportService(db, async () => ({ requested: 1, imported: 0, duplicates: 0, skipped: 1, importedFileIds: {} }));
     await service.import({ libraryId: 1, editionId: 10, mappings: [{ unmappedFileId: 1, trackId: 1000 }] });
-    assert.equal(db.prepare("SELECT reason FROM UnmappedFiles WHERE file_path = ?").get(oldPath).reason, "Replaced by manual import");
+    assert.equal((db.prepare("SELECT reason FROM UnmappedFiles WHERE file_path = ?").get(oldPath) as any).reason, "Replaced by manual import");
     assert.equal(fs.existsSync(oldPath), true);
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);

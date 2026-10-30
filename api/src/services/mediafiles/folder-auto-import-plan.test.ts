@@ -100,7 +100,10 @@ test("an untagged folder goes to review when nothing is close or two different r
     assert.equal(wrong.decision, "review");
     const tie = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
         findCandidates: () => [candidate(5, "1989 (Deluxe)", deluxe), candidate(6, "1989 (Deluxe)", [["Welcome to New York", 212], ["Blank Space", 231], ["Wonderland (Live)", 246]])] });
-    assert.match(tie.decision === "review" ? tie.reason : "", /Too close/);
+    assert.equal(tie.decision === "review" && tie.needsEvidence, "fingerprint");
+    const fpTried = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART, fingerprints: new Map(),
+        findCandidates: () => [candidate(5, "1989 (Deluxe)", deluxe), candidate(6, "1989 (Deluxe)", [["Welcome to New York", 212], ["Blank Space", 231], ["Wonderland (Live)", 246]])] });
+    assert.equal(fpTried.decision === "import" && fpTried.editionId, 5, "no fingerprint: the closest wins");
 });
 
 test("same recordings: the edition whose titles fit wins over a monitored edition with other qualifiers (1989 deluxe vs tour edition)", () => {
@@ -135,15 +138,18 @@ test("fingerprints settle a close call when they clearly favour one release", ()
     assert.equal(plan.decision === "import" && plan.editionId, 10);
 });
 
-test("fingerprints without a clear margin keep the folder in review", () => {
+test("no margin: equal fingerprint agreement falls back to the closest candidate", () => {
     const plan = bowie(new Map([[1, ["st-0", "mono-0"]], [2, ["st-1", "mono-1"]], [3, ["st-2", "mono-2"]]]));
-    assert.match(plan.decision === "review" ? plan.reason : "", /even by fingerprint/);
+    assert.equal(plan.decision, "import");
 });
 
-test("fingerprints that contradict a distance match veto it", () => {
+test("fingerprints are only a tie-breaker: a lone best match under the threshold imports; misfits stay unmapped", () => {
     const plan = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART,
         findCandidates: () => [stereoRelease], fingerprints: new Map([[1, ["x"]], [2, ["y"]], [3, ["st-2"]]]) });
-    assert.match(plan.decision === "review" ? plan.reason : "", /Fingerprints disagree/);
+    assert.equal(plan.decision === "import" && plan.editionId, 10);
+    const extra = { id: 9, libraryRoot: "/music/stereo", ignored: false, durationSeconds: 400, tags: { ALBUM: "David Bowie", TRACK: "9", TITLE: "Bonus Jam" } } as AutoImportFile;
+    const partial = planFolderAutoImport({ files: [...bowieFiles, extra], libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [stereoRelease] });
+    assert.deepEqual(partial.decision === "import" && partial.mappings.map((m) => m.unmappedFileId).sort(), [1, 2, 3]);
     const ok = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [stereoRelease] });
     assert.equal(ok.decision === "import" && ok.via, "distance");
 });
