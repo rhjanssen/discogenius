@@ -14,6 +14,8 @@
  * Anything else is "review" with a reason; nothing is imported partially.
  */
 
+import { getBestRelease, shouldFingerprint, type LocalTrackInfo, type MbRelease } from "./lidarr-distance.js";
+
 export interface AutoImportFile {
     id: number;
     libraryRoot: string;
@@ -48,8 +50,17 @@ export interface AutoImportCandidateRelease extends AutoImportRelease {
     title: string;
     releaseGroupTitle: string;
     artistMbid: string;
-    /** Already a monitored edition in the target library: wins ties. */
+    /** Already a monitored edition in the target library (informational; Lidarr has no such tie-break). */
     preferred: boolean;
+    artistName?: string;
+    oldMbids?: string[];
+    albumYear?: number | null;
+    releaseYear?: number | null;
+    mediaCount?: number;
+    mediaFormats?: string[];
+    countries?: string[];
+    labels?: string[];
+    disambiguation?: string | null;
 }
 
 export interface CandidateQuery {
@@ -62,8 +73,6 @@ export interface CandidateQuery {
 /** Lidarr CloseAlbumMatchSpecification / CloseTrackMatchSpecification. */
 export const ALBUM_DISTANCE_THRESHOLD = 0.20;
 export const TRACK_DISTANCE_THRESHOLD = 0.40;
-/** Candidates closer than this to the best are tied; fingerprint, then monitored edition, break the tie. */
-export const DISTANCE_MARGIN = 0.05;
 
 export type FolderAutoImportPlan =
     | {
@@ -275,91 +284,47 @@ export function titleDistance(left: string | null, right: string | null): number
     return full === 0 ? 0 : Math.min(full, Math.min(1, stripped + QUALIFIER_MISMATCH_PENALTY));
 }
 
-function durationDistance(fileSeconds: number | null, trackMs: number | null): number {
-    if (fileSeconds === null || trackMs === null) return 0.5;
-    const delta = Math.abs(fileSeconds - trackMs / 1000);
-    if (delta <= 3) return 0;
-    if (delta > DURATION_TOLERANCE_SECONDS) return 1;
-    return (delta - 3) / (DURATION_TOLERANCE_SECONDS - 3);
+function toLocal(file: AutoImportFile, fingerprints?: FingerprintEvidence): LocalTrackInfo {
+    const t = file.tags;
+    const fp = fingerprints?.get(file.id);
+    return {
+        id: file.id,
+        title: readTag(t, "title"),
+        artist: readTag(t, "albumartist", "album artist", "artist"),
+        album: readTag(t, "album"),
+        trackNumber: leadingInt(readTag(t, "track", "tracknumber")),
+        discNumber: leadingInt(readTag(t, "disc", "discnumber", "disk")),
+        discCount: leadingInt(readTag(t, "disctotal", "totaldiscs")) ?? leadingInt(readTag(t, "disc", "discnumber")?.split("/")[1] ?? null),
+        year: leadingInt(readTag(t, "originalyear", "date", "year")),
+        country: readTag(t, "releasecountry", "MusicBrainz Album Release Country")?.toUpperCase() ?? null,
+        label: readTag(t, "label", "organization", "publisher"),
+        disambiguation: readTag(t, "musicbrainz_albumcomment", "MusicBrainz Album Comment"),
+        releaseMbid: releaseMbidOf(file),
+        recordingMbid: readTag(t, "musicbrainz_trackid", "MusicBrainz Track Id")?.toLowerCase() ?? null,
+        durationSeconds: file.durationSeconds,
+        // Lidarr sets AcoustIdResults only when the lookup returned recordings.
+        acoustIdResults: fp && fp.length > 0 ? fp.map((id) => id.toLowerCase()) : undefined,
+    };
 }
 
-export function trackDistance(file: AutoImportFile, track: AutoImportReleaseTrack): number {
-    return 0.6 * titleDistance(readTag(file.tags, "title"), track.title) + 0.4 * durationDistance(file.durationSeconds, track.durationMs);
-}
-
-export interface ScoredCandidate {
-    release: AutoImportCandidateRelease;
-    distance: number;
-    worstTrack: number;
-    mappings: Array<{ unmappedFileId: number; trackId: number }>;
-    unmatchedFiles: number;
-}
-
-/** Map files to tracks (position first, then best title) and score the release. */
-export function scoreCandidate(files: AutoImportFile[], release: AutoImportCandidateRelease, album: string | null, artistMbid: string | null): ScoredCandidate {
-    const byPosition = new Map(release.tracks.map((track) => [`${track.mediumPosition}:${track.position}`, track]));
-    const used = new Set<number>();
-    const mappings: ScoredCandidate["mappings"] = [];
-    let trackSum = 0;
-    let worstTrack = 0;
-    let unmatchedFiles = 0;
-    for (const file of files) {
-        const disc = leadingInt(readTag(file.tags, "disc", "discnumber", "disk")) ?? 1;
-        const number = leadingInt(readTag(file.tags, "track", "tracknumber"));
-        let track = number !== null ? byPosition.get(`${disc}:${number}`) : undefined;
-        let distance = track && !used.has(track.id) ? trackDistance(file, track) : 1;
-        if (!track || used.has(track.id) || distance > TRACK_DISTANCE_THRESHOLD) {
-            track = undefined;
-            distance = 1;
-            for (const candidate of release.tracks) {
-                if (used.has(candidate.id)) continue;
-                const d = trackDistance(file, candidate);
-                if (d < distance) { distance = d; track = candidate; }
-            }
-        }
-        if (!track || distance > TRACK_DISTANCE_THRESHOLD) { unmatchedFiles++; trackSum += 1; worstTrack = 1; continue; }
-        used.add(track.id);
-        mappings.push({ unmappedFileId: file.id, trackId: track.id });
-        trackSum += distance;
-        worstTrack = Math.max(worstTrack, distance);
-    }
-    const missingTracks = release.tracks.length - used.size;
-    const albumTitle = Math.min(titleDistance(album, release.title), titleDistance(album, release.releaseGroupTitle));
-    const artist = artistMbid ? (artistMbid === release.artistMbid.toLowerCase() ? 0 : 1) : 0.5;
-    // Lidarr DistanceCalculator/Distance weights: artist 3, album 3, each mapped
-    // track 2, missing tracks 0.6 (at most one per local file), unmatched files 0.9.
-    const missingPenalised = Math.min(missingTracks, files.length);
-    const matchedSum = trackSum - unmatchedFiles;
-    const matched = files.length - unmatchedFiles;
-    const weighted = 3 * albumTitle + 3 * artist + 2 * matchedSum + 0.6 * missingPenalised + 0.9 * unmatchedFiles;
-    const total = 3 + 3 + 2 * matched + 0.6 * missingPenalised + 0.9 * unmatchedFiles;
-    return { release, distance: weighted / total, worstTrack, mappings, unmatchedFiles };
-}
-
-function trackListKey(release: AutoImportRelease): string {
-    return release.tracks.map((track) => track.recordingMbid ?? normalizeTitle(track.title)).join("|");
+function toMbRelease(c: AutoImportCandidateRelease): MbRelease {
+    return {
+        id: c.id, mbid: c.mbid.toLowerCase(), oldMbids: c.oldMbids, artistMbid: c.artistMbid.toLowerCase(),
+        artistName: c.artistName ?? "", albumTitle: c.releaseGroupTitle,
+        albumYear: c.albumYear ?? null, releaseYear: c.releaseYear ?? null,
+        mediaCount: c.mediaCount ?? new Set(c.tracks.map((t) => t.mediumPosition)).size,
+        mediaFormats: c.mediaFormats ?? [], countries: c.countries ?? [], labels: c.labels ?? [],
+        disambiguation: c.disambiguation ?? null,
+        tracks: c.tracks.map((t) => ({ id: t.id, title: t.title, position: t.position, mediumPosition: t.mediumPosition,
+            durationMs: t.durationMs, recordingMbid: t.recordingMbid?.toLowerCase() ?? null })),
+    };
 }
 
 /**
- * Share of fingerprinted files whose AcoustID recordings include the recording
- * of the track they map to; null when no file has fingerprint evidence.
+ * ADR-13 / Lidarr IdentificationService + CloseAlbumMatch/CloseTrackMatch
+ * (existing-files branch): lowest distance wins, first candidate on a tie;
+ * candidates ordered by track-count difference (CandidateService).
  */
-export function fingerprintAgreement(candidate: ScoredCandidate, fingerprints: FingerprintEvidence | undefined): { agreement: number; coverage: number } | null {
-    if (!fingerprints) return null;
-    const recordingByTrack = new Map(candidate.release.tracks.map((track) => [track.id, track.recordingMbid?.toLowerCase() ?? null]));
-    let known = 0;
-    let agree = 0;
-    for (const mapping of candidate.mappings) {
-        const recordings = fingerprints.get(mapping.unmappedFileId);
-        if (!recordings || recordings.length === 0) continue;
-        known++;
-        const recording = recordingByTrack.get(mapping.trackId);
-        if (recording && recordings.some((id) => id.toLowerCase() === recording)) agree++;
-    }
-    if (known === 0) return null;
-    return { agreement: agree / known, coverage: known / Math.max(1, candidate.mappings.length) };
-}
-
 function planByDistance(
     files: AutoImportFile[],
     libraryId: number,
@@ -372,37 +337,30 @@ function planByDistance(
     const artistMbid = (mostCommon(files.map((file) => readTag(file.tags, "musicbrainz_albumartistid", "MusicBrainz Album Artist Id")))
         ?? folderArtistMbid)?.toLowerCase() ?? null;
     if (!album) return { decision: "review", reason: "Files have no MusicBrainz release id and no album tag" };
-    const candidates = findCandidates({ libraryId, artistMbid, artistName, album });
+    const candidates = findCandidates({ libraryId, artistMbid, artistName, album })
+        .map((c, index) => ({ c, index }))
+        .sort((x, y) => Math.abs(x.c.tracks.length - files.length) - Math.abs(y.c.tracks.length - files.length) || x.index - y.index)
+        .map(({ c }) => c);
     if (candidates.length === 0) {
         return { decision: "review", needsEvidence: "online", reason: `No catalog release matches album "${album}"${artistName ? ` by ${artistName}` : ""}` };
     }
-    const scored = candidates
-        .map((release) => scoreCandidate(files, release, album, artistMbid))
-        .sort((a, b) => a.distance - b.distance || Number(b.release.preferred) - Number(a.release.preferred) || a.release.id - b.release.id);
-    const describe = (c: ScoredCandidate) => `${c.release.title} (${c.release.mbid}) distance ${c.distance.toFixed(3)}`;
-    const describeFp = (c: ScoredCandidate) => {
-        const fp = fingerprintAgreement(c, fingerprints);
-        return fp ? `${describe(c)}, fingerprint ${(fp.agreement * 100).toFixed(0)}%` : describe(c);
-    };
-    const best = scored[0];
-    if (best.mappings.length === 0 || best.distance > ALBUM_DISTANCE_THRESHOLD) {
-        return { decision: "review", needsEvidence: "online", reason: `Best candidate ${describe(best)} is above ${ALBUM_DISTANCE_THRESHOLD}` };
+    const locals = files.map((file) => toLocal(file, fingerprints));
+    const best = getBestRelease(locals, candidates.map(toMbRelease));
+    if (!best) return { decision: "review", needsEvidence: "online", reason: "No candidate release is closer than distance 1" };
+    if (fingerprints === undefined && shouldFingerprint(best)) {
+        return { decision: "review", needsEvidence: "fingerprint", reason: `Match not good enough, fingerprinting (${best.release.mbid} distance ${best.distance.normalized().toFixed(3)})` };
     }
-    // Lidarr: the best candidate under the threshold wins; no margin over the
-    // runner-up. Near-equal candidates (within DISTANCE_MARGIN) are tied, and
-    // the fingerprint decides; then the closest; the monitored edition breaks exact ties.
-    const tied = scored.filter((c) => c.mappings.length > 0 && c.distance <= ALBUM_DISTANCE_THRESHOLD && c.distance - best.distance < DISTANCE_MARGIN);
-    const differentContent = tied.some((c) => trackListKey(c.release) !== trackListKey(best.release));
-    if (differentContent && fingerprints === undefined) {
-        return { decision: "review", needsEvidence: "fingerprint", reason: `Tied: ${tied.map(describe).join(" vs ")}` };
+    const albumDistance = best.distance.normalizedExcluding(["missing_tracks", "unmatched_tracks"]);
+    if (albumDistance > ALBUM_DISTANCE_THRESHOLD) {
+        return { decision: "review", needsEvidence: "online",
+            reason: `Album match is not close enough: ${best.release.mbid} distance ${albumDistance.toFixed(3)} > ${ALBUM_DISTANCE_THRESHOLD} [${best.distance.reasons().join(", ")}]` };
     }
-    const agreement = (c: ScoredCandidate) => fingerprintAgreement(c, fingerprints)?.agreement ?? 0;
-    const chosen = [...tied].sort((x, y) => agreement(y) - agreement(x)
-        || (Math.abs(x.distance - y.distance) > 1e-6 ? x.distance - y.distance : 0)
-        || Number(y.release.preferred) - Number(x.release.preferred)
-        || x.release.id - y.release.id)[0];
-    // Files that do not fit the chosen release stay in Unmapped.
-    return { decision: "import", libraryId, editionId: chosen.release.id, mappings: chosen.mappings, via: "distance" };
+    // CloseTrackMatch rejects single tracks; they stay in Unmapped.
+    const mappings = best.mapping.mapping
+        .filter((m) => m.distance.normalized() <= TRACK_DISTANCE_THRESHOLD)
+        .map((m) => ({ unmappedFileId: m.local.id, trackId: m.track.id }));
+    if (mappings.length === 0) return { decision: "review", reason: `No track of ${best.release.mbid} is close enough` };
+    return { decision: "import", libraryId, editionId: best.release.id, mappings, via: "distance" };
 }
 
 function mostCommon(values: Array<string | null>): string | null {
@@ -414,12 +372,11 @@ function mostCommon(values: Array<string | null>): string | null {
 }
 
 /**
- * Release status for untagged matching: official releases only. A bootleg is
- * allowed only when the release-status filter includes bootlegs and a streaming
- * provider offers that release. Files tagged with an MBID bypass this check.
+ * Release status for untagged matching (Lidarr: the metadata profile's allowed
+ * statuses). A bootleg additionally needs a streaming provider that offers the
+ * release. Files tagged with a release MBID bypass this check.
  */
-export function isAutoImportStatusAllowed(status: string | null | undefined, includeBootleg: boolean, providerOffers: boolean): boolean {
-    const normalized = (status ?? "").trim().toLowerCase();
-    if (normalized === "" || normalized === "official") return true;
-    return normalized === "bootleg" && includeBootleg && providerOffers;
+export function isAutoImportStatusAllowed(status: string | null | undefined, includedByFilter: boolean, providerOffers: boolean): boolean {
+    if (!includedByFilter) return false;
+    return (status ?? "").trim().toLowerCase() === "bootleg" ? providerOffers : true;
 }

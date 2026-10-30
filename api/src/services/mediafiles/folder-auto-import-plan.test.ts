@@ -66,109 +66,86 @@ test("is all-or-nothing: one unmatched file blocks the folder", () => {
     assert.equal(plan.decision, "review");
 });
 
-// ADR-2 step 2: untagged folders match the own catalog by distance with margin.
+// ADR-13: untagged folders match the own catalog the way Lidarr does.
 import type { AutoImportCandidateRelease } from "./folder-auto-import-plan.js";
+import { munkres, trackDistance as lidarrTrackDistance } from "./lidarr-distance.js";
 const ART = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 function candidate(id: number, title: string, tracks: Array<[string, number]>, extra: Partial<AutoImportCandidateRelease> = {}): AutoImportCandidateRelease {
     return {
-        id, mbid: `m-${id}`, title, releaseGroupTitle: title, artistMbid: ART, preferred: false,
+        id, mbid: `m-${id}`, title, releaseGroupTitle: title, artistMbid: ART, artistName: "Taylor Swift", preferred: false, countries: ["XE"],
         tracks: tracks.map(([t, sec], i) => ({ id: id * 100 + i, mbid: `t${id}-${i}`, recordingMbid: `r-${t}`, mediumPosition: 1, position: i + 1, title: t, durationMs: sec * 1000 })),
         ...extra,
     };
 }
-function loose(id: number, track: number, title: string, sec: number): AutoImportFile {
-    return { id, libraryRoot: "/music/stereo", ignored: false, durationSeconds: sec, tags: { ALBUM: "1989 (Deluxe)", ALBUMARTIST: "Taylor Swift", TRACK: String(track), TITLE: title } };
+function loose(id: number, track: number, title: string, sec: number, album = "1989"): AutoImportFile {
+    return { id, libraryRoot: "/music/stereo", ignored: false, durationSeconds: sec, tags: { ALBUM: album, ALBUMARTIST: "Taylor Swift", TRACK: String(track), TITLE: title } };
 }
 const deluxe: Array<[string, number]> = [["Welcome to New York", 212], ["Blank Space", 231], ["Wonderland", 245]];
-const standard: Array<[string, number]> = [["Welcome to New York", 212], ["Blank Space", 231]];
 const looseFiles = [loose(1, 1, "Welcome To New York", 213), loose(2, 2, "Blank Space", 231), loose(3, 3, "Wonderland", 246)];
+const none = new Map<number, string[]>();
 
-test("an untagged folder imports the closest catalog release; exact ties prefer the monitored edition", () => {
-    const plan = planFolderAutoImport({
-        files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
-        findCandidates: () => [candidate(1, "1989", standard), candidate(2, "1989 (Deluxe)", deluxe), candidate(3, "1989 (Deluxe)", deluxe, { preferred: true })],
-    });
-    assert.equal(plan.decision, "import");
-    assert.equal(plan.decision === "import" && plan.editionId, 3);
+test("lowest distance wins; on an exact tie the first candidate wins (no monitored preference)", () => {
+    const plan = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART, fingerprints: none,
+        findCandidates: () => [candidate(2, "1989", deluxe), candidate(3, "1989", deluxe, { preferred: true })] });
+    assert.equal(plan.decision === "import" && plan.editionId, 2);
 });
 
-test("an untagged folder goes to review when nothing is close or two different releases tie", () => {
-    const none = planFolderAutoImport({ files: looseFiles, libraries, findRelease, findCandidates: () => [] });
-    assert.match(none.decision === "review" ? none.reason : "", /No catalog release/);
-    const wrong = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
-        findCandidates: () => [candidate(4, "1989 (Deluxe)", [["Other", 100], ["Songs", 100], ["Here", 100]])] });
+test("no candidate asks for the online lookup; a distant one is rejected", () => {
+    const empty = planFolderAutoImport({ files: looseFiles, libraries, findRelease, findCandidates: () => [] });
+    assert.equal(empty.decision === "review" && empty.needsEvidence, "online");
+    const wrong = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART, fingerprints: none,
+        findCandidates: () => [candidate(4, "Lover", [["Other", 100], ["Songs", 100], ["Here", 100]])] });
     assert.equal(wrong.decision, "review");
-    const tie = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
-        findCandidates: () => [candidate(5, "1989 (Deluxe)", deluxe), candidate(6, "1989 (Deluxe)", [["Welcome to New York", 212], ["Blank Space", 231], ["Wonderland (Live)", 246]])] });
-    assert.equal(tie.decision === "review" && tie.needsEvidence, "fingerprint");
-    const fpTried = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART, fingerprints: new Map(),
-        findCandidates: () => [candidate(5, "1989 (Deluxe)", deluxe), candidate(6, "1989 (Deluxe)", [["Welcome to New York", 212], ["Blank Space", 231], ["Wonderland (Live)", 246]])] });
-    assert.equal(fpTried.decision === "import" && fpTried.editionId, 5, "no fingerprint: the closest wins");
 });
 
-test("same recordings: the edition whose titles fit wins over a monitored edition with other qualifiers (1989 deluxe vs tour edition)", () => {
-    const sameRecordings = (c: AutoImportCandidateRelease) => ({ ...c, tracks: c.tracks.map((t, i) => ({ ...t, recordingMbid: `rec-${i}` })) });
-    const memoFiles = [loose(1, 1, "Welcome to New York", 213), loose(2, 2, "Blank Space", 231), loose(3, 3, "Blank Space (voice memo)", 131)];
-    for (const f of memoFiles) f.tags.ALBUM = "1989 (Deluxe)";
-    const deluxe2014 = sameRecordings(candidate(7, "1989", [["Welcome to New York", 212], ["Blank Space", 231], ["Blank Space (voice memo)", 131]]));
-    const tour2015 = sameRecordings(candidate(8, "1989 (tour edition)", [["Welcome to New York", 212], ["Blank Space", 231], ["Blank Space (guitar/vocal)", 131]], { preferred: true }));
-    const plan = planFolderAutoImport({ files: memoFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [tour2015, deluxe2014] });
-    assert.equal(plan.decision, "import");
+test("1989: the deluxe (voice memo) beats the tour edition (guitar/vocal) on track titles", () => {
+    const memo = [loose(1, 1, "Welcome to New York", 213), loose(2, 2, "Blank Space", 231), loose(3, 3, "Blank Space (voice memo)", 131)];
+    const tour = candidate(8, "1989", [["Welcome to New York", 212], ["Blank Space", 231], ["Blank Space (guitar/vocal)", 131]], { preferred: true });
+    const dlx = candidate(7, "1989", [["Welcome to New York", 212], ["Blank Space", 231], ["Blank Space (voice memo)", 131]]);
+    const plan = planFolderAutoImport({ files: memo, libraries, findRelease, folderArtistMbid: ART, fingerprints: none, findCandidates: () => [tour, dlx] });
     assert.equal(plan.decision === "import" && plan.editionId, 7);
 });
 
-// ADR-13 steps 2b/3: online lookup hint and fingerprint tie-break/verification.
-const stereo: Array<[string, number]> = [["Uncle Arthur", 133], ["Sell Me a Coat", 183], ["Rubber Band", 140]];
-const bowieFiles = [1, 2, 3].map((n) => ({ id: n, libraryRoot: "/music/stereo", ignored: false, durationSeconds: stereo[n - 1][1],
-    tags: { ALBUM: "David Bowie", ALBUMARTIST: "David Bowie", TRACK: String(n), TITLE: stereo[n - 1][0] } }) as AutoImportFile);
-const withRecordings = (c: AutoImportCandidateRelease, prefix: string) => ({ ...c, tracks: c.tracks.map((t, i) => ({ ...t, recordingMbid: `${prefix}-${i}` })) });
-const stereoRelease = withRecordings(candidate(10, "David Bowie", stereo), "st");
-const monoRelease = withRecordings(candidate(11, "David Bowie", stereo, { title: "David Bowie" }), "mono");
-const bowie = (fingerprints?: Map<number, string[]>) => planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART,
-    findCandidates: () => [monoRelease, stereoRelease], fingerprints });
-
-test("two releases with different recordings that tie on tags ask for fingerprints", () => {
-    const plan = bowie();
-    assert.equal(plan.decision, "review");
+test("Lidarr ShouldFingerprint: missing tracks ask for fingerprints first", () => {
+    const plan = planFolderAutoImport({ files: looseFiles.slice(0, 2), libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [candidate(2, "1989", deluxe)] });
     assert.equal(plan.decision === "review" && plan.needsEvidence, "fingerprint");
+    const after = planFolderAutoImport({ files: looseFiles.slice(0, 2), libraries, findRelease, folderArtistMbid: ART, fingerprints: none, findCandidates: () => [candidate(2, "1989", deluxe)] });
+    assert.equal(after.decision === "import" && after.mappings.length, 2);
 });
 
-test("fingerprints settle a close call when they clearly favour one release", () => {
-    const plan = bowie(new Map([[1, ["st-0"]], [2, ["st-1"]], [3, ["st-2", "other"]]]));
+test("fingerprints count as recording_id in the track distance (Bowie stereo vs mono)", () => {
+    const tracks: Array<[string, number]> = [["Uncle Arthur", 133], ["Sell Me a Coat", 183], ["Rubber Band", 140]];
+    const files = tracks.map(([t, sec], i) => ({ id: i + 1, libraryRoot: "/music/stereo", ignored: false, durationSeconds: sec, tags: { ALBUM: "David Bowie", ALBUMARTIST: "David Bowie", TRACK: String(i + 1), TITLE: t } }) as AutoImportFile);
+    const rec = (c: AutoImportCandidateRelease, prefix: string) => ({ ...c, artistName: "David Bowie", tracks: c.tracks.map((t, i) => ({ ...t, recordingMbid: `${prefix}-${i}` })) });
+    const mono = rec(candidate(11, "David Bowie", tracks), "mono");
+    const stereo = rec(candidate(10, "David Bowie", tracks), "st");
+    const plan = planFolderAutoImport({ files, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [mono, stereo],
+        fingerprints: new Map([[1, ["st-0"]], [2, ["st-1"]], [3, ["st-2"]]]) });
     assert.equal(plan.decision === "import" && plan.editionId, 10);
 });
 
-test("no margin: equal fingerprint agreement falls back to the closest candidate", () => {
-    const plan = bowie(new Map([[1, ["st-0", "mono-0"]], [2, ["st-1", "mono-1"]], [3, ["st-2", "mono-2"]]]));
-    assert.equal(plan.decision, "import");
+test("CloseTrackMatch: a file over 0.40 stays in Unmapped, the rest imports", () => {
+    const files = [...looseFiles, loose(9, 9, "Completely Different Jam", 600)];
+    const plan = planFolderAutoImport({ files, libraries, findRelease, folderArtistMbid: ART, fingerprints: none, findCandidates: () => [candidate(2, "1989", deluxe)] });
+    assert.deepEqual(plan.decision === "import" && plan.mappings.map((m) => m.unmappedFileId).sort(), [1, 2, 3]);
 });
 
-test("fingerprints are only a tie-breaker: a lone best match under the threshold imports; misfits stay unmapped", () => {
-    const plan = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART,
-        findCandidates: () => [stereoRelease], fingerprints: new Map([[1, ["x"]], [2, ["y"]], [3, ["st-2"]]]) });
-    assert.equal(plan.decision === "import" && plan.editionId, 10);
-    const extra = { id: 9, libraryRoot: "/music/stereo", ignored: false, durationSeconds: 400, tags: { ALBUM: "David Bowie", TRACK: "9", TITLE: "Bonus Jam" } } as AutoImportFile;
-    const partial = planFolderAutoImport({ files: [...bowieFiles, extra], libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [stereoRelease] });
-    assert.deepEqual(partial.decision === "import" && partial.mappings.map((m) => m.unmappedFileId).sort(), [1, 2, 3]);
-    const ok = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [stereoRelease] });
-    assert.equal(ok.decision === "import" && ok.via, "distance");
+test("Munkres finds the minimum-cost pairing where greedy would not", () => {
+    assert.deepEqual(munkres([[0.1, 0.2], [0.15, 0.9]]), [[0, 1], [1, 0]]);
+    assert.deepEqual(munkres([[0.5], [0.1], [0.3]]), [[1, 0]]);
 });
 
-test("no close catalog release asks for the online lookup", () => {
-    const plan = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [] });
-    assert.equal(plan.decision === "review" && plan.needsEvidence, "online");
+test("track length: free up to 10 s, full penalty at 40 s", () => {
+    const local = { id: 1, title: "X", artist: null, album: null, trackNumber: null, discNumber: null, discCount: null, year: null, country: null, label: null, disambiguation: null, releaseMbid: null, recordingMbid: null, durationSeconds: 110 };
+    const mb = { id: 1, title: "X", position: 1, mediumPosition: 1, durationMs: 100_000, recordingMbid: null };
+    assert.equal(lidarrTrackDistance(local, mb, 1).penalties.get("track_length")?.[0], 0);
+    assert.equal(lidarrTrackDistance({ ...local, durationSeconds: 140 }, mb, 1).penalties.get("track_length")?.[0], 1);
 });
 
 test("bootlegs only when the status filter includes them and a provider offers the release", () => {
-    assert.equal(isAutoImportStatusAllowed("Official", false, false), true);
+    assert.equal(isAutoImportStatusAllowed("Official", true, false), true);
     assert.equal(isAutoImportStatusAllowed("Bootleg", false, true), false);
     assert.equal(isAutoImportStatusAllowed("Bootleg", true, false), false);
     assert.equal(isAutoImportStatusAllowed("Bootleg", true, true), true);
-    assert.equal(isAutoImportStatusAllowed("Promotion", true, true), false);
-});
-
-test("Lidarr weights: missing tracks cost 0.6 and count at most once per local file", () => {
-    const big = withRecordings(candidate(20, "David Bowie", [...stereo, ...Array.from({ length: 27 }, (_, i) => [`Extra ${i}`, 200] as [string, number])]), "big");
-    const plan = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [big] });
-    assert.equal(plan.decision === "import" && plan.editionId, 20);
+    assert.equal(isAutoImportStatusAllowed("Promotion", false, true), false);
 });

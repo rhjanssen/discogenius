@@ -2,6 +2,41 @@ import fs from "fs";
 import path from "path";
 import * as mm from "music-metadata";
 import { getConfigSection } from "../config/config.js";
+import { isReleaseStatusIncluded } from "../metadata/musicbrainz-release-group-filter.js";
+
+/** A JSON array of strings or objects (name/format fields), or a plain string. */
+function jsonStrings(raw: string | null, fields: string[] = []): string[] {
+    if (!raw) return [];
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return [raw]; }
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list.flatMap((item) => {
+        if (typeof item === "string") return [item];
+        if (item && typeof item === "object") {
+            for (const field of fields) {
+                const value = (item as Record<string, unknown>)[field];
+                if (typeof value === "string" && value) return [value];
+            }
+        }
+        return [];
+    });
+}
+
+/** Medium formats; a medium without a format counts as "Unknown" (Lidarr media_format). */
+function mediaFormats(raw: string | null): string[] {
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw ?? "[]"); } catch { return []; }
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((m) => {
+        const f = m && typeof m === "object" ? ((m as Record<string, unknown>).format ?? (m as Record<string, unknown>).Format) : null;
+        return typeof f === "string" && f.trim() ? f : "Unknown";
+    });
+}
+
+function yearOf(date: string | null): number | null {
+    const match = date ? /^(\d{4})/.exec(date) : null;
+    return match ? Number(match[1]) : null;
+}
 import { db, withDbWrite } from "../../database.js";
 import { CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
@@ -675,6 +710,10 @@ export class UnmappedFilesService {
             const editions = db.prepare(`
                 SELECT edition.id, edition.mbid, edition.title, edition.artist_mbid AS artistMbid,
                        album.title AS releaseGroupTitle,
+                       (SELECT name FROM ArtistMetadata WHERE mbid = edition.artist_mbid) AS artistName,
+                       album.first_release_date AS albumDate, edition.date AS releaseDate, edition.media_count AS mediaCount,
+                       edition.media AS media, edition.country AS country, edition.label AS label,
+                       edition.disambiguation AS disambiguation, edition.old_foreign_ids AS oldIds,
                        EXISTS(SELECT 1 FROM LibraryEditions le WHERE le.edition_id = edition.id AND le.library_id = ?) AS preferred,
                        edition.status AS status,
                        EXISTS(SELECT 1 FROM AcquisitionPlans plan WHERE plan.edition_id = edition.id AND plan.library_id = ?
@@ -682,16 +721,25 @@ export class UnmappedFilesService {
                 FROM AlbumEditions edition
                 JOIN Albums album ON album.id = edition.release_group_id
                 WHERE edition.artist_mbid = ? AND edition.mbid IS NOT NULL
-            `).all(query.libraryId, query.libraryId, artistMbid) as Array<{ id: number; mbid: string; title: string; artistMbid: string; releaseGroupTitle: string; preferred: number; status: string | null; providerOffers: number }>;
-            const includeBootleg = getConfigSection("filtering").include_status_bootleg === true;
+                ORDER BY edition.id
+            `).all(query.libraryId, query.libraryId, artistMbid) as Array<{ id: number; mbid: string; title: string; artistMbid: string; releaseGroupTitle: string; preferred: number; status: string | null; providerOffers: number;
+                artistName: string | null; albumDate: string | null; releaseDate: string | null; mediaCount: number | null; media: string | null; country: string | null; label: string | null; disambiguation: string | null; oldIds: string | null }>;
+            const filtering = getConfigSection("filtering");
             for (const edition of editions) {
-                if (!isAutoImportStatusAllowed(edition.status, includeBootleg, Boolean(edition.providerOffers))) continue;
+                if (!isAutoImportStatusAllowed(edition.status, isReleaseStatusIncluded(edition.status, filtering), Boolean(edition.providerOffers))) continue;
                 if (Math.min(titleDistance(query.album, edition.title), titleDistance(query.album, edition.releaseGroupTitle)) > 0.4) continue;
                 const release = this.getCanonicalImportRelease(edition.mbid);
                 if (!release || release.tracks.length === 0) continue;
                 out.push({
                     id: release.id, mbid: release.mbid, title: edition.title, releaseGroupTitle: edition.releaseGroupTitle,
                     artistMbid: edition.artistMbid, preferred: Boolean(edition.preferred),
+                    artistName: edition.artistName ?? "", oldMbids: jsonStrings(edition.oldIds).map((id) => id.toLowerCase()),
+                    albumYear: yearOf(edition.albumDate), releaseYear: yearOf(edition.releaseDate),
+                    mediaCount: edition.mediaCount ?? undefined,
+                    mediaFormats: mediaFormats(edition.media),
+                    countries: jsonStrings(edition.country).map((c) => c.toUpperCase()),
+                    labels: jsonStrings(edition.label, ["name", "Name", "label"]),
+                    disambiguation: edition.disambiguation,
                     tracks: release.tracks.map((track) => ({ id: track.id, mbid: track.mbid, recordingMbid: track.recordingMbid,
                         mediumPosition: track.mediumPosition, position: track.position, title: track.title, durationMs: track.durationMs })),
                 });
@@ -774,7 +822,7 @@ export class UnmappedFilesService {
 
         // ADR-13 identification order: own catalog by tags (step 1-2), then an
         // online MusicBrainz lookup that adds a missing release group to the
-        // catalog, then AcoustID fingerprints for tie-breaks and verification.
+        // catalog, then AcoustID fingerprints when Lidarr's ShouldFingerprint says so.
         let lastQuery: CandidateQuery | null = null;
         const folderArtistMbid = /\{mbid-([0-9a-f-]{36})\}/i.exec(folder)?.[1] ?? null;
         const decide = (fingerprints?: FingerprintEvidence) => planFolderAutoImport({
@@ -791,8 +839,8 @@ export class UnmappedFilesService {
             const added = await this.addMissingReleaseGroupsFromCatalogSource(query.artistMbid, query.album);
             if (added > 0) plan = decide();
         }
-        const needsFingerprint = (plan.decision === "review" && plan.needsEvidence === "fingerprint")
-            || (plan.decision === "import" && plan.via === "distance");
+        // Lidarr ShouldFingerprint (distance > 0.15, extra or missing tracks, worst track > 0.40) decides inside the planner.
+        const needsFingerprint = plan.decision === "review" && plan.needsEvidence === "fingerprint";
         if (needsFingerprint) {
             const fingerprints = await this.fingerprintFiles(files);
             plan = decide(fingerprints);
