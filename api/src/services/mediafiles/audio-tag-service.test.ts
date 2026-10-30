@@ -108,8 +108,19 @@ test("disabled ReplayGain embedding plans removal of managed ReplayGain tags", (
   assert.deepEqual(
     AudioTagService.buildManagedTagRemovals({ embed_replaygain: false } as any)
       .map((tag: any) => tag.ffmpegKey),
-    ["UPC", "EAN", "REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK"],
+    ["UPC", "EAN", "REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK"],
   );
+});
+
+test("no track gain written removes a stale album ReplayGain; a written track gain keeps it", () => {
+  const keys = (gain: number | null) => (AudioTagService as any)
+    .buildRowManagedTagRemovals({ media_replay_gain: gain, media_peak: gain === null ? null : 0.9, album_label: "[]", extension: ".flac" }, { embed_replaygain: true })
+    .map((tag: any) => tag.ffmpegKey);
+  assert.ok(keys(null).includes("REPLAYGAIN_ALBUM_GAIN"));
+  assert.ok(keys(null).includes("REPLAYGAIN_ALBUM_PEAK"));
+  assert.ok(!keys(-6.5).includes("REPLAYGAIN_ALBUM_GAIN"));
+  const m4a = AudioTagService.buildAudioTagRemovalKeys([{ key: "replaygain_album_gain", label: "x", ffmpegKey: "REPLAYGAIN_ALBUM_GAIN", targetValue: "" }], ".m4a");
+  assert.equal(m4a[0], "----:com.apple.iTunes:REPLAYGAIN_ALBUM_GAIN");
 });
 
 test("audio tag removal keys use format-specific metadata fields", () => {

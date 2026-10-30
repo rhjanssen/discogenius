@@ -1443,6 +1443,14 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
   }
 }
 
+/** Album ReplayGain from another tool: stale once the track gain is not ours. */
+function albumReplayGainRemovals(): ManagedTag[] {
+  return [
+    { key: "replaygain_album_gain", label: "ReplayGain Album Gain", ffmpegKey: "REPLAYGAIN_ALBUM_GAIN", targetValue: "", aliases: ["replaygain_album_gain", "txxx:replaygain_album_gain", "----:com.apple.itunes:replaygain_album_gain", "wm/replaygainalbumgain"] },
+    { key: "replaygain_album_peak", label: "ReplayGain Album Peak", ffmpegKey: "REPLAYGAIN_ALBUM_PEAK", targetValue: "", aliases: ["replaygain_album_peak", "txxx:replaygain_album_peak", "----:com.apple.itunes:replaygain_album_peak", "wm/replaygainalbumpeak"] },
+  ];
+}
+
 function albumFolderKey(filePath: string): string {
   const normalized = filePath.replaceAll("\\", "/");
   const index = normalized.lastIndexOf("/");
@@ -2121,6 +2129,8 @@ export class AudioTagService {
       itunesadvisory: "ITUNESADVISORY",
       replaygain_track_gain: "REPLAYGAIN_TRACK_GAIN",
       replaygain_track_peak: "REPLAYGAIN_TRACK_PEAK",
+      replaygain_album_gain: "REPLAYGAIN_ALBUM_GAIN",
+      replaygain_album_peak: "REPLAYGAIN_ALBUM_PEAK",
       isrc: "ISRC",
       copyright: "COPYRIGHT",
       barcode: "BARCODE",
@@ -2188,6 +2198,8 @@ export class AudioTagService {
       itunesadvisory: "TXXX:ITUNESADVISORY",
       replaygain_track_gain: "TXXX:REPLAYGAIN_TRACK_GAIN",
       replaygain_track_peak: "TXXX:REPLAYGAIN_TRACK_PEAK",
+      replaygain_album_gain: "TXXX:REPLAYGAIN_ALBUM_GAIN",
+      replaygain_album_peak: "TXXX:REPLAYGAIN_ALBUM_PEAK",
       isrc: "isrc",
       copyright: "copyright",
       barcode: "TXXX:BARCODE",
@@ -2256,6 +2268,8 @@ export class AudioTagService {
       itunesadvisory: "rtng",
       replaygain_track_gain: "----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN",
       replaygain_track_peak: "----:com.apple.iTunes:REPLAYGAIN_TRACK_PEAK",
+      replaygain_album_gain: "----:com.apple.iTunes:REPLAYGAIN_ALBUM_GAIN",
+      replaygain_album_peak: "----:com.apple.iTunes:REPLAYGAIN_ALBUM_PEAK",
       isrc: "isrc",
       copyright: "copyright",
       barcode: "----:com.apple.iTunes:BARCODE",
@@ -2333,6 +2347,8 @@ export class AudioTagService {
       itunesadvisory: "WM/ContentAdvisoryRating",
       replaygain_track_gain: "WM/ReplayGainTrackGain",
       replaygain_track_peak: "WM/ReplayGainTrackPeak",
+      replaygain_album_gain: "WM/ReplayGainAlbumGain",
+      replaygain_album_peak: "WM/ReplayGainAlbumPeak",
       isrc: "WM/ISRC",
       copyright: "copyright",
       barcode: "WM/Barcode",
@@ -2485,6 +2501,7 @@ export class AudioTagService {
           targetValue: "",
           aliases: ["replaygain_track_peak"],
         },
+        ...albumReplayGainRemovals(),
       );
     }
     return removals;
@@ -2545,6 +2562,10 @@ export class AudioTagService {
           targetValue: "",
           aliases: ["replaygain_track_peak"],
         });
+      }
+      // No track gain written: a leftover album gain would disagree with it.
+      if (row.media_replay_gain === null || row.media_replay_gain === undefined) {
+        removals.push(...albumReplayGainRemovals());
       }
     }
     return removals;
