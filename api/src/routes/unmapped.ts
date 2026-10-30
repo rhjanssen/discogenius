@@ -277,6 +277,47 @@ router.post("/identify", async (req, res) => {
 });
 
 /**
+ * POST /api/unmapped/auto-import
+ * Body: { ids: number[], dryRun?: boolean }
+ * Groups the files by folder and imports each folder whose tags prove one
+ * catalog release (docs/PRODUCT_VISION.md ADR-2). dryRun decides and writes
+ * nothing. Every folder reports its decision and, for review, the reason.
+ */
+router.post("/auto-import", async (req, res) => {
+    try {
+        const body = getObjectBody(req.body);
+        const ids = getRequiredIntegerArray(body, "ids");
+        const dryRun = body.dryRun === true;
+        const seenFolders = new Set<string>();
+        const folders: Array<{ folder: string; fileIds: number[]; decision: string; reason?: string; queued?: number; editionId?: number; libraryId?: number }> = [];
+        for (const id of ids) {
+            const file = unmappedFilesService.getFile(id);
+            if (!file) continue;
+            const folder = file.file_path.replace(/[\\/][^\\/]*$/, "");
+            if (seenFolders.has(folder)) continue;
+            seenFolders.add(folder);
+            const planned = await unmappedFilesService.planAutoImportForFolder(file);
+            const { files, plan } = planned;
+            const queued = dryRun ? undefined : await unmappedFilesService.autoImportFolderGroup(file, planned);
+            folders.push({
+                folder,
+                fileIds: files.map((entry) => entry.id),
+                decision: plan.decision,
+                ...(plan.decision === "review" ? { reason: plan.reason } : { editionId: plan.editionId, libraryId: plan.libraryId }),
+                ...(queued !== undefined ? { queued } : {}),
+            });
+        }
+        res.json({ dryRun, folders });
+    } catch (error: any) {
+        if (isRequestValidationError(error)) {
+            return res.status(400).json({ error: error.message });
+        }
+        console.error("[Unmapped API] Error auto-importing files:", error);
+        res.status(500).json({ error: error.message || "Failed to auto-import files" });
+    }
+});
+
+/**
  * POST /api/unmapped/bulk-map
  * Provider-keyed bulk mapping was retired in favor of typed canonical imports.
  */

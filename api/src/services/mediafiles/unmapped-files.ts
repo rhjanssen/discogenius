@@ -1,7 +1,10 @@
 import fs from "fs";
 import path from "path";
 import * as mm from "music-metadata";
-import { db } from "../../database.js";
+import { db, withDbWrite } from "../../database.js";
+import { CommandNames } from "../commands/command-names.js";
+import { CommandQueueManager } from "../commands/command-queue-manager.js";
+import { planFolderAutoImport, type AutoImportFile, type FolderAutoImportPlan } from "./folder-auto-import-plan.js";
 import { UnmappedFileRepository, type UnmappedFile } from "../../repositories/mediafiles/UnmappedFileRepository.js";
 import { IdentificationService, type AlbumCandidateMatch } from "./identification-service.js";
 import { ImportDecisionEngine } from "../import-decision/engine.js";
@@ -619,10 +622,91 @@ export class UnmappedFilesService {
         return evaluatedMatch;
     }
 
-    async autoImportFolderGroup(anchorFile: UnmappedFile): Promise<number> {
-        void anchorFile;
-        // Candidate discovery can assist review, but acquisition authority
-        // requires an explicit Library + Edition/Recording selection.
-        return 0;
+    /**
+     * Import one folder of unmapped files without a person when its tags prove
+     * a single canonical release in the catalog and every file maps to its own
+     * track (docs/PRODUCT_VISION.md ADR-2). Otherwise the folder stays in
+     * Unmapped and every file gets the review reason. Returns the number of
+     * files queued for import.
+     */
+    async autoImportFolderGroup(
+        anchorFile: UnmappedFile,
+        planned?: { files: UnmappedFile[]; plan: FolderAutoImportPlan },
+    ): Promise<number> {
+        const result = planned ?? await this.planAutoImportForFolder(anchorFile);
+        if (result.plan.decision !== "import") {
+            const reason = `Auto-import: ${result.plan.reason}`;
+            await withDbWrite(() => {
+                const update = db.prepare("UPDATE UnmappedFiles SET reason = ? WHERE id = ?");
+                for (const file of result.files) update.run(reason, file.id);
+            });
+            return 0;
+        }
+
+        const plan = result.plan;
+        const sortedIds = plan.mappings.map((mapping) => mapping.unmappedFileId).sort((left, right) => left - right);
+        await withDbWrite(() =>
+            CommandQueueManager.push(
+                CommandNames.ImportUnmappedFiles,
+                {
+                    canonical: { libraryId: plan.libraryId, editionId: plan.editionId, mappings: plan.mappings },
+                    title: "Auto-importing files",
+                    description: `Auto-importing ${plan.mappings.length} file${plan.mappings.length === 1 ? "" : "s"}`,
+                },
+                `canonical-unmapped-import:${plan.libraryId}:${plan.editionId}:${sortedIds.join(",")}`,
+            ),
+        );
+        return plan.mappings.length;
+    }
+
+    /** Read-only half of autoImportFolderGroup: reads tags and the catalog, decides, writes nothing. */
+    async planAutoImportForFolder(anchorFile: UnmappedFile): Promise<{ files: UnmappedFile[]; plan: FolderAutoImportPlan }> {
+        const folder = path.dirname(anchorFile.file_path);
+        const siblings = (db.prepare(`
+            SELECT * FROM UnmappedFiles WHERE library_root = ? AND file_path LIKE ? ESCAPE '\\'
+        `).all(anchorFile.library_root, `${folder.replace(/[\\%_]/g, (char) => `\\${char}`)}%`) as any[])
+            .map((row) => this.repository.findById(row.id))
+            .filter((file): file is UnmappedFile => Boolean(file) && path.dirname(file!.file_path) === folder);
+        const files = siblings.length > 0 ? siblings : [anchorFile];
+
+        const autoFiles: AutoImportFile[] = [];
+        for (const file of files) {
+            autoFiles.push({
+                id: file.id,
+                libraryRoot: file.library_root,
+                ignored: file.ignored,
+                durationSeconds: file.duration ?? null,
+                tags: await readIdentityTags(file.file_path),
+            });
+        }
+
+        const libraries = this.listManualImportLibraries().map((library) => ({ id: library.id, rootPath: library.rootPath }));
+        const plan = planFolderAutoImport({
+            files: autoFiles,
+            libraries,
+            findRelease: (releaseMbid) => this.getCanonicalImportRelease(releaseMbid),
+        });
+        return { files, plan };
+    }
+}
+
+/** Identity tags in the key names planFolderAutoImport reads; empty when the file cannot be parsed. */
+async function readIdentityTags(filePath: string): Promise<Record<string, string>> {
+    try {
+        const { common } = await mm.parseFile(filePath, { skipCovers: true, duration: false });
+        const tags: Record<string, string> = {};
+        const put = (key: string, value: unknown) => {
+            if (value !== undefined && value !== null && String(value).trim()) tags[key] = String(value);
+        };
+        put("MUSICBRAINZ_ALBUMID", common.musicbrainz_albumid);
+        // music-metadata names the release-track id musicbrainz_trackid.
+        put("MUSICBRAINZ_RELEASETRACKID", common.musicbrainz_trackid);
+        put("MUSICBRAINZ_TRACKID", common.musicbrainz_recordingid);
+        put("TRACK", common.track?.no);
+        put("DISC", common.disk?.no);
+        put("TITLE", common.title);
+        return tags;
+    } catch {
+        return {};
     }
 }
