@@ -45,7 +45,7 @@ export class FileMutationJournal {
     static hasPending(): boolean {
         return Boolean(db.prepare("SELECT 1 FROM FileMutationJournal LIMIT 1").get())
             || LibraryCleanupJournal.hasPending()
-            || ArtworkMutationJournal.hasPending()
+            || ArtworkMutationJournal.hasBlocking()
             || hasPendingInPlaceTagUndo();
     }
     static async prepare(table: RenameTableName, rowId: number, storedPath: string, source: string,

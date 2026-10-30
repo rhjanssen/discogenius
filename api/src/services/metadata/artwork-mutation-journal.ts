@@ -98,6 +98,14 @@ export class ArtworkMutationJournal {
     return Boolean(db.prepare("SELECT 1 FROM ArtworkMutationJournal LIMIT 1").get());
   }
 
+  /** Intents that must settle before library file work. An intent whose recovery
+   * already failed is isolated: it concerns one image, keeps its reason in
+   * recovery_error, is retried by abandoned recovery, and guards only its own
+   * destination (recordIntent). It must never park every import. */
+  static hasBlocking(): boolean {
+    return Boolean(db.prepare("SELECT 1 FROM ArtworkMutationJournal WHERE recovery_error IS NULL LIMIT 1").get());
+  }
+
   private static get(id: string): Intent {
     const row = db.prepare("SELECT * FROM ArtworkMutationJournal WHERE id=?").get(id) as Intent | undefined;
     if (!row) throw new Error("Artwork replacement intent is missing");
@@ -123,6 +131,9 @@ export class ArtworkMutationJournal {
     if (db.prepare("SELECT 1 FROM FileMutationJournal WHERE source_path=? OR destination_path=? LIMIT 1").get(destination,destination)
       || db.prepare("SELECT 1 FROM LibraryCleanupJournal WHERE source_path=? LIMIT 1").get(destination)) {
       throw new Error("Recover pending file mutations at this artwork destination first");
+    }
+    if (db.prepare("SELECT 1 FROM ArtworkMutationJournal WHERE destination_path=? LIMIT 1").get(destination)) {
+      throw new Error("An earlier artwork replacement at this destination still needs recovery");
     }
     if (path.resolve(destination) === path.resolve(staged) || path.dirname(destination) !== path.dirname(staged)) {
       throw new Error("Artwork staging must be a separate file beside its destination");
@@ -191,6 +202,8 @@ export class ArtworkMutationJournal {
           } else fs.unlinkSync(intent.destination_path);
         }
       } else {
+        // Ownership changed after commit: keep both versions as evidence. The
+        // intent records the reason and is isolated (hasBlocking), not global.
         if (destination !== intent.replacement_identity) throw new Error("Committed artwork destination changed");
         if (!hasCommittedLibraryLink(intent)) throw new Error("Committed artwork has no matching library link");
       }

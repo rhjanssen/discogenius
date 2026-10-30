@@ -82,6 +82,13 @@ test("committed artwork recovery preserves both versions when canonical owner ch
   assert.deepEqual(fs.readFileSync(intent.backup_path),previous);
   assert.deepEqual(fs.readFileSync(destination),replacement);
   assert.equal(journal.hasPending(),true);
+  // Isolated: one bad intent never parks every library command.
+  assert.equal(journal.hasBlocking(),false);
+  const {CommandManager}=await import("../commands/command.js");
+  assert.equal(CommandManager.canStartCommand("RetagFiles",{ids:[1]}).canStart,true);
+  // It still guards its own destination.
+  fs.writeFileSync(staged,image(120));
+  await assert.rejects(async () => database.dbModule.withSqliteWriteGate(() => journal.prepare(scope,destination,staged),"second intent"),/still needs recovery/);
 });
 
 test("uncommitted newly created artwork disappears on recovery without removing a previous image",async () => {

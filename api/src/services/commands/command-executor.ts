@@ -1,3 +1,4 @@
+import { ArtworkMutationJournal } from "../metadata/artwork-mutation-journal.js";
 import { randomUUID } from "node:crypto";
 
 import {CommandModel} from "./command-model.js";
@@ -82,7 +83,8 @@ function libraryFileWriterRunning(): boolean {
  * Exported so the deadlock can be verified without the polling loop.
  */
 export async function recoverAbandonedFileMutations(): Promise<string[] | null> {
-    if (!FileMutationJournal.hasPending() || libraryFileWriterRunning()) return null;
+    // Isolated artwork intents do not block library work but are still retried here.
+    if ((!FileMutationJournal.hasPending() && !ArtworkMutationJournal.hasPending()) || libraryFileWriterRunning()) return null;
     return FileMutationJournal.recoverPending({ abandonedArtworkOnly: true });
 }
 
