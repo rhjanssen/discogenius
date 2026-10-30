@@ -678,6 +678,8 @@ export class UnmappedFilesService {
                 FROM AlbumEditions edition
                 JOIN Albums album ON album.id = edition.release_group_id
                 WHERE edition.artist_mbid = ? AND edition.mbid IS NOT NULL
+                  -- Only official releases; bootleg/promo/withdrawn need MBID tags on the files.
+                  AND (edition.status IS NULL OR lower(edition.status) = 'official')
             `).all(query.libraryId, artistMbid) as Array<{ id: number; mbid: string; title: string; artistMbid: string; releaseGroupTitle: string; preferred: number }>;
             for (const edition of editions) {
                 if (Math.min(titleDistance(query.album, edition.title), titleDistance(query.album, edition.releaseGroupTitle)) > 0.4) continue;
@@ -789,7 +791,7 @@ export class UnmappedFilesService {
             || (plan.decision === "import" && plan.via === "distance");
         if (needsFingerprint) {
             const fingerprints = await this.fingerprintFiles(files);
-            if (fingerprints.size > 0) plan = decide(fingerprints);
+            plan = decide(fingerprints);
         }
         return { files, plan };
     }
