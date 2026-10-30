@@ -237,6 +237,110 @@ export class DownloadWaitQueue {
     return row ? hydrateWaitRow(row) : null;
   }
 
+  /**
+   * Album waits are keyed by acquisition plan id. Curation replaces an
+   * edition's plan (new offer, re-plan after refresh), which used to leave
+   * the old wait row behind and append a second one for the same edition.
+   * One album download per library and edition (release MBID) is
+   * the invariant: a newer plan takes over the waiting row in place (keeping
+   * its queue position), and a running download is never duplicated.
+   * Track-subset plans keep their own rows.
+   */
+  private static adoptExistingAlbumJob(input: DownloadWaitEnqueueInput, refKey: string): DownloadWaitRow | null {
+    if (input.mediaKind !== "album") return null;
+    if ((input.trackIds?.length ?? 0) > 0) return null;
+    if (input.planId == null) return null;
+    const plan = db.prepare(`SELECT library_id, edition_id FROM AcquisitionPlans WHERE id = ?`)
+      .get(input.planId) as { library_id: number; edition_id: number } | undefined;
+    if (!plan) return null;
+    const row = db.prepare(`
+      SELECT queue.* FROM AcquisitionPlans plan
+      JOIN DownloadQueue queue ON queue.plan_id = plan.id
+      WHERE plan.library_id = ? AND plan.edition_id = ?
+        AND queue.media_kind = 'album' AND queue.track_ids IS NULL
+      ORDER BY (queue.command_id IS NOT NULL) DESC, queue.queue_order, queue.id
+      LIMIT 1
+    `).get(plan.library_id, plan.edition_id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const existing = hydrateWaitRow(row);
+    if (existing.command_id == null && existing.ref_key !== refKey) {
+      const conflict = db.prepare(`
+        SELECT id FROM DownloadQueue WHERE media_kind = 'album' AND ref_key = ? AND id != ? LIMIT 1
+      `).get(refKey, existing.id);
+      if (!conflict) {
+        db.prepare(`
+          UPDATE DownloadQueue
+          SET ref_key = ?, plan_id = ?, provider = ?, provider_id = ?, quality = ?,
+              title = COALESCE(?, title), artist = COALESCE(?, artist), cover = COALESCE(?, cover),
+              payload = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND command_id IS NULL
+        `).run(
+          refKey,
+          input.planId ?? null,
+          input.provider ?? null,
+          input.providerId ?? null,
+          input.quality ?? null,
+          input.title ?? null,
+          input.artist ?? null,
+          input.cover ?? null,
+          JSON.stringify(input.payload ?? {}),
+          existing.id,
+        );
+        return this.get(existing.id) ?? existing;
+      }
+    }
+    return existing;
+  }
+
+  /**
+   * Remove waiting (unclaimed) rows in one statement. Running and claimed
+   * downloads are never touched. Used by the queue prune endpoint.
+   */
+  static pruneUnclaimed(options: { mediaKind?: DownloadWaitMediaKind | null; dryRun?: boolean } = {}): number {
+    const kind = options.mediaKind ?? null;
+    if (options.dryRun) {
+      const row = db.prepare(`
+        SELECT COUNT(*) AS count FROM DownloadQueue
+        WHERE command_id IS NULL AND (? IS NULL OR media_kind = ?)
+      `).get(kind, kind) as { count?: number };
+      return Number(row.count || 0);
+    }
+    const result = db.prepare(`
+      DELETE FROM DownloadQueue
+      WHERE command_id IS NULL AND (? IS NULL OR media_kind = ?)
+    `).run(kind, kind);
+    const removed = Number(result.changes ?? 0);
+    if (removed > 0) notifyQueueChanged();
+    return removed;
+  }
+
+  /**
+   * Drop waiting album rows that duplicate another album row for the same
+   * library and edition (whole-album rows only). Keeps the claimed row, or
+   * else the one nearest the front of the queue.
+   */
+  static dedupeUnclaimedAlbums(options: { dryRun?: boolean } = {}): number {
+    const dupes = `
+      SELECT id FROM (
+        SELECT queue.id AS id, queue.command_id AS command_id, ROW_NUMBER() OVER (
+          PARTITION BY plan.library_id, plan.edition_id
+          ORDER BY (queue.command_id IS NOT NULL) DESC, queue.queue_order, queue.id
+        ) AS rn
+        FROM DownloadQueue queue
+        JOIN AcquisitionPlans plan ON plan.id = queue.plan_id
+        WHERE queue.media_kind = 'album' AND queue.track_ids IS NULL
+      ) WHERE rn > 1 AND command_id IS NULL
+    `;
+    if (options.dryRun) {
+      const row = db.prepare(`SELECT COUNT(*) AS count FROM (${dupes})`).get() as { count?: number };
+      return Number(row.count || 0);
+    }
+    const result = db.prepare(`DELETE FROM DownloadQueue WHERE id IN (${dupes})`).run();
+    const removed = Number(result.changes ?? 0);
+    if (removed > 0) notifyQueueChanged();
+    return removed;
+  }
+
   static getByCommandId(commandId: number): DownloadWaitRow | null {
     const row = db.prepare(`
       SELECT * FROM DownloadQueue WHERE command_id = ?
@@ -298,7 +402,8 @@ export class DownloadWaitQueue {
     }
 
     const existing = this.findExistingTypedJob(input, refKey)
-      ?? this.findExistingVideoJob(input);
+      ?? this.findExistingVideoJob(input)
+      ?? this.adoptExistingAlbumJob(input, refKey);
     if (existing) {
       return { id: existing.id, created: false, commandId: existing.command_id };
     }

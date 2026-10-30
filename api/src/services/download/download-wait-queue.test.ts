@@ -463,3 +463,20 @@ test("a claimed started attempt still projects its current live track and messag
   queryModule.DownloadQueueQueryService.invalidateSnapshots();const item=queryModule.DownloadQueueQueryService.getQueue({limit:10,offset:0}).items[0];
   assert.equal(item.status,"started");assert.equal(item.state,"downloading");assert.equal(item.statusMessage,"Downloading current track");assert.equal(item.currentTrack,"Live track");assert.equal(item.speed,"1 MB/s");
 });
+
+test("prune clears only waiting rows and keeps claimed downloads", () => {
+  const insert = dbModule.db.prepare(`
+    INSERT INTO DownloadQueue (ref_key, media_kind, command_name, provider, provider_id, slot, payload, queue_order, command_id)
+    VALUES (?, ?, 'DownloadAlbum', 'tidal', ?, 'stereo', '{}', ?, ?)
+  `);
+  insert.run("a1", "album", "p1", 1, null);
+  insert.run("a2", "album", "p2", 2, 999);
+  insert.run("t1", "track", "p3", 3, null);
+  const q = waitQueueModule.DownloadWaitQueue;
+  assert.equal(q.pruneUnclaimed({ mediaKind: "album", dryRun: true }), 1);
+  assert.equal(q.count(), 3);
+  assert.equal(q.pruneUnclaimed({ mediaKind: "album" }), 1);
+  assert.equal(q.pruneUnclaimed(), 1);
+  assert.equal(q.count(), 1);
+  assert.equal(q.get(q.getIdByCommandId(999)!)!.command_id, 999);
+});

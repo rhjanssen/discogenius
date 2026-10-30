@@ -528,6 +528,48 @@ router.post('/reorder', async (req: Request, res: Response) => {
  * POST /api/v1/queue/clear-completed
  * Clear all completed download queue items
  */
+/**
+ * POST /api/v1/queue/prune
+ * Remove every waiting (unclaimed) queue row in one write. Running or claimed
+ * downloads are never touched. Body: { mediaKind?: "album"|"track"|"video", dryRun?: boolean }
+ */
+router.post('/prune', async (req, res) => {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+    const mediaKind = body.mediaKind == null ? null : String(body.mediaKind);
+    if (mediaKind != null && !['album', 'track', 'video'].includes(mediaKind)) {
+      return res.status(400).json({ error: 'Invalid prune request', message: 'mediaKind must be album, track or video' });
+    }
+    const dryRun = body.dryRun === true;
+    const removed = await runQueueUserWrite(() => DownloadWaitQueue.pruneUnclaimed({
+      mediaKind: mediaKind as 'album' | 'track' | 'video' | null,
+      dryRun,
+    }));
+    if (!dryRun) DownloadQueueQueryService.invalidateSnapshots();
+    res.json({ dryRun, removed });
+  } catch (error: any) {
+    console.error('[QUEUE-API] Error pruning queue:', error);
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to prune queue', message: error.message });
+  }
+});
+
+/**
+ * POST /api/v1/queue/dedupe
+ * Drop waiting whole-album rows that repeat another row for the same release
+ * group and slot. Body: { dryRun?: boolean }
+ */
+router.post('/dedupe', async (req, res) => {
+  try {
+    const dryRun = req.body?.dryRun === true;
+    const removed = await runQueueUserWrite(() => DownloadWaitQueue.dedupeUnclaimedAlbums({ dryRun }));
+    if (!dryRun) DownloadQueueQueryService.invalidateSnapshots();
+    res.json({ dryRun, removed });
+  } catch (error: any) {
+    console.error('[QUEUE-API] Error deduping queue:', error);
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to dedupe queue', message: error.message });
+  }
+});
+
 router.post('/clear-completed', async (req: Request, res: Response) => {
   try {
     const body = getObjectBody(req.body ?? {});
