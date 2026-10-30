@@ -1,5 +1,6 @@
 import path from "path";
 import { db } from "../../database.js";
+import { moveTrackFileToUnmapped } from "./track-file-unmap.js";
 import { deleteLibraryFilesByIds } from "./library-file-delete-service.js";
 import { normalizeResolvedPath } from "./path-utils.js";
 
@@ -110,36 +111,7 @@ export type DuplicateApplyResult = {
 };
 
 export function moveToUnmapped(id: number, reason: string): boolean {
-  const row = db.prepare("SELECT * FROM TrackFiles WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-  if (!row) return false;
-  const filePath = String(row.file_path);
-  const libraryRoot = String(row.library_root ?? path.dirname(filePath));
-  const num = (value: unknown) => (value == null || value === "" ? null : Number(value));
-  db.transaction(() => {
-    db.prepare(`
-      INSERT INTO UnmappedFiles (
-        file_path, relative_path, library_root, filename, extension, file_size, duration,
-        bitrate, sample_rate, bit_depth, channels, codec, reason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(file_path) DO UPDATE SET reason = excluded.reason, updated_at = CURRENT_TIMESTAMP
-    `).run(
-      filePath,
-      String(row.relative_path ?? path.relative(libraryRoot, filePath)),
-      libraryRoot,
-      String(row.filename ?? path.basename(filePath)),
-      String(row.extension ?? path.extname(filePath).replace(/^\./, "")),
-      num(row.file_size),
-      num(row.duration ?? (row.duration_ms != null ? Number(row.duration_ms) / 1000 : null)),
-      num(row.bitrate),
-      num(row.sample_rate),
-      num(row.bit_depth),
-      num(row.channels ?? row.channel_count),
-      row.codec == null ? null : String(row.codec),
-      reason,
-    );
-    db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(id);
-  })();
-  return true;
+  return moveTrackFileToUnmapped(db, id, reason);
 }
 
 /**

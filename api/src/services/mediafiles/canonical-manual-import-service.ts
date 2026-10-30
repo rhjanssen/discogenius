@@ -1,6 +1,9 @@
 import { withSqliteWriteGate } from "../../database.js";
 import type Database from "better-sqlite3";
 import type { ManualImportSummary } from "./manual-import-service.js";
+import fs from "fs";
+import { moveTrackFileToUnmapped } from "./track-file-unmap.js";
+import { normalizeResolvedPath } from "./path-utils.js";
 
 export interface CanonicalManualImportMapping {
   unmappedFileId: number;
@@ -12,6 +15,8 @@ export interface CanonicalManualImportRequest {
   editionId: number;
   mappings: readonly CanonicalManualImportMapping[];
 }
+
+type Replaced = { id: number; filePath: string; recordingId: number; libraryId: number; releaseGroupId: number };
 
 interface CanonicalTrackRow {
   id: number;
@@ -287,6 +292,13 @@ export class CanonicalManualImportService {
 
     };
 
+    // Manual import replaces what the library already has for these tracks
+    // (Lidarr ManualImport: existing files of the imported tracks are deleted
+    // and logged). The old files step aside to Unmapped first so the importer
+    // does not skip the new ones as duplicates; only once their track got a new
+    // file are they deleted. A failed import leaves them in Unmapped, intact.
+    const replaced = await withSqliteWriteGate(() => this.stepAsideExistingFiles(request.libraryId, release.release_group_id, pending.map((mapping) => trackById.get(mapping.trackId)!)), "manual-import:replace-step-aside");
+
     const summary = await this.importFiles(
       pending.map((mapping) => ({
         id: mapping.unmappedFileId,
@@ -338,6 +350,39 @@ export class CanonicalManualImportService {
       Object.fromEntries([...importedFileIdByUnmappedId].map(([key, id]) => [String(key), id])),
     ), "manual-import:canonical-final");
 
+    await withSqliteWriteGate(() => this.finishReplacement(replaced), "manual-import:replace-finish");
     return summary;
+  }
+
+  /** Move existing audio files of the same recordings (same library and album) to Unmapped. */
+  private stepAsideExistingFiles(libraryId: number, releaseGroupId: number, tracks: CanonicalTrackRow[]): Replaced[] {
+    const recordingIds = [...new Set(tracks.map((track) => track.recording_id))];
+    if (recordingIds.length === 0) return [];
+    const rows = this.db.prepare(`
+      SELECT id, file_path AS filePath, recording_id AS recordingId, library_id AS libraryId, release_group_id AS releaseGroupId FROM TrackFiles
+      WHERE library_id = ? AND release_group_id = ? AND file_type = 'track'
+        AND recording_id IN (${recordingIds.map(() => "?").join(",")})
+    `).all(libraryId, releaseGroupId, ...recordingIds) as Replaced[];
+    return rows.filter((row) => moveTrackFileToUnmapped(this.db, row.id, "Replaced by manual import"));
+  }
+
+  /** Delete stepped-aside files whose recording now has a newly imported file; log each. */
+  private finishReplacement(replaced: Replaced[]): void {
+    if (replaced.length === 0) return;
+    const current = this.db.prepare(`
+      SELECT file_path AS filePath FROM TrackFiles
+      WHERE recording_id = ? AND library_id = ? AND release_group_id = ? AND file_type = 'track'
+    `);
+    const unmapped = this.db.prepare("SELECT id FROM UnmappedFiles WHERE file_path = ?");
+    const dropUnmapped = this.db.prepare("DELETE FROM UnmappedFiles WHERE id = ?");
+    for (const old of replaced) {
+      const now = current.all(old.recordingId, old.libraryId, old.releaseGroupId) as Array<{ filePath: string }>;
+      if (now.length === 0) continue; // not replaced: stays in Unmapped
+      const row = unmapped.get(old.filePath) as { id: number } | undefined;
+      const overwritten = now.some((file) => normalizeResolvedPath(file.filePath) === normalizeResolvedPath(old.filePath));
+      if (!overwritten && fs.existsSync(old.filePath)) fs.unlinkSync(old.filePath);
+      if (row) dropUnmapped.run(row.id);
+      console.log(`[Manual Import] Replaced ${old.filePath}${overwritten ? " (overwritten in place)" : " (deleted)"}`);
+    }
   }
 }

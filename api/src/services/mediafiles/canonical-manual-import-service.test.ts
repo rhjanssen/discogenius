@@ -604,3 +604,58 @@ test("canonical operation identities are bound before tag finalization and survi
   assert.equal((await service.import(request)).imported, 1);
   assert.equal((db.prepare('SELECT COUNT(*) count FROM TrackFiles WHERE id=123').get() as { count: number }).count, 1);
 });
+
+test("manual import replaces the album's existing file for the same recording and deletes it from disk", async () => {
+  fixture();
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const oldPath = path.join(tempDir, "old-copy.flac");
+  fs.writeFileSync(oldPath, "old");
+  try {
+    // Existing file of the same recording on the other edition (release B) of the album.
+    db.prepare(`
+      INSERT INTO TrackFiles (id, artist_metadata_id, library_root, file_type, library_id, release_group_id, album_edition_id, track_id, recording_id,
+        file_path, relative_path, filename, extension, file_class)
+      VALUES (5, 1, '/library/stereo', 'track', 1, 1, 20, 2000, 100, ?, 'old-copy.flac', 'old-copy.flac', 'flac', 'audio')
+    `).run(oldPath);
+    let duplicateSeen = false;
+    const service = new CanonicalManualImportService(db, async () => {
+      duplicateSeen = Boolean(db.prepare("SELECT 1 FROM TrackFiles WHERE id = 5").get());
+      db.prepare(`
+        INSERT INTO TrackFiles (id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+          file_path, relative_path, filename, extension, file_class)
+        VALUES (6, 1, '/library/stereo', 'track', 1, 10, 1000, 100, '/library/stereo/Artist/Release A/01 Track A.flac',
+          'Artist/Release A/01 Track A.flac', '01 Track A.flac', 'flac', 'audio')
+      `).run();
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 6 } };
+    });
+    await service.import({ libraryId: 1, editionId: 10, mappings: [{ unmappedFileId: 1, trackId: 1000 }] });
+    assert.equal(duplicateSeen, false, "the old file steps aside before the importer runs");
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM TrackFiles WHERE id = 5").get().n, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM UnmappedFiles WHERE file_path = ?").get(oldPath).n, 0);
+    assert.equal(fs.existsSync(oldPath), false);
+  } finally {
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
+});
+
+test("a failed manual import leaves the replaced file in Unmapped, on disk", async () => {
+  fixture();
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const oldPath = path.join(tempDir, "keep-copy.flac");
+  fs.writeFileSync(oldPath, "old");
+  try {
+    db.prepare(`
+      INSERT INTO TrackFiles (id, artist_metadata_id, library_root, file_type, library_id, release_group_id, album_edition_id, track_id, recording_id,
+        file_path, relative_path, filename, extension, file_class)
+      VALUES (7, 1, '/library/stereo', 'track', 1, 1, 20, 2000, 100, ?, 'keep-copy.flac', 'keep-copy.flac', 'flac', 'audio')
+    `).run(oldPath);
+    const service = new CanonicalManualImportService(db, async () => ({ requested: 1, imported: 0, duplicates: 0, skipped: 1, importedFileIds: {} }));
+    await service.import({ libraryId: 1, editionId: 10, mappings: [{ unmappedFileId: 1, trackId: 1000 }] });
+    assert.equal(db.prepare("SELECT reason FROM UnmappedFiles WHERE file_path = ?").get(oldPath).reason, "Replaced by manual import");
+    assert.equal(fs.existsSync(oldPath), true);
+  } finally {
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
+});
