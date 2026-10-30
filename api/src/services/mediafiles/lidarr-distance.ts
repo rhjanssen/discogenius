@@ -139,7 +139,7 @@ export function trackDistance(local: LocalTrackInfo, mb: MbTrack, total: number)
     const dist = new Distance();
     const mbLength = (mb.durationMs ?? 0) / 1000;
     if (mbLength > 0) dist.addRatio("track_length", Math.abs((local.durationSeconds ?? 0) - mbLength) - 10, 30);
-    dist.addString("track_title", local.title ?? "", mb.title);
+    dist.addString("track_title", cleanTrackTitle(local.title ?? ""), mb.title);
     if ((local.trackNumber ?? 0) > 0 && mb.position > 0) {
         dist.addBool("track_index", local.trackNumber !== mb.position && local.trackNumber !== total);
     }
@@ -270,4 +270,17 @@ export function getBestRelease(locals: LocalTrackInfo[], candidates: MbRelease[]
 export function shouldFingerprint(best: BestRelease): boolean {
     const worst = best.mapping.mapping.length ? Math.max(...best.mapping.mapping.map((m) => m.distance.normalized())) : 1;
     return best.distance.normalized() > 0.15 || best.mapping.localExtra.length > 0 || best.mapping.mbExtra.length > 0 || worst > 0.40;
+}
+
+/** Lidarr Parser.CommonTagRegex: MusicBrainz never has "feat." or edition text in a track title. */
+const COMMON_TAG_REGEX = [
+  /(\[|\()*\b((featuring|feat.|feat|ft|ft.|produced by)\s{1}){1}\s*.*(\]|\))*/gi,
+  /(?:\(|\[)(?:[^\(\[]*)(?:version|limited|deluxe|single|clean|album|special|bonus|promo|remaster(ed)?)(?:[^\)\]]*)(?:\)|\])/gi,
+];
+
+/** Lidarr Parser.CleanTrackTitle (ParsedTrackInfo.CleanTitle). */
+export function cleanTrackTitle(title: string): string {
+  let out = title;
+  for (const regex of COMMON_TAG_REGEX) out = out.replace(regex, "").trim();
+  return out;
 }

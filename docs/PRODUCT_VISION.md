@@ -340,7 +340,7 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
   - de kandidaat met de **kleinste afstand** wint; bij gelijke afstand de eerste kandidaat. Drempels: album ≤ 0,20 (zonder ontbrekende/niet-passende tracks), per track ≤ 0,40. Er is geen marge en geen tie-breaker op gemonitorde editie;
   - de vingerafdruk wordt gemaakt op Lidarr's momenten (`shouldFingerprint`) en telt mee via het recording-id in de trackafstand;
   - releasestatus volgt de filters van het metadataprofiel; een bootleg alleen als de filters bootlegs toelaten **en** een streamingdienst die release aanbiedt. Bestanden met een MB-release-id in de tags volgen hun id;
-  - bewuste afwijkingen: kandidaten komen uit de eigen catalogus (titel-voorfilter ≤ 0,4), niet uit de vingerafdruk; Lidarr's CleanTitle-"feat"-strippen is niet overgenomen;
+  - bewuste afwijkingen: kandidaten komen uit de eigen catalogus (titel-voorfilter ≤ 0,4), niet uit de vingerafdruk. Tracktitels worden opgeschoond zoals Lidarr's CleanTrackTitle ("feat." en editietekst eraf);
   - geen kandidaat in de eigen catalogus: eerst online opzoeken bij MusicBrainz en de ontbrekende release-groups toevoegen, dan opnieuw kiezen;
   - bestanden die niet in de gekozen release passen, blijven in Unmapped (gedeeltelijke import).
 - **Handmatige import vervangt.** Een handmatige import vervangt de bestaande bestanden van dezelfde recordings in dat album; de oude bestanden worden verwijderd en gelogd.
