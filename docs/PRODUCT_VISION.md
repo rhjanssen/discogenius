@@ -335,7 +335,15 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 ### ADR-13: Importbewijs en audio-verificatie (bestaat al)
 - **Context.** Een eerder genoemd doel van "95% automatisch" was een schatting zonder meting. Het is geschrapt.
 - **Wat er al is.** `services/mediafiles/fingerprint.ts` maakt een Chromaprint-vingerafdruk en zoekt die op bij AcoustID (sleutel `acoustid_api_key`). De importengine (`services/import-decision/engine.ts`) gebruikt die al: zijn de tags onvoldoende, dan mag een import toch automatisch als de vingerafdruk één duidelijke winnaar geeft (`matchType = "fingerprint"`). Tags en vingerafdruk werken dus al samen.
-- **Beslissing.** Zo houden. Uitbreiden met: vingerafdruk ook als controle bij een lengteverschil van meer dan 3 s, en als steekproef na een eigen download (ADR-18). Hoort de vingerafdruk bij een andere recording, dan gaat het bestand naar Beoordelen met die reden.
+- **Beslissing (herzien 30-10-2026).** Een map zonder MB-release-id in de tags wordt gekoppeld zoals Lidarr dat doet:
+  - de kandidaat met de **kleinste afstand onder de drempel** wint (album ≤ 0,20, per track ≤ 0,40); er is **geen marge** ten opzichte van de nummer twee;
+  - afstand met Lidarr's gewichten: artiest 3, album 3, elke gekoppelde track 2, ontbrekende tracks 0,6 (hoogstens één per bestand), niet-passende bestanden 0,9;
+  - **alleen officiële releases** zijn kandidaat; een bootleg alleen als de releasestatus-filters bootlegs toelaten **en** een streamingdienst die release aanbiedt. Bestanden met een MB-release-id in de tags volgen hun id;
+  - vingerafdruk en gemonitorde editie zijn **alleen tie-breakers** tussen vrijwel gelijke kandidaten (verschil < 0,05): eerst de vingerafdruk, dan de kleinste afstand, dan de gemonitorde editie;
+  - geen kandidaat in de eigen catalogus: eerst online opzoeken bij MusicBrainz en de ontbrekende release-groups toevoegen, dan opnieuw kiezen;
+  - bestanden die niet in de gekozen release passen, blijven in Unmapped (gedeeltelijke import).
+- **Handmatige import vervangt.** Een handmatige import vervangt de bestaande bestanden van dezelfde recordings in dat album; de oude bestanden worden verwijderd en gelogd.
+- **Artwork.** Een apart gezette artwork-herstelregel die opnieuw mislukt, wordt afgesloten en er wordt vervangende artwork opgehaald. Een afbeelding die een andere app of de gebruiker neerzette, wordt nooit overschreven.
 
 ### ADR-14: Unmapped opruimen na een termijn
 - **Beslissing (eis).** Een bestand dat **N dagen** in Unmapped staat, wordt verwijderd. N is standaard **90**, instelbaar, en in dezelfde instelling uit te zetten. Er is geen aparte lijst "wordt binnenkort verwijderd" (de Unmapped-lijst toont al alles, met de leeftijd) en geen bevestigingsstop bij grote aantallen.
