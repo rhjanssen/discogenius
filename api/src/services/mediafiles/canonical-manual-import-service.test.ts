@@ -128,12 +128,12 @@ test("canonical manual import pins Library, Release, Track and Recording", async
        AND release.edition_id = 10
       WHERE release_group.library_id = 1 AND release_group.release_group_id = 1
     `).get(), {
-      group_mode: "manual",
+      group_mode: "auto",
       // Importing establishes a custom selection and monitors the group, but it
       // is NOT a lock: "automatic curation may not change this" is separate
       // user intent. See the dedicated lock-preservation test below.
       group_locked: 0,
-      release_mode: "manual",
+      release_mode: "auto",
     });
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
@@ -370,7 +370,7 @@ test("only the newly imported row is updated when the same track exists in anoth
   }
 });
 
-test("manual import monitors and custom-selects without silently locking", async () => {
+test("manual import monitors without making an edition choice or locking", async () => {
   fixture();
   try {
 
@@ -409,8 +409,8 @@ test("manual import monitors and custom-selects without silently locking", async
     `).get() as Record<string, unknown> | undefined;
     // The row's existence is the monitoring statement.
     assert.ok(group, "importing monitors the album in this library");
-    assert.equal(group.selection_mode, "manual");
-    assert.equal(group.locked, 0, "manual import must not silently lock the group");
+    assert.equal(group.selection_mode, "auto", "an import is not an edition choice");
+    assert.equal(group.locked, 0, "manual import must not lock the group");
 
     // An existing lock is preserved across a later import.
     db.prepare("UPDATE LibraryAlbums SET locked = 1 WHERE library_id = 1").run();

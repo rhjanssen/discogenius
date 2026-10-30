@@ -206,18 +206,15 @@ export class CanonicalManualImportService {
       `);
 
       this.db.transaction(() => {
-        // Importing establishes a CUSTOM selected release and monitors its group.
-        // It deliberately does NOT lock: lock is a separate user intent
-        // ("automatic curation may not change this outcome"), and silently
-        // entrenching it is the selectRelease bug this cutover is removing. A row
-        // that is already locked keeps its lock.
+        // Importing monitors the group. An import (auto or manual) is evidence,
+        // not an edition choice: it never sets selection_mode = 'manual' and never
+        // locks. Only an explicit choice in the UI does. Existing modes are kept.
         this.db.prepare(`
           INSERT INTO LibraryAlbums (
             library_id, release_group_id, selection_mode, locked,
             reason, curation_version, updated_at
-          ) VALUES (?, ?, 'manual', 0, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, 'auto', 0, 'canonical_manual_import', 1, CURRENT_TIMESTAMP)
           ON CONFLICT(library_id, release_group_id) DO UPDATE SET
-            selection_mode = 'manual',
             reason = excluded.reason,
             updated_at = CURRENT_TIMESTAMP
         `).run(request.libraryId, release.release_group_id);
@@ -229,7 +226,7 @@ export class CanonicalManualImportService {
             library_id, edition_id, selection_mode, representative, reason,
             curation_version, selected_at, updated_at
           ) VALUES (
-            ?, ?, 'manual',
+            ?, ?, 'auto',
             NOT EXISTS (
               SELECT 1 FROM LibraryEditions existing
               JOIN AlbumEditions existing_edition ON existing_edition.id = existing.edition_id
@@ -240,7 +237,6 @@ export class CanonicalManualImportService {
             'canonical_manual_import', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
           )
           ON CONFLICT(library_id, edition_id) DO UPDATE SET
-            selection_mode = 'manual',
             reason = excluded.reason,
             selected_at = CURRENT_TIMESTAMP,
             updated_at = CURRENT_TIMESTAMP

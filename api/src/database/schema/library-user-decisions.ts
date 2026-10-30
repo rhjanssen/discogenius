@@ -63,6 +63,18 @@ export function migrateLibraryUserDecisions(db: Database.Database): void {
 
   if (!tableExists("LibraryAlbums")) return;
 
+  // An import is not an edition choice. Rows that only an import marked
+  // 'manual' go back to automatic before the lock pass below. Idempotent.
+  db.exec(`
+    UPDATE LibraryAlbums SET selection_mode = 'auto'
+    WHERE selection_mode = 'manual' AND locked = 0 AND reason = 'canonical_manual_import';
+  `);
+  if (tableExists("LibraryEditions")) {
+    db.exec(`
+      UPDATE LibraryEditions SET selection_mode = 'auto'
+      WHERE selection_mode = 'manual' AND reason = 'canonical_manual_import';
+    `);
+  }
   // A manual choice is a user decision. Locked rows already are. Idempotent.
   db.exec(`
     UPDATE LibraryAlbums
