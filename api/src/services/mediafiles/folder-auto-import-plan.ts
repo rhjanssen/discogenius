@@ -326,10 +326,13 @@ export function scoreCandidate(files: AutoImportFile[], release: AutoImportCandi
     const missingTracks = release.tracks.length - used.size;
     const albumTitle = Math.min(titleDistance(album, release.title), titleDistance(album, release.releaseGroupTitle));
     const artist = artistMbid ? (artistMbid === release.artistMbid.toLowerCase() ? 0 : 1) : 0.5;
-    // Weights after Lidarr DistanceCalculator: album and artist count 3 each,
-    // every track 1, every missing track 0.9 (an incomplete copy of a matching release).
-    const weighted = 3 * albumTitle + 3 * artist + trackSum + 0.9 * missingTracks;
-    const total = 3 + 3 + files.length + 0.9 * missingTracks;
+    // Lidarr DistanceCalculator/Distance weights: artist 3, album 3, each mapped
+    // track 2, missing tracks 0.6 (at most one per local file), unmatched files 0.9.
+    const missingPenalised = Math.min(missingTracks, files.length);
+    const matchedSum = trackSum - unmatchedFiles;
+    const matched = files.length - unmatchedFiles;
+    const weighted = 3 * albumTitle + 3 * artist + 2 * matchedSum + 0.6 * missingPenalised + 0.9 * unmatchedFiles;
+    const total = 3 + 3 + 2 * matched + 0.6 * missingPenalised + 0.9 * unmatchedFiles;
     return { release, distance: weighted / total, worstTrack, mappings, unmatchedFiles };
 }
 

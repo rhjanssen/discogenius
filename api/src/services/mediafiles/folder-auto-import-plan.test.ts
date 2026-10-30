@@ -166,3 +166,9 @@ test("bootlegs only when the status filter includes them and a provider offers t
     assert.equal(isAutoImportStatusAllowed("Bootleg", true, true), true);
     assert.equal(isAutoImportStatusAllowed("Promotion", true, true), false);
 });
+
+test("Lidarr weights: missing tracks cost 0.6 and count at most once per local file", () => {
+    const big = withRecordings(candidate(20, "David Bowie", [...stereo, ...Array.from({ length: 27 }, (_, i) => [`Extra ${i}`, 200] as [string, number])]), "big");
+    const plan = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [big] });
+    assert.equal(plan.decision === "import" && plan.editionId, 20);
+});
