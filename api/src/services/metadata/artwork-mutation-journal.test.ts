@@ -111,6 +111,20 @@ test("external replacement with identical bytes is preserved and leaves actionab
   assert.equal(check?.status,"error");assert.match(check!.message,/1 file mutation.*blocked/);
 });
 
+test("a set-aside entry that fails again is retired: replacement artwork is queued for our image, an external image is kept",async () => {
+  const {listArtworkMaterializeFollowUps,discardArtworkMaterializeFollowUps}=await import("./artwork-materialize-followup.js");
+  discardArtworkMaterializeFollowUps(destination);
+  const id=await prepare();journal.publish(id);
+  database.db.prepare("UPDATE MetadataFiles SET artist_id='external-owner' WHERE id=?").run(fileId);
+  reopen();assert.equal((await recover()).length,1,"first failure only sets the entry aside");
+  assert.ok(database.db.prepare("SELECT 1 FROM ArtworkMutationJournal WHERE id=?").get(id));
+  const errors=await recover();assert.ok(errors.length>=1);
+  assert.equal(database.db.prepare("SELECT 1 FROM ArtworkMutationJournal WHERE id=?").get(id),undefined);
+  assert.deepEqual(listArtworkMaterializeFollowUps().filter(f => f.outputPath === destination).map(f => f.coverTypes),[["cover"]]);
+  assert.deepEqual(fs.readFileSync(destination),replacement,"retiring touches no image");
+  discardArtworkMaterializeFollowUps(destination);
+});
+
 for (const column of ["canonical_release_mbid","artist_id"]) test(`changed ${column} ownership refuses rollback and preserves both image versions`,async () => {
   const id=await prepare();journal.publish(id);
   database.db.prepare(`UPDATE MetadataFiles SET ${column}='external-owner' WHERE id=?`).run(fileId);

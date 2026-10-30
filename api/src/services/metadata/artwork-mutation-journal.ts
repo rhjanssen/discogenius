@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { db, isSqliteBusyError } from "../../database.js";
-import { tryShortSqliteWrite } from "./artwork-materialize-followup.js";
+import { recordArtworkMaterializeFollowUp, tryShortSqliteWrite } from "./artwork-materialize-followup.js";
+import { CONFIG_DIR } from "../config/bootstrap.js";
 import { artworkKey, type ArtworkIdentity } from "./media-cover-state.js";
 import { artworkLinkOwnsTrackedPath } from "./media-cover-library-storage.js";
 
@@ -228,6 +229,31 @@ export class ArtworkMutationJournal {
   }
 
   /**
+   * Retire a set-aside intent and fetch replacement artwork. The row is kept as
+   * a JSON record under CONFIG_DIR/artwork-set-aside; the staged and backup
+   * files stay on disk as evidence. Replacement artwork is fetched only when
+   * the destination is missing or still one of the two images this intent
+   * knew. An image another app or the user put there is never overwritten.
+   */
+  static replaceSetAside(id: string): "replacement-queued" | "kept-external" {
+    const intent = this.get(id);
+    fs.mkdirSync(path.join(CONFIG_DIR, "artwork-set-aside"), { recursive: true });
+    fs.writeFileSync(path.join(CONFIG_DIR, "artwork-set-aside", `${id}.json`), JSON.stringify(intent));
+    const current = artworkFileIdentity(intent.destination_path);
+    const ours = current === null || current === intent.original_identity || current === intent.replacement_identity;
+    if (ours) {
+      recordArtworkMaterializeFollowUp({
+        entityId: intent.entity_id, coverEntity: intent.cover_entity as "Artist" | "Album" | "Edition" | "Video",
+        coverTypes: [intent.cover_type], outputPath: intent.destination_path, reason: `replacement for set-aside artwork ${id}`,
+      });
+    }
+    const deleted = tryShortSqliteWrite(() => db.prepare("DELETE FROM ArtworkMutationJournal WHERE id=?").run(id), "artwork:set-aside");
+    if (!deleted.ok) throw new SqliteBusyRecoveryError();
+    console.warn(`[Artwork] Set-aside intent ${id} retired for ${intent.destination_path}; ${ours ? "replacement artwork queued" : "kept the external image"}`);
+    return ours ? "replacement-queued" : "kept-external";
+  }
+
+  /**
    * `abandonedOnly` is for recovery while commands still run. A commit owns its
    * intent only inside one synchronous call, so an intent its owner marked with
    * an error, or one older than that call can last, has no live owner.
@@ -240,10 +266,19 @@ export class ArtworkMutationJournal {
       : db.prepare("SELECT id FROM ArtworkMutationJournal ORDER BY created_at,id").all()) as Array<{id:string}>;
     const errors: string[] = [];
     for (const {id} of rows) {
+      const wasSetAside = (db.prepare("SELECT recovery_error FROM ArtworkMutationJournal WHERE id=?").get(id) as {recovery_error:string|null}|undefined)?.recovery_error != null;
       // Hashes and renames stay outside the write lock. Each statement takes it
       // only for its own write.
       try { this.recoverOneSync(id); }
-      catch (error) { errors.push(`${id}: ${error instanceof Error ? error.message : String(error)}`); }
+      catch (error) {
+        errors.push(`${id}: ${error instanceof Error ? error.message : String(error)}`);
+        // A set-aside entry that fails again will not settle by retrying:
+        // retire it and fetch replacement artwork instead.
+        if (wasSetAside && !isSqliteBusyError(error)) {
+          try { this.replaceSetAside(id); }
+          catch (replaceError) { errors.push(`${id}: replacement: ${replaceError instanceof Error ? replaceError.message : String(replaceError)}`); }
+        }
+      }
       // Recovery may inspect a full-size image; let requests run between intents.
       await new Promise<void>(resolve => setImmediate(resolve));
     }
