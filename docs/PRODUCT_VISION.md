@@ -336,10 +336,11 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 - **Context.** Een eerder genoemd doel van "95% automatisch" was een schatting zonder meting. Het is geschrapt.
 - **Wat er al is.** `services/mediafiles/fingerprint.ts` maakt een Chromaprint-vingerafdruk en zoekt die op bij AcoustID (sleutel `acoustid_api_key`). De importengine (`services/import-decision/engine.ts`) gebruikt die al: zijn de tags onvoldoende, dan mag een import toch automatisch als de vingerafdruk één duidelijke winnaar geeft (`matchType = "fingerprint"`). Tags en vingerafdruk werken dus al samen.
 - **Beslissing (herzien 30-10-2026).** Een map zonder MB-release-id in de tags wordt gekoppeld zoals Lidarr dat doet:
-  - de kandidaat met de **kleinste afstand onder de drempel** wint (album ≤ 0,20, per track ≤ 0,40); er is **geen marge** ten opzichte van de nummer twee;
-  - afstand met Lidarr's gewichten: artiest 3, album 3, elke gekoppelde track 2, ontbrekende tracks 0,6 (hoogstens één per bestand), niet-passende bestanden 0,9;
-  - **alleen officiële releases** zijn kandidaat; een bootleg alleen als de releasestatus-filters bootlegs toelaten **en** een streamingdienst die release aanbiedt. Bestanden met een MB-release-id in de tags volgen hun id;
-  - vingerafdruk en gemonitorde editie zijn **alleen tie-breakers** tussen vrijwel gelijke kandidaten (verschil < 0,05): eerst de vingerafdruk, dan de kleinste afstand, dan de gemonitorde editie;
+  - **Lidarr-identiek** (`services/mediafiles/lidarr-distance.ts`, port van Lidarr's `DistanceCalculator`, `Distance`, `Munkres` en `IdentificationService`): tracks worden gepaard met het Hongaarse algoritme (Munkres); per track tellen lengte (drempels 10 s en 40 s), titel, tracknummer en recording-id; per album tellen artiestnaam, albumtitel (tegen de hoofdtitel), aantal schijven, media, jaar, land, label, disambiguation, release-id, ontbrekende en niet-passende tracks, met Lidarr's gewichten;
+  - de kandidaat met de **kleinste afstand** wint; bij gelijke afstand de eerste kandidaat. Drempels: album ≤ 0,20 (zonder ontbrekende/niet-passende tracks), per track ≤ 0,40. Er is geen marge en geen tie-breaker op gemonitorde editie;
+  - de vingerafdruk wordt gemaakt op Lidarr's momenten (`shouldFingerprint`) en telt mee via het recording-id in de trackafstand;
+  - releasestatus volgt de filters van het metadataprofiel; een bootleg alleen als de filters bootlegs toelaten **en** een streamingdienst die release aanbiedt. Bestanden met een MB-release-id in de tags volgen hun id;
+  - bewuste afwijkingen: kandidaten komen uit de eigen catalogus (titel-voorfilter ≤ 0,4), niet uit de vingerafdruk; Lidarr's CleanTitle-"feat"-strippen is niet overgenomen;
   - geen kandidaat in de eigen catalogus: eerst online opzoeken bij MusicBrainz en de ontbrekende release-groups toevoegen, dan opnieuw kiezen;
   - bestanden die niet in de gekozen release passen, blijven in Unmapped (gedeeltelijke import).
 - **Handmatige import vervangt.** Een handmatige import vervangt de bestaande bestanden van dezelfde recordings in dat album; de oude bestanden worden verwijderd en gelogd.
