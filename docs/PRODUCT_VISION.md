@@ -61,7 +61,7 @@ Elke ontwerpbeslissing moet hieruit te herleiden zijn.
 ### 3.1 In scope
 | Domein | Functies |
 |---|---|
-| Catalogus | Artiesten, release groups, releases, tracks en recordings uit MB. Refreshen volgens regels (nieuw, oud, nog actief). Optioneel een lokale MB-mirror. |
+| Catalogus | Artiesten, release groups, releases, tracks en recordings uit MB. Refreshen volgens regels (nieuw, oud, nog actief). Bron is de MusicBrainz-proxy van Lidarr of de eigen lokale mirror (musicbrainz-docker); beide werken al. |
 | Bibliotheken | Meerdere bibliotheken per soort (stereo, spatial, video), elk met een eigen map, beleid en profielen. |
 | Curatie | Type- en statusbeleid, discografie dekken met zo weinig uitgaven mogelijk, compilaties alleen voor gaten, en beslissingen van de gebruiker die blijven staan. |
 | Aanbod-koppeling | Aanbod van diensten koppelen aan MB-releases en -recordings op bewijs (links, UPC/ISRC, vorm). |
@@ -81,9 +81,10 @@ Afspeellijsten, radio, een volledige speler, sociale functies, aanbevelingen van
 
 ### 4.1 Juistheid
 - E1: Elk bestand in een bibliotheek heeft een MB-recording-id en een release-id.
-- E2: Per bibliotheek en recording is er hoogstens één "eigen" bestand. Een dubbel bestand gaat naar Beoordelen of wordt (met bewijs) opgeruimd.
+- E2: Elk album in een bibliotheek is compleet: een editie wordt altijd in zijn geheel verworven, ook tracks die al in een andere editie aanwezig zijn. Eén bestand per recording is een streven, geen harde regel (ADR-11).
 - E3: Er is hoogstens één actieve verwervingstaak per (bibliotheek, editie[, track]).
-- E4: Aanbod met een karaoke-, tribute- of cover-signaal wordt nooit automatisch gekoppeld.
+- E4: Een karaoke-, tribute- of coverversie door een ander staat nooit in voor het echte nummer. Eigen werk van de artiest (een eigen instrumentaal- of karaoke-album, of covers die de artiest zelf opnam) mag wel, als aparte recording of album (ADR-12).
+- E4b: Wat niet in MusicBrainz staat, komt nooit op de verwervingslijst (P1).
 
 ### 4.2 Rust en herstel
 - E5: Geen schrijftransactie duurt 1 s of langer.
@@ -97,23 +98,23 @@ Afspeellijsten, radio, een volledige speler, sociale functies, aanbevelingen van
 - E11: Een handmatige keuze blijft staan totdat de gebruiker die zelf terugdraait.
 
 ### 4.4 Import
-- E12: Bij een vreemde map met MB-tags en volledige dekking koppelt de app 95% of meer automatisch.
+- E12: Een vreemde map wordt automatisch geïmporteerd als en alleen als het bewijs sluitend is: MB-release-id in de tags, één release in de catalogus, elke track eenduidig gekoppeld en de lengte binnen 10 s. Waar de tags ontbreken of twijfel bestaat, beslist een audio-vingerafdruk (AcoustID/Chromaprint) tegen de MB-recording (ADR-13). Er is geen streefpercentage: het aandeel automatisch is een meetwaarde op het dashboard, geen eis.
 - E13: Een twijfelgeval gaat naar Beoordelen, met het beste voorstel en de reden.
 
 ### 4.5 Bestanden en metadata
 - E14: Tags werken in Plex: één ALBUMARTIST, "Various Artists" waar dat hoort, en per-track ARTIST met de credit.
 - E15: Tags werken in Navidrome: ARTISTS en ALBUMARTISTS als lijsten met meerdere waarden, en MBID's.
-- E16: Albumhoezen zijn minstens 1000 px, liefst de originele grootte. Artiestfoto's zijn minstens 1000 px. Elke afbeelding vermeldt waar hij vandaan komt.
+- E16: De app kiest de albumhoes zelf, zonder instelling: de hoogste kwaliteit (meestal de dienst), behalve bij een samengesteld album, dat de Cover Art Archive-hoes van de MB-release krijgt. Minimum 1000 px; ingebed maximaal 1200 px. Artiestfoto's minstens 1000 px waar mogelijk. Elke afbeelding vermeldt waar hij vandaan komt (ADR-5).
 - E17: Muziekvideo's volgen de structuur van Plex (§6.6).
 
 ### 4.6 Bediening
-- E18: De app is bruikbaar op 200% zoom en met een schermlezer. Het contrast voldoet aan WCAG AA.
+- E18: De app is volledig bruikbaar op 600–700% browserzoom (alles herschikt naar één kolom, niets valt weg of vraagt horizontaal scrollen), met een schermlezer (NVDA/VoiceOver: elke status en knop heeft een naam) en in hoog contrast (Windows-contrastthema's / `forced-colors`; daarnaast WCAG AA).
 - E19: Met ▶ hoor je binnen 3 s geluid, in Bibliotheek, Ontbrekend en Beoordelen.
-- E20: De mediaserver scant binnen 1 minuut na een wijziging gericht de veranderde paden.
+- E20: Binnen 1 minuut na een wijziging start de app op de mediaserver een gedeeltelijke scan van alleen de veranderde map(pen). Hoe lang de server zelf over die scan doet, valt buiten de eis; een volledige bibliotheekscan start de app nooit uit zichzelf (ADR-15).
 
 ### 4.7 Wensen
 - W1: Nieuwe diensten en mediaservers toevoegen zonder de kern aan te passen.
-- W2: Werkt zonder internet-MB (lokale mirror).
+- W2: Werkt zonder internet-MB. Dit kan al: de catalogus leest van de MusicBrainz-proxy van Lidarr of van de lokale musicbrainz-docker-mirror (instelbaar).
 - W3: Zo min mogelijk instellingen nodig voor een goede standaard.
 
 ---
@@ -145,15 +146,32 @@ Elke lus is herhaalbaar, werkt in kleine transacties en schrijft redenen weg.
 | Lus | Invoer | Uitvoer | Trigger |
 |---|---|---|---|
 | L1 Catalogus | MB | catalogusrijen | regels per artiest (nieuw, ouder dan 30 d, nog actief en ouder dan 2 d; niet binnen 12 u) |
-| L2 Aanbod | diensten | Provider*Matches | na L1, en periodiek per dienst |
-| L3 Curatie | catalogus + beleid + gebruikersbeslissingen | LibraryAlbums/Editions + uitkomst | na L1/L2, en bij een beleidswijziging |
-| L4 Plan | gewenst + aanbod | AcquisitionPlan* | na L3 |
-| L5 Inventaris | schijf | TrackFiles, UnmappedFiles | watcher + gewijzigde mappen; volledige scan wekelijks |
-| L6 Verwerving | **view Ontbrekend/Cutoff** + plan | maximaal N actieve downloads | doorlopend, top-N op prioriteit |
+| L2 Aanbod | catalogi van de diensten | Provider*Matches + beschikbaarheid per editie en recording | na L1, en periodiek per dienst |
+| L3 Curatie | catalogus + beschikbaarheid + beleid + gebruikersbeslissingen | LibraryAlbums/Editions + uitkomst | na L2, en bij een beleidswijziging |
+| L4 Plan | gewenste edities + aanbod | AcquisitionPlan* (alleen voor gewenst) | na L3 |
+| L5 Inventaris | schijf | TrackFiles, UnmappedFiles | direct per gewijzigde map (watcher); wekelijks een volledige controle (§5.3.2) |
+| L6 Verwerving | **view Ontbrekend/Cutoff** + plan | maximaal N actieve downloads | doorlopend, top-N op prioriteit (§5.3.3) |
 | L7 Import | download of vreemde map | TrackFiles of Beoordelen | na een download, en na L5 voor vreemde bestanden |
 | L8 Organiseren | gewenste naam en tags − huidige | hernoemen/retaggen (met logboek) | na import, en bij een profielwijziging (eerst proefrun) |
 | L9 Integriteit | schijf + DB | rapport: onbekend, ontbrekend, veranderd, dubbel | wekelijks en op verzoek; herstel alleen via een voorstel |
 | L10 Sync | gewijzigde paden | gerichte scan per mediaserver | na L7/L8/L9, gebundeld per 30 s |
+
+#### 5.3.1 Volgorde van de lussen
+MB-discografie (L1) → catalogi van de diensten ophalen en koppelen, met beschikbaarheid per editie en recording (L2) → curatie (L3) → plannen voor wat gewenst is (L4) → verwerving (L6). De afweging staat in ADR-16.
+
+#### 5.3.2 De inventarislus (L5) uitgelegd
+- **Watcher.** Het bestandssysteem meldt elke wijziging. De app wacht tot een map 30 s stil is en leest dan alleen die map opnieuw in: nieuwe bestanden worden gekoppeld of gaan naar Unmapped, verdwenen bestanden verdwijnen uit TrackFiles.
+- **Wekelijkse volledige controle.** Een watcher kan meldingen missen (netwerkshare, herstart, wijzigingen terwijl de app uit stond). Daarom loopt eens per week, 's nachts, één ronde over alle mappen. Die vergelijkt alleen grootte en wijzigingstijd; alleen afwijkende mappen worden echt opnieuw gelezen. Zo blijft de ronde licht, ook bij een grote bibliotheek.
+
+#### 5.3.3 Prioriteit van de verwerving (top-N)
+De eenheid is één album (bibliotheek + editie). De view Ontbrekend/Cutoff wordt gesorteerd op:
+1. **Door de gebruiker gevraagd** (handmatig "download"): altijd eerst.
+2. **Nieuwe uitgave**: verschenen in de afgelopen 30 dagen.
+3. **Ontbrekend vóór cutoff**: een album dat er niet is, gaat voor een album dat er al is in mindere kwaliteit.
+4. **Releasedatum**, nieuwste eerst. Dat geeft de luisteraar het snelst waarde.
+5. Daarna artiestnaam en editie-id, zodat de volgorde stabiel is.
+
+Elke cyclus pakt de eerste N die nog niet actief zijn en waarvan de dienst gezond is. Per dienst geldt een eigen maximum, zodat één trage dienst de rest niet ophoudt. De UI toont bij elk album zijn plek en de reden (bijvoorbeeld "nieuw, 3 dagen oud").
 
 ### 5.4 Werkverdeling
 - Er zijn **wachtrijen per soort werk**: catalogus, aanbod, download (per dienst), import, bestand en artwork. Elke wachtrij heeft een eigen gelijktijdigheid, zoals bij Immich `QueueService`.
@@ -179,8 +197,8 @@ Regels voor elke bron:
 - Een `auth`-fout zet alle wachtende werk van die bron op pauze en hervat het daarna in dezelfde volgorde.
 
 ### 5.6 Contract voor mediaservers
-- `notifyPathsChanged(paths[])` is verplicht.
-  - Plex: `/library/sections/{id}/refresh?path=`
+- `notifyPathsChanged(paths[])` is verplicht. Plex komt eerst; de concrete aanroepen staan in ADR-15.
+  - Plex: `GET /library/sections/{id}/refresh?path=<albummap>`
   - Jellyfin: `POST /Library/Media/Updated`
   - Navidrome/Subsonic: `startScan`
   - Kodi: `AudioLibrary.Scan` met een map
@@ -243,8 +261,11 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
     1. de hoes van de dienst bij een exacte editie-match (vaak 3000 px)
     2. Cover Art Archive "front" in de originele grootte
     3. de hoes ingebed in de download
+  - Uitzondering: een **samengesteld album** (een plan uit meerdere albums van een dienst) krijgt altijd de Cover Art Archive-hoes van de gekoppelde MB-release, omdat geen dienst-hoes bij die editie hoort.
+  - Er is **geen instelling** meer voor dienst of Cover Art Archive. De app kiest zelf het beeld met de hoogste kwaliteit volgens deze volgorde.
+  - **Minimumresolutie: 1000 px.** Een kleinere hoes wordt alleen gebruikt als er niets beters is, krijgt de status "lage resolutie" en wordt bij de volgende refresh opnieuw gezocht.
   - De hoes wordt opgeslagen als `cover.jpg` naast de audio (originele grootte, maximaal circa 3000 px). Ingebed gaat een kopie van maximaal 1200 px mee.
-  - **Artiestfoto:** fanart.tv of de dienst, als `artist.jpg` in de artiestmap. Optioneel ook `backdrop.jpg`.
+  - **Artiestfoto:** fanart.tv of de dienst, als `artist.jpg` in de artiestmap, minstens 1000 px waar mogelijk. Optioneel ook `backdrop.jpg`.
   - Een kleiner of onzeker beeld vervangt nooit een groter, zeker beeld.
 - **Gevolgen.** Plex, Jellyfin en Navidrome lezen deze lokale bestanden.
 
@@ -270,6 +291,48 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 ### ADR-10: De UI krijgt alleen wijzigingen
 - **Beslissing.** Wachtrij en status gaan per versienummer naar de UI, als wijzigingen sinds die versie (zoals qBittorrent `maindata?rid=`), via SSE.
 - **Gevolgen.** Weinig belasting, ook bij grote lijsten.
+
+### ADR-11: Complete edities boven één bestand per recording
+- **Context.** De oude eis "hoogstens één bestand per recording per bibliotheek" leidde ertoe dat bij twee nodige edities (bijvoorbeeld deluxe plus complete edition) alleen de extra tracks werden gehaald. Albums zagen er in de mediaserver incompleet uit.
+- **Beslissing.** Eén bestand per recording is een **streven**. De curatie kiest zo weinig edities als nodig om de discografie te dekken, en elke gekozen editie wordt **volledig** verworven, ook tracks die al in een andere editie staan.
+- **Gevolgen.** Meer schijfruimte, maar elk album is compleet. L9 meldt alleen een dubbel bestand binnen **dezelfde** editie.
+
+### ADR-12: Echte opnames, MusicBrainz als poort
+- **Beslissing.** Een karaoke-, tribute-, cover- of soundalike-versie door een andere artiest wordt nooit gekoppeld als vervanger van het echte nummer. Eigen werk van de artiest mag wel: een eigen instrumentaal- of karaoke-album, of een cover die de artiest zelf opnam, als aparte recording of album zoals MusicBrainz het vastlegt. Alleen wat in MusicBrainz staat, kan op de verwervingslijst komen.
+- **Gevolgen.** Aanbod zonder MB-anker blijft zichtbaar als "gezien, niet in MB" (V12), maar wordt nooit gedownload.
+
+### ADR-13: Importbewijs en audio-verificatie
+- **Context.** Een eerder genoemd doel van "95% automatisch" was een schatting zonder meting. Het is geschrapt.
+- **Beslissing.** Automatisch importeren gebeurt alleen op sluitend bewijs (E12). Een audio-vingerafdruk (Chromaprint, opgezocht via AcoustID) controleert dat een bestand echt de MB-recording is:
+  - bij een vreemde map zonder MB-tags, of met tags die niet eenduidig zijn;
+  - bij een lengteverschil groter dan 3 s;
+  - steekproefsgewijs na een download (een dienst kan een verkeerde track leveren).
+
+  Hoort de vingerafdruk bij een andere recording, dan gaat het bestand naar Beoordelen met die reden.
+- **Gevolgen.** `fpcalc` wordt een afhankelijkheid. AcoustID-aanroepen lopen via een rate limiter (3 per s).
+
+### ADR-14: Unmapped opruimen na een termijn
+- **Beslissing.** Een optionele instelling (standaard uit) ruimt Unmapped op na 60 of 90 dagen. Opruimen betekent: de bestanden **verplaatsen** naar `_quarantaine/<jaar-maand>/` in dezelfde bibliotheekroot, met een journaalregel per map, en de lijstregel weghalen. Er wordt nooit iets verwijderd; de quarantaine leegmaken doet altijd de gebruiker zelf. Vooraf is er een proefrun, en een batch is terug te draaien (ADR-7).
+- **Gevolgen.** De Unmapped-lijst blijft kort, zonder risico op verlies.
+
+### ADR-15: Mediaserver-koppeling, Plex eerst
+- **Beslissing.** Concreet voor Plex (`X-Plex-Token` in de header):
+  1. **Health:** `GET /identity` bij opstarten en elke 5 min.
+  2. **Secties koppelen:** `GET /library/sections`. Een sectie hoort bij een bibliotheek als een van haar `Location`-paden het bibliotheekpad bevat, met een instelbare padvertaling tussen container en server.
+  3. **Gedeeltelijke scan:** na import, hernoemen, retaggen, verwijderen of quarantaine verzamelt de app de veranderde albummappen per 30 s en roept per map `GET /library/sections/{id}/refresh?path=<map>` aan. Bij meer dan 50 mappen in één batch scant hij de gemeenschappelijke artiestmappen.
+  4. **Later (V5):** beoordelingen en afspeeltellingen lezen via `GET /library/sections/{id}/all?type=10`.
+
+  Jellyfin, Navidrome en Kodi volgen hetzelfde contract (§5.6).
+- **Gevolgen.** E20 is toetsbaar: tussen wijziging en scanverzoek zit hoogstens 1 minuut.
+
+### ADR-16: Beschikbaarheid → curatie → plan; geen mengen van diensten
+- **Context.** Curatie moet weten wat te krijgen is (welke editie dekt de discografie en is beschikbaar). Volledige plannen voor elke editie maken is duur, en plan-wisselingen vervuilden de wachtrij.
+- **Beslissing.**
+  - L2 bepaalt **beschikbaarheid** per editie en recording: welke dienst, welke kwaliteit, en of een editie 1:1 als album te krijgen is of samen te stellen uit meerdere albums van één dienst. Dat is goedkoop en genoeg voor de curatie.
+  - L3 kiest daarmee de gewenste edities. L4 maakt **alleen voor gewenste edities** een plan (1:1 of samengesteld).
+  - **Eén dienst per plan.** Een editie wordt niet gemengd uit meerdere diensten (bijvoorbeeld 5 tracks van Apple Music en 5 van TIDAL): mastering, loudness en kwaliteit lopen dan uiteen binnen één album. Kan geen dienst de editie volledig leveren, dan wacht ze met de reden "niet compleet bij één dienst" en kiest de curatie zo mogelijk een andere editie.
+- **Gevolgen.** Minder plannen, een stabielere wachtrij en consistente albums. Na een nieuwe dienst of een catalogusupdate kan een wachtende editie alsnog compleet worden.
+
 
 ---
 
@@ -314,7 +377,7 @@ Navigatie (zoals bij Lidarr, maar platter):
 - Elke hoes gebruikt dezelfde afronding en schaduw. Ontbreekt een hoes, dan zie je de artiestinitialen in plaats van een leeg vlak.
 
 ### 7.6 Toetsing
-Elke nieuwe flow wordt getest met de eigenaar, aan de hand van de scenario's in §1.4, op 200% zoom (Product Usability Evaluation). Wat niet lukt, wordt een eis.
+Elke nieuwe flow wordt getest met de eigenaar, aan de hand van de scenario's in §1.4, op 600–700% zoom, met een schermlezer en in hoog contrast (Product Usability Evaluation). Wat niet lukt, wordt een eis.
 
 ---
 
@@ -329,7 +392,7 @@ Dit zijn voorstellen. Ze worden pas eisen na akkoord van de eigenaar.
 | V4 | **Wekelijkse samenvatting** (e-mail of push): toegevoegd, ontbrekend, wat aandacht nodig heeft | Weinig kijken, toch weten | Tidarr ntfy/gotify/apprise |
 | V5 | **Beoordelingen en afspeeltellingen uit de mediaserver** gebruiken voor curatie (een remix met sterren blijft) | Smaak telt mee | Plex/Navidrome user data |
 | V6 | **Songteksten**: gesynchroniseerde LRC naast het bestand | Plex en Navidrome tonen ze | apple-music-downloader `lyrics`, LRCLIB |
-| V7 | **Lokale MusicBrainz-mirror** als optie | Snelheid, geen limieten | musicbrainz-docker |
+| V7 | ~~Lokale MusicBrainz-mirror~~: bestaat al (Lidarr-proxy of musicbrainz-docker, zie W2) | — | — |
 | V8 | **Ontbrekend per bron**: welke albums geen enkele bron heeft, met een melding als dat verandert | Weten waar je op wacht | – |
 | V9 | **Artiest importeren uit de mediaserver of een map** (bestaande collectie inlezen) | Makkelijk starten | Lidarr bulk import |
 | V10 | **Opslagbudget per bibliotheek** met een prognose | Spatial en video zijn groot | – |
