@@ -669,18 +669,19 @@ export class UnmappedFilesService {
             .filter((file): file is UnmappedFile => Boolean(file) && path.dirname(file!.file_path) === folder);
         const files = siblings.length > 0 ? siblings : [anchorFile];
 
+        const libraries = this.listManualImportLibraries().map((library) => ({ id: library.id, rootPath: library.rootPath }));
         const autoFiles: AutoImportFile[] = [];
         for (const file of files) {
             autoFiles.push({
                 id: file.id,
-                libraryRoot: file.library_root,
+                // UnmappedFiles.library_root holds the root kind ("music"), not a path; resolve the owning library by path.
+                libraryRoot: libraryRootPathFor(file.file_path, libraries) ?? file.library_root,
                 ignored: file.ignored,
                 durationSeconds: file.duration ?? null,
                 tags: await readIdentityTags(file.file_path),
             });
         }
 
-        const libraries = this.listManualImportLibraries().map((library) => ({ id: library.id, rootPath: library.rootPath }));
         const plan = planFolderAutoImport({
             files: autoFiles,
             libraries,
@@ -688,6 +689,17 @@ export class UnmappedFilesService {
         });
         return { files, plan };
     }
+}
+
+/** Root path of the enabled library that contains filePath (longest match), or null. */
+export function libraryRootPathFor(filePath: string, libraries: Array<{ rootPath: string }>): string | null {
+    const normalized = filePath.replace(/\\/g, "/");
+    let best: string | null = null;
+    for (const { rootPath } of libraries) {
+        const root = rootPath.replace(/\\/g, "/").replace(/\/+$/, "");
+        if (normalized.startsWith(`${root}/`) && (!best || root.length > best.length)) best = root;
+    }
+    return best;
 }
 
 /** Identity tags in the key names planFolderAutoImport reads; empty when the file cannot be parsed. */
