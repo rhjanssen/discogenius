@@ -409,3 +409,14 @@ function mostCommon(values: Array<string | null>): string | null {
     for (const [value, count] of counts) if (best === null || count > counts.get(best)!) best = value;
     return best;
 }
+
+/**
+ * Release status for untagged matching: official releases only. A bootleg is
+ * allowed only when the release-status filter includes bootlegs and a streaming
+ * provider offers that release. Files tagged with an MBID bypass this check.
+ */
+export function isAutoImportStatusAllowed(status: string | null | undefined, includeBootleg: boolean, providerOffers: boolean): boolean {
+    const normalized = (status ?? "").trim().toLowerCase();
+    if (normalized === "" || normalized === "official") return true;
+    return normalized === "bootleg" && includeBootleg && providerOffers;
+}

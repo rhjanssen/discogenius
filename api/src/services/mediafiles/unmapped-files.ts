@@ -1,10 +1,11 @@
 import fs from "fs";
 import path from "path";
 import * as mm from "music-metadata";
+import { getConfigSection } from "../config/config.js";
 import { db, withDbWrite } from "../../database.js";
 import { CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
-import { planFolderAutoImport, titleDistance, type AutoImportCandidateRelease, type AutoImportFile, type CandidateQuery, type FingerprintEvidence, type FolderAutoImportPlan } from "./folder-auto-import-plan.js";
+import { isAutoImportStatusAllowed, planFolderAutoImport, titleDistance, type AutoImportCandidateRelease, type AutoImportFile, type CandidateQuery, type FingerprintEvidence, type FolderAutoImportPlan } from "./folder-auto-import-plan.js";
 import { UnmappedFileRepository, type UnmappedFile } from "../../repositories/mediafiles/UnmappedFileRepository.js";
 import { IdentificationService, type AlbumCandidateMatch } from "./identification-service.js";
 import { ImportDecisionEngine } from "../import-decision/engine.js";
@@ -674,14 +675,17 @@ export class UnmappedFilesService {
             const editions = db.prepare(`
                 SELECT edition.id, edition.mbid, edition.title, edition.artist_mbid AS artistMbid,
                        album.title AS releaseGroupTitle,
-                       EXISTS(SELECT 1 FROM LibraryEditions le WHERE le.edition_id = edition.id AND le.library_id = ?) AS preferred
+                       EXISTS(SELECT 1 FROM LibraryEditions le WHERE le.edition_id = edition.id AND le.library_id = ?) AS preferred,
+                       edition.status AS status,
+                       EXISTS(SELECT 1 FROM AcquisitionPlans plan WHERE plan.edition_id = edition.id AND plan.library_id = ?
+                              AND plan.state = 'current' AND plan.target_track_count > 0 AND plan.coverage * 2 > plan.target_track_count) AS providerOffers
                 FROM AlbumEditions edition
                 JOIN Albums album ON album.id = edition.release_group_id
                 WHERE edition.artist_mbid = ? AND edition.mbid IS NOT NULL
-                  -- Only official releases; bootleg/promo/withdrawn need MBID tags on the files.
-                  AND (edition.status IS NULL OR lower(edition.status) = 'official')
-            `).all(query.libraryId, artistMbid) as Array<{ id: number; mbid: string; title: string; artistMbid: string; releaseGroupTitle: string; preferred: number }>;
+            `).all(query.libraryId, query.libraryId, artistMbid) as Array<{ id: number; mbid: string; title: string; artistMbid: string; releaseGroupTitle: string; preferred: number; status: string | null; providerOffers: number }>;
+            const includeBootleg = getConfigSection("filtering").include_status_bootleg === true;
             for (const edition of editions) {
+                if (!isAutoImportStatusAllowed(edition.status, includeBootleg, Boolean(edition.providerOffers))) continue;
                 if (Math.min(titleDistance(query.album, edition.title), titleDistance(query.album, edition.releaseGroupTitle)) > 0.4) continue;
                 const release = this.getCanonicalImportRelease(edition.mbid);
                 if (!release || release.tracks.length === 0) continue;

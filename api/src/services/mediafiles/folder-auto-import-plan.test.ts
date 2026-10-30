@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { planFolderAutoImport, type AutoImportFile, type AutoImportRelease } from "./folder-auto-import-plan.js";
+import { isAutoImportStatusAllowed, planFolderAutoImport, type AutoImportFile, type AutoImportRelease } from "./folder-auto-import-plan.js";
 
 const REL = "11111111-1111-1111-1111-111111111111";
 const release: AutoImportRelease = {
@@ -157,4 +157,12 @@ test("fingerprints are only a tie-breaker: a lone best match under the threshold
 test("no close catalog release asks for the online lookup", () => {
     const plan = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [] });
     assert.equal(plan.decision === "review" && plan.needsEvidence, "online");
+});
+
+test("bootlegs only when the status filter includes them and a provider offers the release", () => {
+    assert.equal(isAutoImportStatusAllowed("Official", false, false), true);
+    assert.equal(isAutoImportStatusAllowed("Bootleg", false, true), false);
+    assert.equal(isAutoImportStatusAllowed("Bootleg", true, false), false);
+    assert.equal(isAutoImportStatusAllowed("Bootleg", true, true), true);
+    assert.equal(isAutoImportStatusAllowed("Promotion", true, true), false);
 });
