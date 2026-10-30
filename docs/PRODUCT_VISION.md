@@ -98,19 +98,19 @@ Afspeellijsten, radio, een volledige speler, sociale functies, aanbevelingen van
 - E11: Een handmatige keuze blijft staan totdat de gebruiker die zelf terugdraait.
 
 ### 4.4 Import
-- E12: Een vreemde map wordt automatisch geïmporteerd als en alleen als het bewijs sluitend is: MB-release-id in de tags, één release in de catalogus, elke track eenduidig gekoppeld en de lengte binnen 10 s. Waar de tags ontbreken of twijfel bestaat, beslist een audio-vingerafdruk (AcoustID/Chromaprint) tegen de MB-recording (ADR-13). Er is geen streefpercentage: het aandeel automatisch is een meetwaarde op het dashboard, geen eis.
+- E12: Een vreemde map wordt automatisch geïmporteerd als en alleen als het bewijs sluitend is: MB-release-id in de tags, één release in de catalogus, elke track eenduidig gekoppeld en de lengte binnen 10 s. Waar de tags ontbreken of twijfel bestaat, beslist de audio-vingerafdruk die al in de engine zit (AcoustID/Chromaprint, ADR-13). Eigen downloads komen binnen met hun bekende identiteit en worden alleen geverifieerd (ADR-18). Er is geen streefpercentage: het aandeel automatisch is een meetwaarde op het dashboard, geen eis.
 - E13: Een twijfelgeval gaat naar Beoordelen, met het beste voorstel en de reden.
 
 ### 4.5 Bestanden en metadata
 - E14: Tags werken in Plex: één ALBUMARTIST, "Various Artists" waar dat hoort, en per-track ARTIST met de credit.
 - E15: Tags werken in Navidrome: ARTISTS en ALBUMARTISTS als lijsten met meerdere waarden, en MBID's.
-- E16: De app kiest de albumhoes zelf, zonder instelling: de hoogste kwaliteit (meestal de dienst), behalve bij een samengesteld album, dat de Cover Art Archive-hoes van de MB-release krijgt. Minimum 1000 px; ingebed maximaal 1200 px. Artiestfoto's minstens 1000 px waar mogelijk. Elke afbeelding vermeldt waar hij vandaan komt (ADR-5).
+- E16: De app kiest de albumhoes zelf, zonder instelling: de bron die de hoogste kwaliteit levert. Er is geen minimum- of doelresolutie. `cover.jpg` mag zo groot zijn als de bron levert (vaak 2000–3000 px); ingebed gaat maximaal 1200 px mee. Elke afbeelding vermeldt waar hij vandaan komt (ADR-5).
 - E17: Muziekvideo's volgen de structuur van Plex (§6.6).
 
 ### 4.6 Bediening
-- E18: De app is volledig bruikbaar op 600–700% browserzoom (alles herschikt naar één kolom, niets valt weg of vraagt horizontaal scrollen), met een schermlezer (NVDA/VoiceOver: elke status en knop heeft een naam) en in hoog contrast (Windows-contrastthema's / `forced-colors`; daarnaast WCAG AA).
+- E18: De app werkt met een vergrootglas op 600–700% (Windows Vergrootglas of macOS Zoom), met een schermlezer en in hoog contrast. Wat dat concreet betekent, staat in ADR-17.
 - E19: Met ▶ hoor je binnen 3 s geluid, in Bibliotheek, Ontbrekend en Beoordelen.
-- E20: Binnen 1 minuut na een wijziging start de app op de mediaserver een gedeeltelijke scan van alleen de veranderde map(pen). Hoe lang de server zelf over die scan doet, valt buiten de eis; een volledige bibliotheekscan start de app nooit uit zichzelf (ADR-15).
+- E20: Na een wijziging vraagt de app de mediaserver om een gedeeltelijke scan van alleen de veranderde map(pen), zoals Lidarr dat doet (ADR-15). Dit is een latere fase.
 
 ### 4.7 Wensen
 - W1: Nieuwe diensten en mediaservers toevoegen zonder de kern aan te passen.
@@ -232,7 +232,12 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
   4. AcoustID
   5. afstand plus een marge op nummer twee (Picard `find_best_match_with_margin`)
 - **Drempels.** Een album wordt geaccepteerd bij een afstand ≤ 0,20, een track bij ≤ 0,40, mits geen track ontbreekt of niet gekoppeld is. Daartussen gaat het naar Beoordelen.
-- **Gevolgen.** Dezelfde regels en dezelfde UI-redenen gelden voor elke herkomst.
+- **In gewone woorden.**
+  - *De volgorde* is: eerst kijken of het bestand zelf zegt wat het is (MusicBrainz-nummers in de tags). Lukt dat niet, dan zoeken in wat de app al kent (artiest, albumtitel, aantal tracks). Dan online bij MusicBrainz. Dan luisteren: de vingerafdruk van het geluid opzoeken. Pas als laatste: vergelijken op "lijkt het genoeg".
+  - *Afstand* is een cijfer van 0 (precies gelijk) tot 1 (niets gemeen). Het telt verschillen op in titel, artiest, aantal tracks, tracklengtes, jaar en label, elk met een gewicht.
+  - *Drempel per album*: een album met afstand 0,20 of minder (ongeveer 80% gelijk) mag automatisch; een losse track tot 0,40.
+  - *Marge*: de beste kandidaat moet duidelijk beter zijn dan de tweede. Lijken twee edities even goed (standaard en deluxe met dezelfde tracks), dan kiest de app niet zelf maar vraagt het jou.
+- **Gevolgen.** Dezelfde regels en dezelfde UI-redenen gelden voor elke herkomst. Wel verschilt het vertrouwen in de invoer (ADR-18).
 
 ### ADR-3: Bibliotheken per soort, artiest standaard in alle
 - **Context.** Stereo, spatial en video hebben eigen kwaliteitsdoelen, bronnen en mappen. Spatial mag stereo nooit vullen.
@@ -241,7 +246,10 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
   - Een nieuwe artiest komt in elke bibliotheek met die vlag (standaard alle).
   - Per artiest kun je dat overschrijven (`LibraryArtists` per bibliotheek); een overschrijving telt als gebruikersbeslissing (P6).
   - Er kunnen meerdere bibliotheken van dezelfde soort zijn, bijvoorbeeld "Stereo Hi-Res" en "Stereo Mobiel".
-- **Gevolgen.** Curatie, plan en wachtrij zijn altijd per bibliotheek. Een muziekvideo hoort alleen in een videobibliotheek en is via `music_video_for` gekoppeld aan een recording.
+- **Op korte termijn (zoals Lidarr's standaard-hoofdmap).** Eén scherm met: gewenste audiokwaliteit, "ook ruimtelijk geluid" (aan/uit, eigen hoofdmap) en "ook muziekvideo's" (aan/uit, eigen hoofdmap). Daaronder maakt de app zelf de bibliotheken aan.
+- **Op lange termijn.** Je maakt een bibliotheek aan met een hoofdmap, koppelt er inhoudssoorten aan (stereo, spatial, video) en een rangorde, net als Lidarr's root folders met kwaliteits- en metadataprofielen.
+- **Muziekvideo's.** Twee structuren, al in de code als instelling `video_folder_layout`: `separated` (Plex' globale muziekvideomap), `inline` (naast het album), en `inline_only`: download een video alleen als hij inline bij een track past. Die laatste optie bestaat al.
+- **Gevolgen.** Curatie, plan en wachtrij zijn altijd per bibliotheek. Een muziekvideo is via `music_video_for` gekoppeld aan een recording.
 
 ### ADR-4: Naamgeving en tags voor Plex én Navidrome
 - **Beslissing.**
@@ -252,20 +260,15 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
     - ARTIST = de credit-string met join phrases.
     - ARTISTS = lijst van MB-namen.
     - Alle MBID's, RELEASETYPE (meerdere waarden), ISRC, ORIGINALDATE, LABEL, CATALOGNUMBER, songteksten (LRC indien gesynchroniseerd) en ReplayGain.
-  - **Twee tagprofielen:** `picard` (standaard, Navidrome-rijk) en `plex-strict`. Beide schrijven altijd ALBUMARTIST als één waarde.
+  - **Albumartiest, beslissing:** de app schrijft **altijd beide**: ALBUMARTIST met één waarde en ALBUMARTISTS als lijst met alle gelijkwaardige artiesten. Plex leest alleen de eerste, Navidrome de lijst. De bestaande instelling `album_artist_mode` bepaalt alleen wat in die ene ALBUMARTIST staat: `plex_jellyfin` (standaard: alleen de primaire artiest, zodat Plex niet per samenwerking een nieuwe artiest maakt) of `picard` (de volledige credit, zoals "A & B", officieel juist).
 - **Gevolgen.** Plex groepeert op één albumartiest. Navidrome toont meerdere artiesten. Een wijziging van profiel loopt via L8 met een proefrun.
 
-### ADR-5: Beeld van hoge kwaliteit
+### ADR-5: Beeld van de hoogste kwaliteit
 - **Beslissing.**
-  - **Albumhoes:** bronvolgorde
-    1. de hoes van de dienst bij een exacte editie-match (vaak 3000 px)
-    2. Cover Art Archive "front" in de originele grootte
-    3. de hoes ingebed in de download
-  - Uitzondering: een **samengesteld album** (een plan uit meerdere albums van een dienst) krijgt altijd de Cover Art Archive-hoes van de gekoppelde MB-release, omdat geen dienst-hoes bij die editie hoort.
-  - Er is **geen instelling** meer voor dienst of Cover Art Archive. De app kiest zelf het beeld met de hoogste kwaliteit volgens deze volgorde.
-  - **Minimumresolutie: 1000 px.** Een kleinere hoes wordt alleen gebruikt als er niets beters is, krijgt de status "lage resolutie" en wordt bij de volgende refresh opnieuw gezocht.
-  - De hoes wordt opgeslagen als `cover.jpg` naast de audio (originele grootte, maximaal circa 3000 px). Ingebed gaat een kopie van maximaal 1200 px mee.
-  - **Artiestfoto:** fanart.tv of de dienst, als `artist.jpg` in de artiestmap, minstens 1000 px waar mogelijk. Optioneel ook `backdrop.jpg`.
+  - **Albumhoes:** de app kiest zonder instelling de bron met de hoogste kwaliteit (grootste afmeting, dan bestandsgrootte): de dienst bij een exacte editie-match (meestal de beste), Cover Art Archive "front" in originele grootte, of de hoes in de download.
+  - Uitzondering: een **echt samengesteld album** (ADR-19, soort b) krijgt de Cover Art Archive-hoes van de MB-release, omdat geen dienst-hoes bij die editie hoort.
+  - **Geen minimum- of doelresolutie.** `cover.jpg` naast de audio krijgt de originele grootte (vaak 2000–3000 px). Ingebed gaat een kopie van maximaal 1200 px mee.
+  - **Artiestfoto:** de grootste van fanart.tv of de dienst, als `artist.jpg`. Optioneel `backdrop.jpg`.
   - Een kleiner of onzeker beeld vervangt nooit een groter, zeker beeld.
 - **Gevolgen.** Plex, Jellyfin en Navidrome lezen deze lokale bestanden.
 
@@ -277,7 +280,7 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 - **Gevolgen.** Plex toont video's bij het juiste nummer of bij de artiest. Jellyfin en Navidrome negeren of tonen ze, zonder fouten.
 
 ### ADR-7: Bestandsveiligheid
-- **Beslissing.** Wijzigingen gaan via een journaal (oud pad, nieuw pad, checksum, reden). Een verwijdering gebeurt alleen bij een betere kopie van dezelfde recording in dezelfde bibliotheek. Onbekende bestanden worden nooit verwijderd. Een batch begint met een proefrun en kan worden teruggedraaid. Integriteit (L9) meldt problemen en lost niets stil op.
+- **Beslissing.** Wijzigingen gaan via een journaal (oud pad, nieuw pad, checksum, reden). **Automatisch** verwijderen gebeurt alleen bij een betere kopie van dezelfde recording in dezelfde bibliotheek, of via de Unmapped-termijn (ADR-14). **Handmatig** mag altijd: bij ontmonitoren worden de bestanden meteen verwijderd als de instelling "bestanden verwijderen bij ontmonitoren" aan staat, en net als Lidarr's *Manage Tracks* kun je per album of track bestanden kiezen en verwijderen (met bevestiging en journaal). Onbekende bestanden worden nooit automatisch verwijderd, behalve via ADR-14. Een batch begint met een proefrun en kan worden teruggedraaid. Integriteit (L9) meldt problemen en lost niets stil op.
 - **Waarom.** arr-scripts `UnmappedFilesCleaner` gooit hele mappen weg; dat mag hier niet kunnen.
 
 ### ADR-8: Adapters voor bronnen en mediaservers
@@ -286,7 +289,8 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 
 ### ADR-9: Korte transacties en één schrijver
 - **Beslissing.** Er is één schrijver voor SQLite (WAL). Transacties duren korter dan 1 s, en grote updates worden in brokken van circa 200 rijen gedaan. Leeswerk gebeurt buiten een transactie.
-- **Gevolgen.** De UI blijft bruikbaar tijdens grote refreshes.
+- **Zo doen anderen het.** Lidarr: `BasicRepository.InsertMany/UpdateMany` schrijft een lijst in één transactie per batch, en zware taken lopen via de commandoqueue. Navidrome: SQLite in WAL met `_busy_timeout=15000`, schrijven via `WithTx`/`WithTxImmediate` (de schrijflock vooraf pakken, zodat er geen `SQLITE_BUSY_SNAPSHOT` ontstaat), en de scanner schrijft per map. Picard heeft geen database; daar valt voor dit punt niets over te nemen.
+- **Gevolgen.** De UI blijft bruikbaar tijdens grote refreshes. Overnemen: `BEGIN IMMEDIATE` voor schrijftransacties (zoals Navidrome) en batch-schrijven per map of per 200 rijen.
 
 ### ADR-10: De UI krijgt alleen wijzigingen
 - **Beslissing.** Wachtrij en status gaan per versienummer naar de UI, als wijzigingen sinds die versie (zoals qBittorrent `maindata?rid=`), via SSE.
@@ -301,29 +305,29 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 - **Beslissing.** Een karaoke-, tribute-, cover- of soundalike-versie door een andere artiest wordt nooit gekoppeld als vervanger van het echte nummer. Eigen werk van de artiest mag wel: een eigen instrumentaal- of karaoke-album, of een cover die de artiest zelf opnam, als aparte recording of album zoals MusicBrainz het vastlegt. Alleen wat in MusicBrainz staat, kan op de verwervingslijst komen.
 - **Gevolgen.** Aanbod zonder MB-anker blijft zichtbaar als "gezien, niet in MB" (V12), maar wordt nooit gedownload.
 
-### ADR-13: Importbewijs en audio-verificatie
+### ADR-13: Importbewijs en audio-verificatie (bestaat al)
 - **Context.** Een eerder genoemd doel van "95% automatisch" was een schatting zonder meting. Het is geschrapt.
-- **Beslissing.** Automatisch importeren gebeurt alleen op sluitend bewijs (E12). Een audio-vingerafdruk (Chromaprint, opgezocht via AcoustID) controleert dat een bestand echt de MB-recording is:
-  - bij een vreemde map zonder MB-tags, of met tags die niet eenduidig zijn;
-  - bij een lengteverschil groter dan 3 s;
-  - steekproefsgewijs na een download (een dienst kan een verkeerde track leveren).
-
-  Hoort de vingerafdruk bij een andere recording, dan gaat het bestand naar Beoordelen met die reden.
-- **Gevolgen.** `fpcalc` wordt een afhankelijkheid. AcoustID-aanroepen lopen via een rate limiter (3 per s).
+- **Wat er al is.** `services/mediafiles/fingerprint.ts` maakt een Chromaprint-vingerafdruk en zoekt die op bij AcoustID (sleutel `acoustid_api_key`). De importengine (`services/import-decision/engine.ts`) gebruikt die al: zijn de tags onvoldoende, dan mag een import toch automatisch als de vingerafdruk één duidelijke winnaar geeft (`matchType = "fingerprint"`). Tags en vingerafdruk werken dus al samen.
+- **Beslissing.** Zo houden. Uitbreiden met: vingerafdruk ook als controle bij een lengteverschil van meer dan 3 s, en als steekproef na een eigen download (ADR-18). Hoort de vingerafdruk bij een andere recording, dan gaat het bestand naar Beoordelen met die reden.
 
 ### ADR-14: Unmapped opruimen na een termijn
-- **Beslissing.** Een optionele instelling (standaard uit) ruimt Unmapped op na 60 of 90 dagen. Opruimen betekent: de bestanden **verplaatsen** naar `_quarantaine/<jaar-maand>/` in dezelfde bibliotheekroot, met een journaalregel per map, en de lijstregel weghalen. Er wordt nooit iets verwijderd; de quarantaine leegmaken doet altijd de gebruiker zelf. Vooraf is er een proefrun, en een batch is terug te draaien (ADR-7).
-- **Gevolgen.** De Unmapped-lijst blijft kort, zonder risico op verlies.
+- **Beslissing.** Een instelling ruimt Unmapped op: bestanden die langer dan de termijn (standaard **90 dagen**, instelbaar, ook "nooit") in Unmapped staan, worden **echt verwijderd**. Waarborgen:
+  - de klok start bij de eerste keer dat het bestand in Unmapped verscheen en loopt opnieuw als het bestand verandert;
+  - 7 dagen vooraf staat het bestand in een lijst "wordt binnenkort verwijderd" (en in de wekelijkse samenvatting);
+  - elke run begint met een proefrun in het logboek en schrijft per bestand pad, grootte, checksum en reden in het journaal;
+  - een bestand in Beoordelen, een bestand dat in een importtaak zit, of een map buiten een bibliotheekroot wordt nooit aangeraakt;
+  - een run stopt bij meer dan 500 bestanden of 5% van de bibliotheek en vraagt dan eerst bevestiging.
+- **Waarom.** arr-scripts `UnmappedFilesCleaner` verwijdert hele mappen zonder termijn of logboek; dat willen we niet, wel het opruimen zelf.
 
-### ADR-15: Mediaserver-koppeling, Plex eerst
-- **Beslissing.** Concreet voor Plex (`X-Plex-Token` in de header):
-  1. **Health:** `GET /identity` bij opstarten en elke 5 min.
-  2. **Secties koppelen:** `GET /library/sections`. Een sectie hoort bij een bibliotheek als een van haar `Location`-paden het bibliotheekpad bevat, met een instelbare padvertaling tussen container en server.
-  3. **Gedeeltelijke scan:** na import, hernoemen, retaggen, verwijderen of quarantaine verzamelt de app de veranderde albummappen per 30 s en roept per map `GET /library/sections/{id}/refresh?path=<map>` aan. Bij meer dan 50 mappen in één batch scant hij de gemeenschappelijke artiestmappen.
-  4. **Later (V5):** beoordelingen en afspeeltellingen lezen via `GET /library/sections/{id}/all?type=10`.
-
-  Jellyfin, Navidrome en Kodi volgen hetzelfde contract (§5.6).
-- **Gevolgen.** E20 is toetsbaar: tussen wijziging en scanverzoek zit hoogstens 1 minuut.
+### ADR-15: Mediaserver-koppeling volgens Lidarr (latere fase)
+- **Model.** Lidarr's notificatiekoppelingen (`NzbDrone.Core/Notifications`). Elke koppeling implementeert gebeurtenissen (`OnReleaseImport`, `OnUpgrade`, `OnRename`, `OnAlbumDelete`, `OnArtistDelete`, `OnTrackRetag`) en kiest per gebeurtenis of ze reageert. Dat nemen we over.
+- **Per server:**
+  - **Plex** (`Notifications/Plex/Server`): bij die gebeurtenissen `UpdateLibrary(artist)`: secties ophalen (`/library/sections`), de sectie zoeken waarvan een `Location` het artiestpad bevat (met padvertaling, "mapping path for partial scan"), en `GET /library/sections/{id}/refresh?path=<artiestmap>`. Oudere servers zonder partial scan krijgen de hele sectie. Health: `/identity`.
+  - **Jellyfin/Emby** (`Notifications/MediaBrowser`): `POST /Library/Media/Updated` met de gewijzigde paden.
+  - **Navidrome/Subsonic** (`Notifications/Subsonic`): `startScan` (Navidrome scant zelf incrementeel).
+  - **Kodi** (`xbmc`): `AudioLibrary.Scan` met een map.
+  - **Plex-melding zonder app** (arr-scripts `PlexNotify.bash`): hetzelfde `refresh?path=` per map; bevestigt de aanpak.
+- **Beslissing.** Gebundeld per 30 s per artiestmap. Dit komt in een latere fase (zie Roadmap).
 
 ### ADR-16: Beschikbaarheid → curatie → plan; geen mengen van diensten
 - **Context.** Curatie moet weten wat te krijgen is (welke editie dekt de discografie en is beschikbaar). Volledige plannen voor elke editie maken is duur, en plan-wisselingen vervuilden de wachtrij.
@@ -333,6 +337,34 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
   - **Eén dienst per plan.** Een editie wordt niet gemengd uit meerdere diensten (bijvoorbeeld 5 tracks van Apple Music en 5 van TIDAL): mastering, loudness en kwaliteit lopen dan uiteen binnen één album. Kan geen dienst de editie volledig leveren, dan wacht ze met de reden "niet compleet bij één dienst" en kiest de curatie zo mogelijk een andere editie.
 - **Gevolgen.** Minder plannen, een stabielere wachtrij en consistente albums. Na een nieuwe dienst of een catalogusupdate kan een wachtende editie alsnog compleet worden.
 
+
+### ADR-17: Werken met een vergrootglas op 600–700%
+- **Context.** Met een vergrootglas zie je steeds een klein stukje van het scherm. De opmaak van de app verandert niet; wat telt is hoe ver je moet schuiven om iets te vinden en of er iets gebeurt buiten beeld.
+- **Wat er concreet verandert:**
+  - status staat direct naast de naam (in dezelfde regel), niet helemaal rechts in een brede rij;
+  - meldingen verschijnen naast de knop waarop je klikte, niet in een hoek van het scherm, en blijven staan tot je ze sluit;
+  - geen informatie alleen bij hover; een tooltip staat ook als tekst op de pagina;
+  - het toetsenbordfocus is dik en goed zichtbaar, zodat het vergrootglas het kan volgen (Windows Vergrootglas volgt de focus);
+  - tabellen hebben een compacte weergave waarin alles van een rij binnen ongeveer 400 px breedte past;
+  - niets beweegt of herschikt terwijl je leest: lijsten springen niet bij nieuwe gegevens; een "nieuwe items"-knop laat ze zien.
+- **Wat niet hoeft te veranderen.** Grootte en kleuren: die regelt het vergrootglas al. Browserzoom-herschikking blijft netjes werken, maar is niet het hoofddoel.
+- **Daarnaast.** Schermlezer: elke status en knop heeft een naam. Hoog contrast: Windows-contrastthema's (`forced-colors`) worden gevolgd.
+
+### ADR-18: Eigen downloads met bekende identiteit (vertrouwde herkomst)
+- **Context.** Bij een eigen download weet de app al welke MB-release en -recordings bedoeld zijn: dat staat in het plan.
+- **Beslissing.** Dezelfde importengine, maar met een ander vertrouwen in de invoer. Een download geeft zijn verwachte identiteit mee (bibliotheek, editie, plan, track ↔ recording). De engine slaat de identificatiestappen over en doet alleen **verificatie**: aantal tracks, lengte binnen 3 s, ISRC waar de dienst die geeft, en een steekproef met de vingerafdruk. Klopt dat, dan import; klopt het niet, dan Beoordelen met reden "dienst leverde iets anders dan verwacht".
+- **Gevolgen.** Snellere import en geen dubbele identificatie, zonder een tweede importpad.
+
+### ADR-19: Twee soorten samengestelde albums
+- **Onderscheid (structureel vast te stellen).** Het plan bevat al de bronnen per track en of een bron een exacte editie-match is (`composition` = `single_source` of `composite`). Daarmee:
+  - **(a) aangevuld album:** er is één bron die de hele editie 1:1 levert, en enkele tracks komen uit een andere bron omdat die een hogere kwaliteit heeft. Herkenbaar: één bron dekt alle tracks.
+  - **(b) echt samengesteld album:** geen enkele bron dekt de editie; de tracks komen van verschillende albums bij de dienst.
+- **Beslissing.** De app slaat dit soort op bij het plan en toont het. Hoes: (a) die van de 1:1-bron, (b) Cover Art Archive.
+- **Kwaliteitsupgrades.** Bij (a) blijft de 1:1-bron gevolgd: komt het hele album later in hogere kwaliteit, dan wordt het in één keer vervangen. Bij (b) wordt per track opnieuw gekeken; zodra een 1:1-bron verschijnt, wordt het album (a) of single-source.
+- **ADR-16 blijft gelden:** binnen één plan één dienst.
+
+### ADR-20: Doelformaat en omzetten
+- **Beslissing.** Per bibliotheek een doelformaat. Omlaag (bijvoorbeeld FLAC → Opus 256 of AAC 256 in m4a, instelbaar) gebeurt **lokaal** met ffmpeg, zonder opnieuw downloaden; tags, hoes en MBID's gaan mee; het origineel wordt pas verwijderd na een geslaagde controle, via het journaal. Omhoog kan alleen door opnieuw te downloaden: de albums komen dan in Ontbrekend/Cutoff.
 
 ---
 
@@ -377,27 +409,33 @@ Navigatie (zoals bij Lidarr, maar platter):
 - Elke hoes gebruikt dezelfde afronding en schaduw. Ontbreekt een hoes, dan zie je de artiestinitialen in plaats van een leeg vlak.
 
 ### 7.6 Toetsing
-Elke nieuwe flow wordt getest met de eigenaar, aan de hand van de scenario's in §1.4, op 600–700% zoom, met een schermlezer en in hoog contrast (Product Usability Evaluation). Wat niet lukt, wordt een eis.
+Elke nieuwe flow wordt getest met de eigenaar, aan de hand van de scenario's in §1.4, met een vergrootglas op 600–700%, met een schermlezer en in hoog contrast (Product Usability Evaluation, ADR-17). Wat niet lukt, wordt een eis.
 
 ---
 
 ## 8. Voorstellen (nog niet gevraagd, wel logisch)
-Dit zijn voorstellen. Ze worden pas eisen na akkoord van de eigenaar.
+Status na beoordeling door de eigenaar. "Akkoord" wordt een eis zodra het op de roadmap staat.
 
-| # | Voorstel | Waarom | Bron/inspiratie |
+| # | Voorstel | Status | Bron/inspiratie |
 |---|---|---|---|
-| V1 | **Nieuwe releases volgen**: melding en automatisch gewenst bij een nieuwe release van een gevolgde artiest | De kern van "af blijven" | Lidarr monitor-new-albums, Tidarr `sync.ts` |
-| V2 | **Kwaliteitsupgrades**: per bibliotheek een cutoff (bijvoorbeeld 16/44 → 24/96) en automatisch upgraden als een bron beter aanbiedt | Bibliotheken worden vanzelf beter | Lidarr `UpgradableSpecification` |
-| V3 | **Integriteitsrapport** met checksums, kapotte bestanden, ontbrekende bestanden en onbekende bestanden, als csv | Vertrouwen | Immich `IntegrityService` |
-| V4 | **Wekelijkse samenvatting** (e-mail of push): toegevoegd, ontbrekend, wat aandacht nodig heeft | Weinig kijken, toch weten | Tidarr ntfy/gotify/apprise |
-| V5 | **Beoordelingen en afspeeltellingen uit de mediaserver** gebruiken voor curatie (een remix met sterren blijft) | Smaak telt mee | Plex/Navidrome user data |
-| V6 | **Songteksten**: gesynchroniseerde LRC naast het bestand | Plex en Navidrome tonen ze | apple-music-downloader `lyrics`, LRCLIB |
-| V7 | ~~Lokale MusicBrainz-mirror~~: bestaat al (Lidarr-proxy of musicbrainz-docker, zie W2) | — | — |
-| V8 | **Ontbrekend per bron**: welke albums geen enkele bron heeft, met een melding als dat verandert | Weten waar je op wacht | – |
-| V9 | **Artiest importeren uit de mediaserver of een map** (bestaande collectie inlezen) | Makkelijk starten | Lidarr bulk import |
-| V10 | **Opslagbudget per bibliotheek** met een prognose | Spatial en video zijn groot | – |
-| V11 | **Back-up en export van beslissingen** (curatie, uitsluitingen, overschrijvingen) | Herstelbaarheid | – |
-| V12 | **Lijst van "gezien maar geweigerd" aanbod** met de reden (karaoke, regio, kwaliteit) | Uitleg | Lidarr rejections |
+| V1 | **Nieuwe releases volgen**: automatisch gewenst bij een nieuwe release van een gevolgde artiest | **Akkoord** | Lidarr monitor-new-albums |
+| V2 | **Doelformaat, omhoog en omlaag** (ADR-20) | **Akkoord** | ffmpeg; Lidarr `UpgradableSpecification` |
+| V3 | **Integriteitsrapport**: checksums, kapotte bestanden (decodeertest), ontbrekende en onbekende bestanden | **Akkoord** | Immich `IntegrityService`, Navidrome `missing`-vlag, `flac -t` |
+| V4 | **Wekelijkse samenvatting** als pushbericht | **Akkoord** | Lidarr notificaties (ntfy, Gotify, Apprise) |
+| V5 | Beoordelingen en afspeeltellingen uit de mediaserver | **Uitgesteld**: helpt alleen voor wat je al hebt, voegt geen nieuwe artiesten toe | – |
+| V6 | Gesynchroniseerde songteksten | **Bestaat al** (`services/extras/lyrics`, `save_lyrics`, `embed_lyrics`) | – |
+| V7 | Lokale MusicBrainz | **Bestaat al** (Lidarr-proxy of musicbrainz-docker). Later: een bijcontainer die zichzelf instelt, met voortgang in de app | musicbrainz-docker |
+| V8 | **Albums die geen enkele dienst heeft**, met uploaden via de webinterface of een map op schijf aanwijzen; daarna pakt de automatische import ze op | **Akkoord** | – |
+| V9 | **Bestaande collectie inlezen**: je wijst een map met muziek aan; de app herkent de artiesten en albums en zet ze als "aanwezig" in de bibliotheek, zodat ze niet opnieuw worden gedownload | Uitleg (zie hieronder) | Lidarr bulk import |
+| V10 | Opslagbudget per bibliotheek | Toekomst | – |
+| V11 | **Back-up van alle beslissingen**: zoals Lidarr `Backup` (zip van database en instellingen, gepland met instelbare interval en bewaartermijn, plus handmatig, terugzetten vanuit de UI) | **Akkoord** | Lidarr `BackupService` |
+| V12 | **Afgewezen aanbod met reden**: per album de lijst van wat een dienst wel had maar de app niet koos, met waarom (bijvoorbeeld "karaoke-versie", "niet in jouw land", "alleen 16-bit, je wilt 24-bit", "andere tracklijst") | Uitleg (zie hieronder) | Lidarr "rejections" bij handmatig zoeken |
+| V13 | **Playlists doorgeven**: gekozen playlists van een dienst (eigen playlists, of mixen zoals "Mixes for You" of "Discover") volgen en op de mediaserver nabouwen via de adapters | **Nieuw, akkoord** | streamingadapter → mediaserveradapter |
+| V14 | **Gemengde bibliotheek**: per track een video verkiezen boven audio (album met tracks 1, 3, 5 als video), afhankelijk van wat de speler aankan | **Toekomst** | – |
+
+**Uitleg V9 (bestaande collectie inlezen).** Je hebt al muziek op schijf, bijvoorbeeld uit Lidarr of een oude cd-collectie. Je wijst die map aan. De app herkent wat er staat, maakt de artiesten aan en markeert de albums als aanwezig. Daarna downloadt hij alleen wat nog ontbreekt. Zonder deze stap zou hij alles opnieuw willen downloaden.
+
+**Uitleg V12 (afgewezen aanbod).** Als een dienst wel iets heeft voor een album maar de app kiest het niet, zie je waarom. Voorbeeld: bij "Doom Days" vond de app op TIDAL een karaoke-versie (afgewezen: karaoke), op Apple Music de echte versie maar alleen in jouw land niet beschikbaar (afgewezen: regio). Zo weet je waarom iets in Ontbrekend blijft staan.
 
 ---
 
@@ -431,9 +469,10 @@ De roadmap heeft drie lagen: waarde, product en techniek.
 | **1. Fundament (nu)** | Vreemde bestanden komen vanzelf binnen; geen wachtrij-explosie | Automatische import van vreemde mappen; Ontbrekend als view, wachtrij top-N | ImportDecisionEngine voor mappen; unieke index en view; korte transacties (credits) |
 | **2. Rust en uitleg** | Vertrouwen | Schermen Beoordelen en Ontbrekend met redenen; watchdog op voortgang | Specificaties met redenen; voortgangs-heartbeat; SSE met wijzigingen |
 | **3. Afwerking** | Mooie bibliotheek | Tagprofielen Plex en Navidrome; artwork volgens ADR-5; video's volgens ADR-6 | L8 met proefrun; artwork-pijplijn |
-| **4. Koppelingen** | Werkt overal | Plex-sync (pad-scan); voorluisteren voor lokaal en Unmapped | `MediaServerSink`; `preview()` |
-| **5. Breedte** | Meer bronnen en servers | Jellyfin, Navidrome, Kodi; extra bron (bijvoorbeeld Qobuz) | Adaptercontracten gestabiliseerd |
-| **6. Slim** | Bibliotheek groeit mee | V1, V2, V3, V5 | Integriteitslus; user-data lezen |
+| **4. Eigen import en bibliotheken** | Minder werk | Vertrouwde herkomst (ADR-18); bibliotheekinstellingen kort (ADR-3); Unmapped-opruimen (ADR-14); voorluisteren | importengine met verwachte identiteit |
+| **5. Slim** | Bibliotheek groeit mee | V1, V2/ADR-20, V3, V4, V8, V11 | integriteitslus; ffmpeg-omzetting; back-up |
+| **6. Koppelingen** | Werkt overal | Mediaservers volgens Lidarr (ADR-15), Plex eerst; daarna V13 playlists | notificatiekoppelingen per gebeurtenis |
+| **7. Breedte** | Meer bronnen | extra bron (bijvoorbeeld Qobuz); bibliotheken zoals Lidarr (ADR-3 lang); V14 | adaptercontracten gestabiliseerd |
 
 ---
 
