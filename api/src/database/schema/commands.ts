@@ -136,6 +136,9 @@ export function createDownloadQueueSchema(
       media_kind TEXT NOT NULL CHECK (media_kind IN ('album', 'track', 'video')),
       command_name TEXT NOT NULL,
       plan_id INTEGER,
+      -- Album identity (E3). Set for full-edition album waits; survives re-plans.
+      library_id INTEGER,
+      edition_id INTEGER,
       track_ids TEXT,
       provider TEXT,
       provider_id TEXT,

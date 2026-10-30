@@ -42,6 +42,7 @@ import { migrateDeliveredQuality } from "./database/schema/delivered-quality.js"
 import { migrateReleaseTagFields } from "./database/schema/release-tag-fields.js";
 import { migrateRelationshipCredits } from "./database/schema/relationship-credits.js";
 import { migrateLibraryUserDecisions } from "./database/schema/library-user-decisions.js";
+import { migrateDownloadQueueEditionIdentity } from "./database/schema/download-queue-edition-identity.js";
 import { migrateDropDownconvertSetting } from "./database/schema/drop-downconvert-setting.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createTrackArtistCreditNamesSchema, migrateTrackArtistCreditNames } from "./database/schema/track-artist-credit-names.js";
@@ -583,6 +584,8 @@ export function initDatabase() {
   migrateLibraryUserDecisions(db);
   createArtworkStateSchema(db);
   ensureDownloadQueueSchema();
+  // One album row per library+edition, DB-enforced. user_version stays 46.
+  migrateDownloadQueueEditionIdentity(db);
   pruneStaleArtistIdCommandFailures();
   ensureLibraryLookupIndexes();
   ensureEditionBarcodeIndex(db);

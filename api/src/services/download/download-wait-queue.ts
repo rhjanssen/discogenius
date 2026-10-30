@@ -246,21 +246,34 @@ export class DownloadWaitQueue {
    * its queue position), and a running download is never duplicated.
    * Track-subset plans keep their own rows.
    */
-  private static adoptExistingAlbumJob(input: DownloadWaitEnqueueInput, refKey: string): DownloadWaitRow | null {
+  private static albumIdentity(input: DownloadWaitEnqueueInput): { library_id: number; edition_id: number } | null {
     if (input.mediaKind !== "album") return null;
     if ((input.trackIds?.length ?? 0) > 0) return null;
     if (input.planId == null) return null;
     const plan = db.prepare(`SELECT library_id, edition_id FROM AcquisitionPlans WHERE id = ?`)
-      .get(input.planId) as { library_id: number; edition_id: number } | undefined;
+      .get(input.planId) as { library_id: number | null; edition_id: number | null } | undefined;
+    if (!plan || plan.library_id == null || plan.edition_id == null) return null;
+    return { library_id: plan.library_id, edition_id: plan.edition_id };
+  }
+
+  private static adoptExistingAlbumJob(input: DownloadWaitEnqueueInput, refKey: string): DownloadWaitRow | null {
+    const plan = this.albumIdentity(input);
     if (!plan) return null;
-    const row = db.prepare(`
+    // The identity lives on the row (idx_download_queue_album_edition), so a
+    // row whose plan was replaced and deleted is still found. Legacy rows
+    // without identity fall back to the plan join.
+    const row = (db.prepare(`
+      SELECT * FROM DownloadQueue
+      WHERE library_id = ? AND edition_id = ? AND media_kind = 'album' AND track_ids IS NULL
+      LIMIT 1
+    `).get(plan.library_id, plan.edition_id) ?? db.prepare(`
       SELECT queue.* FROM AcquisitionPlans plan
       JOIN DownloadQueue queue ON queue.plan_id = plan.id
       WHERE plan.library_id = ? AND plan.edition_id = ?
-        AND queue.media_kind = 'album' AND queue.track_ids IS NULL
+        AND queue.media_kind = 'album' AND queue.track_ids IS NULL AND queue.edition_id IS NULL
       ORDER BY (queue.command_id IS NOT NULL) DESC, queue.queue_order, queue.id
       LIMIT 1
-    `).get(plan.library_id, plan.edition_id) as Record<string, unknown> | undefined;
+    `).get(plan.library_id, plan.edition_id)) as Record<string, unknown> | undefined;
     if (!row) return null;
     const existing = hydrateWaitRow(row);
     if (existing.command_id == null && existing.ref_key !== refKey) {
@@ -270,13 +283,15 @@ export class DownloadWaitQueue {
       if (!conflict) {
         db.prepare(`
           UPDATE DownloadQueue
-          SET ref_key = ?, plan_id = ?, provider = ?, provider_id = ?, quality = ?,
+          SET ref_key = ?, plan_id = ?, library_id = ?, edition_id = ?, provider = ?, provider_id = ?, quality = ?,
               title = COALESCE(?, title), artist = COALESCE(?, artist), cover = COALESCE(?, cover),
               payload = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND command_id IS NULL
         `).run(
           refKey,
           input.planId ?? null,
+          plan.library_id,
+          plan.edition_id,
           input.provider ?? null,
           input.providerId ?? null,
           input.quality ?? null,
@@ -323,12 +338,13 @@ export class DownloadWaitQueue {
     const dupes = `
       SELECT id FROM (
         SELECT queue.id AS id, queue.command_id AS command_id, ROW_NUMBER() OVER (
-          PARTITION BY plan.library_id, plan.edition_id
-          ORDER BY (queue.command_id IS NOT NULL) DESC, queue.queue_order, queue.id
+          PARTITION BY COALESCE(queue.library_id, plan.library_id), COALESCE(queue.edition_id, plan.edition_id)
+          ORDER BY (queue.command_id IS NOT NULL) DESC, (queue.edition_id IS NOT NULL) DESC, queue.queue_order, queue.id
         ) AS rn
         FROM DownloadQueue queue
-        JOIN AcquisitionPlans plan ON plan.id = queue.plan_id
+        LEFT JOIN AcquisitionPlans plan ON plan.id = queue.plan_id
         WHERE queue.media_kind = 'album' AND queue.track_ids IS NULL
+          AND COALESCE(queue.edition_id, plan.edition_id) IS NOT NULL
       ) WHERE rn > 1 AND command_id IS NULL
     `;
     if (options.dryRun) {
@@ -415,20 +431,23 @@ export class DownloadWaitQueue {
       payload.authHold = authHoldRecord(providerId);
     }
     const trackIds = input.trackIds ?? [];
+    const identity = this.albumIdentity(input);
     const inserted = retrySqliteBusySync(() => db.transaction(() => {
       const rank = position === "front" ? this.nextFrontRank() : this.nextAppendRank();
       const info = db.prepare(`
         INSERT INTO DownloadQueue (
-          ref_key, media_kind, command_name, plan_id, track_ids,
+          ref_key, media_kind, command_name, plan_id, library_id, edition_id, track_ids,
           provider, provider_id, artist_id, album_id,
           title, artist, cover, quality, slot, payload,
           queue_order, priority, trigger
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         refKey,
         input.mediaKind,
         input.commandName,
         input.planId ?? null,
+        identity?.library_id ?? null,
+        identity?.edition_id ?? null,
         trackIds.length > 0 ? JSON.stringify(trackIds) : null,
         input.provider ?? null,
         input.providerId ?? null,

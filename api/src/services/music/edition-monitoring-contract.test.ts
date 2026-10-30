@@ -503,6 +503,9 @@ test("Download Missing queues every monitored edition", async () => {
     mode: "additive",
   });
 
+  // Queue rows carry their own library+edition identity and outlive the
+  // reseeded plans, so start from an empty queue.
+  db.prepare("DELETE FROM DownloadQueue").run();
   const result = await DownloadMissingService.queueMonitoredItems();
   assert.equal(result.albums, 2);
   assert.deepEqual(
