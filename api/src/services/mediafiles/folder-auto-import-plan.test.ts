@@ -65,3 +65,40 @@ test("is all-or-nothing: one unmatched file blocks the folder", () => {
     });
     assert.equal(plan.decision, "review");
 });
+
+// ADR-2 step 2: untagged folders match the own catalog by distance with margin.
+import type { AutoImportCandidateRelease } from "./folder-auto-import-plan.js";
+const ART = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+function candidate(id: number, title: string, tracks: Array<[string, number]>, extra: Partial<AutoImportCandidateRelease> = {}): AutoImportCandidateRelease {
+    return {
+        id, mbid: `m-${id}`, title, releaseGroupTitle: title, artistMbid: ART, preferred: false,
+        tracks: tracks.map(([t, sec], i) => ({ id: id * 100 + i, mbid: `t${id}-${i}`, recordingMbid: `r-${t}`, mediumPosition: 1, position: i + 1, title: t, durationMs: sec * 1000 })),
+        ...extra,
+    };
+}
+function loose(id: number, track: number, title: string, sec: number): AutoImportFile {
+    return { id, libraryRoot: "/music/stereo", ignored: false, durationSeconds: sec, tags: { ALBUM: "1989 (Deluxe)", ALBUMARTIST: "Taylor Swift", TRACK: String(track), TITLE: title } };
+}
+const deluxe: Array<[string, number]> = [["Welcome to New York", 212], ["Blank Space", 231], ["Wonderland", 245]];
+const standard: Array<[string, number]> = [["Welcome to New York", 212], ["Blank Space", 231]];
+const looseFiles = [loose(1, 1, "Welcome To New York", 213), loose(2, 2, "Blank Space", 231), loose(3, 3, "Wonderland", 246)];
+
+test("an untagged folder imports the closest catalog release; same track lists prefer the monitored edition", () => {
+    const plan = planFolderAutoImport({
+        files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
+        findCandidates: () => [candidate(1, "1989", standard), candidate(2, "1989 (Deluxe)", deluxe), candidate(3, "1989 (Deluxe)", deluxe, { preferred: true })],
+    });
+    assert.equal(plan.decision, "import");
+    assert.equal(plan.decision === "import" && plan.editionId, 3);
+});
+
+test("an untagged folder goes to review when nothing is close or two different releases tie", () => {
+    const none = planFolderAutoImport({ files: looseFiles, libraries, findRelease, findCandidates: () => [] });
+    assert.match(none.decision === "review" ? none.reason : "", /No catalog release/);
+    const wrong = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
+        findCandidates: () => [candidate(4, "1989 (Deluxe)", [["Other", 100], ["Songs", 100], ["Here", 100]])] });
+    assert.equal(wrong.decision, "review");
+    const tie = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
+        findCandidates: () => [candidate(5, "1989 (Deluxe)", deluxe), candidate(6, "1989 (Deluxe)", [["Welcome to New York", 212], ["Blank Space", 231], ["Wonderland (Live)", 246]])] });
+    assert.match(tie.decision === "review" ? tie.reason : "", /Too close/);
+});

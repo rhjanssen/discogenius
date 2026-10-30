@@ -4,7 +4,7 @@ import * as mm from "music-metadata";
 import { db, withDbWrite } from "../../database.js";
 import { CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
-import { planFolderAutoImport, type AutoImportFile, type FolderAutoImportPlan } from "./folder-auto-import-plan.js";
+import { planFolderAutoImport, titleDistance, type AutoImportCandidateRelease, type AutoImportFile, type CandidateQuery, type FolderAutoImportPlan } from "./folder-auto-import-plan.js";
 import { UnmappedFileRepository, type UnmappedFile } from "../../repositories/mediafiles/UnmappedFileRepository.js";
 import { IdentificationService, type AlbumCandidateMatch } from "./identification-service.js";
 import { ImportDecisionEngine } from "../import-decision/engine.js";
@@ -659,6 +659,38 @@ export class UnmappedFilesService {
         return plan.mappings.length;
     }
 
+    /** Catalog editions of the artist whose title is close to the album tag (read-only). */
+    findCatalogCandidates(query: CandidateQuery): AutoImportCandidateRelease[] {
+        if (!query.album) return [];
+        const artistMbids = query.artistMbid
+            ? [query.artistMbid]
+            : (db.prepare("SELECT mbid FROM ArtistMetadata WHERE lower(name) = lower(?)").all(query.artistName ?? "") as Array<{ mbid: string }>).map((row) => row.mbid);
+        const out: AutoImportCandidateRelease[] = [];
+        for (const artistMbid of artistMbids) {
+            const editions = db.prepare(`
+                SELECT edition.id, edition.mbid, edition.title, edition.artist_mbid AS artistMbid,
+                       album.title AS releaseGroupTitle,
+                       EXISTS(SELECT 1 FROM LibraryEditions le WHERE le.edition_id = edition.id AND le.library_id = ?) AS preferred
+                FROM AlbumEditions edition
+                JOIN Albums album ON album.id = edition.release_group_id
+                WHERE edition.artist_mbid = ? AND edition.mbid IS NOT NULL
+            `).all(query.libraryId, artistMbid) as Array<{ id: number; mbid: string; title: string; artistMbid: string; releaseGroupTitle: string; preferred: number }>;
+            for (const edition of editions) {
+                if (Math.min(titleDistance(query.album, edition.title), titleDistance(query.album, edition.releaseGroupTitle)) > 0.4) continue;
+                const release = this.getCanonicalImportRelease(edition.mbid);
+                if (!release || release.tracks.length === 0) continue;
+                out.push({
+                    id: release.id, mbid: release.mbid, title: edition.title, releaseGroupTitle: edition.releaseGroupTitle,
+                    artistMbid: edition.artistMbid, preferred: Boolean(edition.preferred),
+                    tracks: release.tracks.map((track) => ({ id: track.id, mbid: track.mbid, recordingMbid: track.recordingMbid,
+                        mediumPosition: track.mediumPosition, position: track.position, title: track.title, durationMs: track.durationMs })),
+                });
+                if (out.length >= 60) return out;
+            }
+        }
+        return out;
+    }
+
     /** Read-only half of autoImportFolderGroup: reads tags and the catalog, decides, writes nothing. */
     async planAutoImportForFolder(anchorFile: UnmappedFile): Promise<{ files: UnmappedFile[]; plan: FolderAutoImportPlan }> {
         const folder = path.dirname(anchorFile.file_path);
@@ -686,6 +718,8 @@ export class UnmappedFilesService {
             files: autoFiles,
             libraries,
             findRelease: (releaseMbid) => this.getCanonicalImportRelease(releaseMbid),
+            findCandidates: (query) => this.findCatalogCandidates(query),
+            folderArtistMbid: /\{mbid-([0-9a-f-]{36})\}/i.exec(folder)?.[1] ?? null,
         });
         return { files, plan };
     }
@@ -717,6 +751,10 @@ async function readIdentityTags(filePath: string): Promise<Record<string, string
         put("TRACK", common.track?.no);
         put("DISC", common.disk?.no);
         put("TITLE", common.title);
+        put("ALBUM", common.album);
+        put("ALBUMARTIST", common.albumartist);
+        put("ARTIST", common.artist);
+        put("MUSICBRAINZ_ALBUMARTISTID", common.musicbrainz_albumartistid?.[0]);
         return tags;
     } catch {
         return {};
