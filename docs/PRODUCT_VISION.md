@@ -214,6 +214,30 @@ Regels voor elke bron:
 
 ---
 
+### 5.8 Lessen uit Lidarr en arr-scripts voor de adapters
+Bestudeerd: Lidarr `NzbDrone.Core/{ThingiProvider, Notifications, ImportLists, Indexers, Download/Clients}` en arr-scripts `lidarr/{Audio.service, ARLChecker, PlexNotify, UnmappedFilesCleaner, AutoArtistAdder}.bash`.
+
+**Voor beide soorten adapters (uit `ThingiProvider`):**
+- Eén registry met **definities per instantie** (naam, type, instellingen als JSON, aan/uit). Zo kun je twee Plex-servers of twee TIDAL-accounts hebben zonder codewijziging.
+- Elke adapter heeft `Test()` met **validatie per veld**, aangeroepen bij opslaan in de UI. Fout = niet opslaan, met de reden bij het veld.
+- **Status per instantie met oplopende pauze** (`ProviderStatusServiceBase`, `EscalationBackOff`: 0, 1 min, 5, 15, 30 min, 1, 3, 6, 12, 24 uur). Na een fout wordt de instantie tijdelijk overgeslagen in plaats van elke taak te laten falen; na een succes gaat de teller terug naar nul. Bij herstart geldt een korte grace-periode. Dit vervangt onze losse retry's.
+- Vermogens als **vlaggen** (`SupportsRss`, `SupportsSearch`, `SupportsOnUpgrade` …): de kern vraagt de vlag, niet het type.
+
+**Mediaservers (uit `Notifications`):**
+- Per gebeurtenis een methode én een vlag (`OnReleaseImport`, `OnUpgrade`, `OnRename`, `OnAlbumDelete`, `OnArtistDelete`, `OnTrackRetag`, `OnHealthIssue`), en de gebruiker kiest per instantie welke aan staan.
+- Plex: inloggen via **PIN op plex.tv** (`PlexTvService.GetPinUrl`), geen token plakken. Sectie zoeken via `Location` met **padvertaling** (container-pad ↔ serverpad) en dan `refresh?path=`; bij oude servers de hele sectie.
+- `ProcessQueue()`: meldingen worden verzameld en in één keer verstuurd; dat is onze bundeling per 30 s.
+- arr-scripts `PlexNotify.bash` controleert eerst de versie (`/`) en zoekt de sectie per map: zelfde aanpak, bevestigt dat `refresh?path=` genoeg is.
+
+**Streamingbronnen (uit `Indexers`, `Download/Clients` en `ImportLists`):**
+- Lidarr splitst **zoeken** (Indexer) en **downloaden** (DownloadClient). Bij ons doet één dienst beide, maar we houden de vermogens gescheiden (`search`/`offers` tegenover `download`), zodat een dienst zonder download (alleen catalogus, bv. Spotify-lijst) ook past.
+- DownloadClient-vorm: `GetItems()`, `GetStatus()`, `RemoveItem(deleteData)`, `MarkItemAsImported()`. Neem over: de kern vraagt de status op in plaats van op callbacks te vertrouwen, en markeert expliciet "geïmporteerd".
+- Indexer: `HttpIndexerBase` met **rate limit per instantie** en paginering via een request-generator. De limiter hoort dus bij de adapter-instantie (zoals §5.5 al zegt).
+- ImportLists (Spotify, Last.fm, MusicBrainz-series): `MinRefreshInterval` per lijst, eigen status/backoff, en **uitsluitingen** (`ImportListExclusions`) zodat verwijderde artiesten niet terugkomen. Neem over voor V13 (playlists) en automatisch artiesten toevoegen.
+- arr-scripts `Audio.service.bash`: zoekt vanuit missing én cutoff-unmet, eerst exact (id/UPC), dan fuzzy op titel; controleert na download de kwaliteit (`DownloadQualityCheck`) en FLAC-integriteit; onthoudt "niet gevonden" per album met een **vervaltermijn** (`NotFoundFolderCleaner`, standaard opnieuw proberen na X dagen). Neem over: "niet beschikbaar" is een status met een datum, geen definitieve fout.
+- arr-scripts `ARLChecker`: controleert de login (token) periodiek en meldt verlopen vóórdat downloads falen. Bij ons: `health()` van `auth` op een schema, en een verlopen login pauzeert alleen die bron.
+- Vermijden: arr-scripts schrijft configuratie direct via de Lidarr-API bij elke start (`AutoConfig`) en mengt bronnen per album (Deezer → TIDAL fallback per album). Wij mengen niet binnen één editie (ADR-16).
+
 ## 6. Ontwerpbeslissingen (ADR)
 Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 
@@ -251,17 +275,20 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 - **Muziekvideo's.** Twee structuren, al in de code als instelling `video_folder_layout`: `separated` (Plex' globale muziekvideomap), `inline` (naast het album), en `inline_only`: download een video alleen als hij inline bij een track past. Die laatste optie bestaat al.
 - **Gevolgen.** Curatie, plan en wachtrij zijn altijd per bibliotheek. Een muziekvideo is via `music_video_for` gekoppeld aan een recording.
 
-### ADR-4: Naamgeving en tags voor Plex én Navidrome
+### ADR-4: Naamgeving en tags volgens de standaard, met een Plex-instelling
+- **Mappen:** `{Album Artist}/{Album} ({Year})[ {Edition}]/{Disc}{Track:00} - {Title}.{ext}`. De map gebruikt altijd één naam: de primaire albumartiest of "Various Artists" (Plex eist dat alle albums in een artiestmap dezelfde ALBUMARTIST hebben). Een veilige pad-normalisatie is configureerbaar.
+- **Wat de standaard is (bronnen):**
+  - **Picard** (de facto standaard, `picard/formats/{vorbis,id3,mp4}.py`, Picard-documentatie "Tag Mapping"): ALBUMARTIST is de **volledige credit als één tekst** met join phrases ("Taylor Swift feat. Bon Iver"); ALBUMARTISTS is een **lijst** met elke artiest apart. Opslag per formaat: Vorbis/FLAC `ALBUMARTIST` + meerdere `ALBUMARTISTS`-velden; ID3v2.4 `TPE2` + `TXXX:ALBUMARTISTS` (sortering `TSO2`); MP4 `aART` + `----:com.apple.iTunes:ALBUMARTISTS` (sortering `soaa`). Hetzelfde voor ARTIST/ARTISTS en de MBID's.
+  - **Navidrome** (`resources/mappings.yaml`, `model/metadata/map_participants.go`; navidrome.org/docs/usage/tagging): leest ALBUMARTISTS als die er is en splitst dan ALBUMARTIST niet meer. Zonder ALBUMARTISTS splitst het ALBUMARTIST op " / ", " feat. ", "; ".
+  - **Plex** (support.plex.tv "Adding Music Media From Folders"; Plex-forum, moderators): leest alleen ALBUMARTIST (ID3 TPE2), gebruikt bij meerdere waarden alleen de eerste, kent ALBUMARTISTS niet, en maakt van "A & B" een **nieuwe artiest** "A & B" (of voegt die bij "A" samen). Compilaties: "Various Artists".
 - **Beslissing.**
-  - **Mappen:** `{Album Artist}/{Album} ({Year})[ {Edition}]/{Disc}{Track:00} - {Title}.{ext}`. Album Artist is één naam: de primaire credit van de release, of "Various Artists". Een veilige pad-normalisatie is configureerbaar.
-  - **Tags** (Picard-compatibel, zie `TAG_IO_STRATEGY.md`):
-    - ALBUMARTIST = de credit als één string, en voor Plex de eerste of primaire naam als het profiel "Plex-strikt" is.
-    - ALBUMARTISTS = lijst.
-    - ARTIST = de credit-string met join phrases.
-    - ARTISTS = lijst van MB-namen.
-    - Alle MBID's, RELEASETYPE (meerdere waarden), ISRC, ORIGINALDATE, LABEL, CATALOGNUMBER, songteksten (LRC indien gesynchroniseerd) en ReplayGain.
-  - **Albumartiest, beslissing:** de app schrijft **altijd beide**: ALBUMARTIST met één waarde en ALBUMARTISTS als lijst met alle gelijkwaardige artiesten. Plex leest alleen de eerste, Navidrome de lijst. De bestaande instelling `album_artist_mode` bepaalt alleen wat in die ene ALBUMARTIST staat: `plex_jellyfin` (standaard: alleen de primaire artiest, zodat Plex niet per samenwerking een nieuwe artiest maakt) of `picard` (de volledige credit, zoals "A & B", officieel juist).
-- **Gevolgen.** Plex groepeert op één albumartiest. Navidrome toont meerdere artiesten. Een wijziging van profiel loopt via L8 met een proefrun.
+  - **ALBUMARTISTS (lijst) wordt altijd geschreven**, ARTISTS ook. Dat is standaard en Plex negeert het, dus het kost niets.
+  - **Instelling "Plex-compatibel: één albumartiest"** (bestaande `album_artist_mode`), **standaard aan**, omdat Plex de hoofdserver is:
+    - **aan** (`plex_jellyfin`): ALBUMARTIST = alleen de primaire artiest. Navidrome toont toch alle artiesten via ALBUMARTISTS; Plex maakt geen samenwerkingsartiesten.
+    - **uit** (`picard`): ALBUMARTIST = de volledige credit zoals Picard. Volledig volgens het boekje; goed voor Navidrome, foobar en Picard, slecht voor Plex.
+  - Beide tegelijk schrijven is daarmee correct: het verschil zit alleen in de ene ALBUMARTIST-waarde, en geen van beide modi breekt de standaard voor ALBUMARTISTS.
+  - Verder: ARTIST = credit-tekst met join phrases, alle MBID's, RELEASETYPE (meerdere waarden), ISRC, ORIGINALDATE, LABEL, CATALOGNUMBER, songteksten (LRC indien gesynchroniseerd) en ReplayGain (zie `TAG_IO_STRATEGY.md`).
+- **Gevolgen.** Plex groepeert op één albumartiest, Navidrome toont meerdere. Omzetten van de instelling herschrijft alleen ALBUMARTIST, via L8 met een proefrun.
 
 ### ADR-5: Beeld van de hoogste kwaliteit
 - **Beslissing.**
@@ -284,7 +311,7 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 - **Waarom.** arr-scripts `UnmappedFilesCleaner` gooit hele mappen weg; dat mag hier niet kunnen.
 
 ### ADR-8: Adapters voor bronnen en mediaservers
-- **Beslissing.** De contracten staan in §5.5 en §5.6. De registry gebruikt instellingen per instantie, zoals Lidarr `ThingiProvider`. Een adapter test zichzelf met `health()`.
+- **Beslissing.** De contracten staan in §5.5 en §5.6. De registry gebruikt instellingen per instantie, `Test()` en status met oplopende pauze, zoals Lidarr `ThingiProvider` (zie §5.8). Een adapter test zichzelf met `health()`.
 - **Gevolgen.** Een nieuwe dienst is een nieuwe map met een adapter. De kern verandert niet.
 
 ### ADR-9: Korte transacties en één schrijver
@@ -311,13 +338,12 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 - **Beslissing.** Zo houden. Uitbreiden met: vingerafdruk ook als controle bij een lengteverschil van meer dan 3 s, en als steekproef na een eigen download (ADR-18). Hoort de vingerafdruk bij een andere recording, dan gaat het bestand naar Beoordelen met die reden.
 
 ### ADR-14: Unmapped opruimen na een termijn
-- **Beslissing.** Een instelling ruimt Unmapped op: bestanden die langer dan de termijn (standaard **90 dagen**, instelbaar, ook "nooit") in Unmapped staan, worden **echt verwijderd**. Waarborgen:
+- **Beslissing (eis).** Een bestand dat **N dagen** in Unmapped staat, wordt verwijderd. N is standaard **90**, instelbaar, en in dezelfde instelling uit te zetten. Er is geen aparte lijst "wordt binnenkort verwijderd" (de Unmapped-lijst toont al alles, met de leeftijd) en geen bevestigingsstop bij grote aantallen.
+- **Waarborgen:**
   - de klok start bij de eerste keer dat het bestand in Unmapped verscheen en loopt opnieuw als het bestand verandert;
-  - 7 dagen vooraf staat het bestand in een lijst "wordt binnenkort verwijderd" (en in de wekelijkse samenvatting);
-  - elke run begint met een proefrun in het logboek en schrijft per bestand pad, grootte, checksum en reden in het journaal;
-  - een bestand in Beoordelen, een bestand dat in een importtaak zit, of een map buiten een bibliotheekroot wordt nooit aangeraakt;
-  - een run stopt bij meer dan 500 bestanden of 5% van de bibliotheek en vraagt dan eerst bevestiging.
-- **Waarom.** arr-scripts `UnmappedFilesCleaner` verwijdert hele mappen zonder termijn of logboek; dat willen we niet, wel het opruimen zelf.
+  - per bestand een journaalregel: pad, grootte, checksum, reden en datum;
+  - een bestand in Beoordelen, een bestand in een lopende import, of een pad buiten een bibliotheekroot wordt nooit aangeraakt.
+- **Waarom.** arr-scripts `UnmappedFilesCleaner.bash` haalt `trackFile?unmapped=true` op en doet `rm -rf` op de hele map, zonder termijn of journaal. Het opruimen nemen we over, per bestand en met termijn.
 
 ### ADR-15: Mediaserver-koppeling volgens Lidarr (latere fase)
 - **Model.** Lidarr's notificatiekoppelingen (`NzbDrone.Core/Notifications`). Elke koppeling implementeert gebeurtenissen (`OnReleaseImport`, `OnUpgrade`, `OnRename`, `OnAlbumDelete`, `OnArtistDelete`, `OnTrackRetag`) en kiest per gebeurtenis of ze reageert. Dat nemen we over.
@@ -342,9 +368,9 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 - **Context.** Met een vergrootglas zie je steeds een klein stukje van het scherm. De opmaak van de app verandert niet; wat telt is hoe ver je moet schuiven om iets te vinden en of er iets gebeurt buiten beeld.
 - **Wat er concreet verandert:**
   - status staat direct naast de naam (in dezelfde regel), niet helemaal rechts in een brede rij;
-  - meldingen verschijnen naast de knop waarop je klikte, niet in een hoek van het scherm, en blijven staan tot je ze sluit;
-  - geen informatie alleen bij hover; een tooltip staat ook als tekst op de pagina;
-  - het toetsenbordfocus is dik en goed zichtbaar, zodat het vergrootglas het kan volgen (Windows Vergrootglas volgt de focus);
+  - meldingen verschijnen naast de knop waarop je klikte, niet in een hoek van het scherm; ze sluiten zodra je ergens anders klikt (light dismiss), je hoeft ze niet zelf weg te klikken;
+  - popovers en tooltips mogen, maar altijd met de Fluent UI-componenten (`Popover`, `Tooltip`, `MessageBar`) en in één consistente stijl, inclusief de glas/acryl-achtergrond van Fluent 2; geen zelfgebouwde varianten;
+  - de standaard Fluent-focusrand is genoeg; een extra dikke focusrand is geen eis;
   - tabellen hebben een compacte weergave waarin alles van een rij binnen ongeveer 400 px breedte past;
   - niets beweegt of herschikt terwijl je leest: lijsten springen niet bij nieuwe gegevens; een "nieuwe items"-knop laat ze zien.
 - **Wat niet hoeft te veranderen.** Grootte en kleuren: die regelt het vergrootglas al. Browserzoom-herschikking blijft netjes werken, maar is niet het hoofddoel.
@@ -352,7 +378,7 @@ Elke beslissing heeft de vorm: context → beslissing → gevolgen.
 
 ### ADR-18: Eigen downloads met bekende identiteit (vertrouwde herkomst)
 - **Context.** Bij een eigen download weet de app al welke MB-release en -recordings bedoeld zijn: dat staat in het plan.
-- **Beslissing.** Dezelfde importengine, maar met een ander vertrouwen in de invoer. Een download geeft zijn verwachte identiteit mee (bibliotheek, editie, plan, track ↔ recording). De engine slaat de identificatiestappen over en doet alleen **verificatie**: aantal tracks, lengte binnen 3 s, ISRC waar de dienst die geeft, en een steekproef met de vingerafdruk. Klopt dat, dan import; klopt het niet, dan Beoordelen met reden "dienst leverde iets anders dan verwacht".
+- **Beslissing.** Dezelfde importengine, maar met een ander vertrouwen in de invoer. Een download geeft zijn verwachte identiteit mee (bibliotheek, editie, plan, track ↔ recording). De download draagt zijn koppeling mee en wordt **niet opnieuw geïdentificeerd**. De engine doet alleen **verificatie**: aantal tracks, lengte binnen 3 s, ISRC waar de dienst die geeft, en een steekproef met de vingerafdruk. Klopt dat, dan import; klopt het niet, dan Beoordelen met reden "dienst leverde iets anders dan verwacht".
 - **Gevolgen.** Snellere import en geen dubbele identificatie, zonder een tweede importpad.
 
 ### ADR-19: Twee soorten samengestelde albums
@@ -396,7 +422,7 @@ Navigatie (zoals bij Lidarr, maar platter):
 
 ### 7.4 Skeleton
 - Per scherm één primaire actie.
-- Lijsten als tabel met grote rijen (Fluent `Table`), meldingen als `MessageBar` en details in een `Drawer`.
+- Lijsten als tabel met grote rijen (Fluent `Table`), meldingen als `MessageBar` naast de actie (sluit bij klikken ernaast), details in een `Drawer`, popovers en tooltips alleen als Fluent `Popover`/`Tooltip` met de glas/acryl-stijl.
 - Er zijn geen acties die alleen bij hover zichtbaar zijn, en alles is met het toetsenbord te bereiken (tabster).
 - ▶ staat links in elke trackrij, in alle plekken. De minispeler staat vast onderaan.
 - Op de artiestpagina staan een grote foto en de albums als hoezen-grid, zoals in Plex. Per album zie je een dekkingsbalk per bibliotheek.
