@@ -109,7 +109,7 @@ export type DuplicateApplyResult = {
   errors: string[];
 };
 
-function moveToUnmapped(id: number, reason: string): boolean {
+export function moveToUnmapped(id: number, reason: string): boolean {
   const row = db.prepare("SELECT * FROM TrackFiles WHERE id = ?").get(id) as Record<string, unknown> | undefined;
   if (!row) return false;
   const filePath = String(row.file_path);
