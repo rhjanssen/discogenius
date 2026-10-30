@@ -232,17 +232,29 @@ function levenshtein(a: string, b: string): number {
     return prev[b.length];
 }
 
-/** 0 = same, 1 = nothing in common. Qualifiers like "(Remastered)" may be dropped on either side. */
+/** Cost of matching only after dropping a qualifier that differs ("(voice memo)" vs "(guitar/vocal)"). */
+export const QUALIFIER_MISMATCH_PENALTY = 0.1;
+
+function ratio(a: string, b: string): number {
+    if (!a || !b) return 1;
+    return levenshtein(a, b) / Math.max(a.length, b.length);
+}
+
+/**
+ * 0 = same, 1 = nothing in common. Qualifiers like "(Remastered)" may be
+ * dropped on either side, but a match that needs that costs a penalty, so an
+ * edition whose qualifiers agree always beats one whose qualifiers differ.
+ */
 export function titleDistance(left: string | null, right: string | null): number {
     if (!left || !right) return 1;
-    let best = 1;
+    const full = ratio(normalizeTitle(left), normalizeTitle(right));
+    let stripped = 1;
     for (const a of [normalizeTitle(left), normalizeTitle(stripQualifiers(left))]) {
         for (const b of [normalizeTitle(right), normalizeTitle(stripQualifiers(right))]) {
-            if (!a || !b) continue;
-            best = Math.min(best, levenshtein(a, b) / Math.max(a.length, b.length));
+            stripped = Math.min(stripped, ratio(a, b));
         }
     }
-    return best;
+    return full === 0 ? 0 : Math.min(full, Math.min(1, stripped + QUALIFIER_MISMATCH_PENALTY));
 }
 
 function durationDistance(fileSeconds: number | null, trackMs: number | null): number {
@@ -329,15 +341,15 @@ function planByDistance(
     const describe = (c: ScoredCandidate) => `${c.release.title} (${c.release.mbid}) distance ${c.distance.toFixed(3)}`;
     if (best.unmatchedFiles > 0) return { decision: "review", reason: `Best candidate ${describe(best)} leaves ${best.unmatchedFiles} file(s) unmatched` };
     if (best.distance > ALBUM_DISTANCE_THRESHOLD) return { decision: "review", reason: `Best candidate ${describe(best)} is above ${ALBUM_DISTANCE_THRESHOLD}` };
-    // Releases with the same track list are the same content: not a real
-    // ambiguity. Prefer the edition already monitored, then the closest.
-    const sameContent = scored.filter((c) => trackListKey(c.release) === trackListKey(best.release) && c.distance - best.distance < DISTANCE_MARGIN && c.unmatchedFiles === 0);
+    // Releases with the same recordings are the same content: not a real
+    // ambiguity, so the closest edition wins outright (its titles and album
+    // name fit the files best). The monitored edition only breaks exact ties,
+    // which the sort above already does.
     const rival = scored.find((c) => trackListKey(c.release) !== trackListKey(best.release));
     if (rival && rival.distance - best.distance < DISTANCE_MARGIN) {
         return { decision: "review", reason: `Too close: ${describe(best)} vs ${describe(rival)}` };
     }
-    const chosen = sameContent.find((c) => c.release.preferred) ?? best;
-    return { decision: "import", libraryId, editionId: chosen.release.id, mappings: chosen.mappings };
+    return { decision: "import", libraryId, editionId: best.release.id, mappings: best.mappings };
 }
 
 function mostCommon(values: Array<string | null>): string | null {

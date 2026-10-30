@@ -83,7 +83,7 @@ const deluxe: Array<[string, number]> = [["Welcome to New York", 212], ["Blank S
 const standard: Array<[string, number]> = [["Welcome to New York", 212], ["Blank Space", 231]];
 const looseFiles = [loose(1, 1, "Welcome To New York", 213), loose(2, 2, "Blank Space", 231), loose(3, 3, "Wonderland", 246)];
 
-test("an untagged folder imports the closest catalog release; same track lists prefer the monitored edition", () => {
+test("an untagged folder imports the closest catalog release; exact ties prefer the monitored edition", () => {
     const plan = planFolderAutoImport({
         files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
         findCandidates: () => [candidate(1, "1989", standard), candidate(2, "1989 (Deluxe)", deluxe), candidate(3, "1989 (Deluxe)", deluxe, { preferred: true })],
@@ -101,4 +101,15 @@ test("an untagged folder goes to review when nothing is close or two different r
     const tie = planFolderAutoImport({ files: looseFiles, libraries, findRelease, folderArtistMbid: ART,
         findCandidates: () => [candidate(5, "1989 (Deluxe)", deluxe), candidate(6, "1989 (Deluxe)", [["Welcome to New York", 212], ["Blank Space", 231], ["Wonderland (Live)", 246]])] });
     assert.match(tie.decision === "review" ? tie.reason : "", /Too close/);
+});
+
+test("same recordings: the edition whose titles fit wins over a monitored edition with other qualifiers (1989 deluxe vs tour edition)", () => {
+    const sameRecordings = (c: AutoImportCandidateRelease) => ({ ...c, tracks: c.tracks.map((t, i) => ({ ...t, recordingMbid: `rec-${i}` })) });
+    const memoFiles = [loose(1, 1, "Welcome to New York", 213), loose(2, 2, "Blank Space", 231), loose(3, 3, "Blank Space (voice memo)", 131)];
+    for (const f of memoFiles) f.tags.ALBUM = "1989 (Deluxe)";
+    const deluxe2014 = sameRecordings(candidate(7, "1989", [["Welcome to New York", 212], ["Blank Space", 231], ["Blank Space (voice memo)", 131]]));
+    const tour2015 = sameRecordings(candidate(8, "1989 (tour edition)", [["Welcome to New York", 212], ["Blank Space", 231], ["Blank Space (guitar/vocal)", 131]], { preferred: true }));
+    const plan = planFolderAutoImport({ files: memoFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [tour2015, deluxe2014] });
+    assert.equal(plan.decision, "import");
+    assert.equal(plan.decision === "import" && plan.editionId, 7);
 });
