@@ -113,3 +113,42 @@ test("same recordings: the edition whose titles fit wins over a monitored editio
     assert.equal(plan.decision, "import");
     assert.equal(plan.decision === "import" && plan.editionId, 7);
 });
+
+// ADR-13 steps 2b/3: online lookup hint and fingerprint tie-break/verification.
+const stereo: Array<[string, number]> = [["Uncle Arthur", 133], ["Sell Me a Coat", 183], ["Rubber Band", 140]];
+const bowieFiles = [1, 2, 3].map((n) => ({ id: n, libraryRoot: "/music/stereo", ignored: false, durationSeconds: stereo[n - 1][1],
+    tags: { ALBUM: "David Bowie", ALBUMARTIST: "David Bowie", TRACK: String(n), TITLE: stereo[n - 1][0] } }) as AutoImportFile);
+const withRecordings = (c: AutoImportCandidateRelease, prefix: string) => ({ ...c, tracks: c.tracks.map((t, i) => ({ ...t, recordingMbid: `${prefix}-${i}` })) });
+const stereoRelease = withRecordings(candidate(10, "David Bowie", stereo), "st");
+const monoRelease = withRecordings(candidate(11, "David Bowie", stereo, { title: "David Bowie" }), "mono");
+const bowie = (fingerprints?: Map<number, string[]>) => planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART,
+    findCandidates: () => [monoRelease, stereoRelease], fingerprints });
+
+test("two releases with different recordings that tie on tags ask for fingerprints", () => {
+    const plan = bowie();
+    assert.equal(plan.decision, "review");
+    assert.equal(plan.decision === "review" && plan.needsEvidence, "fingerprint");
+});
+
+test("fingerprints settle a close call when they clearly favour one release", () => {
+    const plan = bowie(new Map([[1, ["st-0"]], [2, ["st-1"]], [3, ["st-2", "other"]]]));
+    assert.equal(plan.decision === "import" && plan.editionId, 10);
+});
+
+test("fingerprints without a clear margin keep the folder in review", () => {
+    const plan = bowie(new Map([[1, ["st-0", "mono-0"]], [2, ["st-1", "mono-1"]], [3, ["st-2", "mono-2"]]]));
+    assert.match(plan.decision === "review" ? plan.reason : "", /even by fingerprint/);
+});
+
+test("fingerprints that contradict a distance match veto it", () => {
+    const plan = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART,
+        findCandidates: () => [stereoRelease], fingerprints: new Map([[1, ["x"]], [2, ["y"]], [3, ["st-2"]]]) });
+    assert.match(plan.decision === "review" ? plan.reason : "", /Fingerprints disagree/);
+    const ok = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [stereoRelease] });
+    assert.equal(ok.decision === "import" && ok.via, "distance");
+});
+
+test("no close catalog release asks for the online lookup", () => {
+    const plan = planFolderAutoImport({ files: bowieFiles, libraries, findRelease, folderArtistMbid: ART, findCandidates: () => [] });
+    assert.equal(plan.decision === "review" && plan.needsEvidence, "online");
+});

@@ -4,7 +4,7 @@ import * as mm from "music-metadata";
 import { db, withDbWrite } from "../../database.js";
 import { CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
-import { planFolderAutoImport, titleDistance, type AutoImportCandidateRelease, type AutoImportFile, type CandidateQuery, type FolderAutoImportPlan } from "./folder-auto-import-plan.js";
+import { planFolderAutoImport, titleDistance, type AutoImportCandidateRelease, type AutoImportFile, type CandidateQuery, type FingerprintEvidence, type FolderAutoImportPlan } from "./folder-auto-import-plan.js";
 import { UnmappedFileRepository, type UnmappedFile } from "../../repositories/mediafiles/UnmappedFileRepository.js";
 import { IdentificationService, type AlbumCandidateMatch } from "./identification-service.js";
 import { ImportDecisionEngine } from "../import-decision/engine.js";
@@ -75,6 +75,10 @@ async function readEmbeddedMusicBrainzRecordingMbid(filePath: string): Promise<s
     }
     return null;
 }
+
+/** Release groups the online lookup may add per folder, and how close their title must be. */
+const ONLINE_LOOKUP_MAX_GROUPS = 5;
+const ONLINE_LOOKUP_TITLE_DISTANCE = 0.25;
 
 export class UnmappedFilesService {
     constructor(
@@ -691,7 +695,55 @@ export class UnmappedFilesService {
         return out;
     }
 
-    /** Read-only half of autoImportFolderGroup: reads tags and the catalog, decides, writes nothing. */
+    /**
+     * ADR-13 step 2b: ask the active catalog source (local MusicBrainz mirror or
+     * the public service) for the artist's release groups and add those whose
+     * title is close to the album tag but are not in the catalog yet. Returns
+     * the number added. Catalog metadata only; no library files change.
+     */
+    async addMissingReleaseGroupsFromCatalogSource(artistMbid: string, album: string): Promise<number> {
+        try {
+            const { catalogProviderRegistry } = await import("../catalog/index.js");
+            const groups = await catalogProviderRegistry.getActive().getArtistReleaseGroups(artistMbid);
+            const known = new Set((db.prepare("SELECT lower(mbid) AS mbid FROM Albums WHERE mbid IS NOT NULL").all() as Array<{ mbid: string }>).map((row) => row.mbid));
+            const missing = groups
+                .filter((group) => group.mbid && !known.has(group.mbid.toLowerCase()) && titleDistance(album, group.title) <= ONLINE_LOOKUP_TITLE_DISTANCE)
+                .sort((a, b) => titleDistance(album, a.title) - titleDistance(album, b.title))
+                .slice(0, ONLINE_LOOKUP_MAX_GROUPS);
+            if (missing.length === 0) return 0;
+            const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+            let added = 0;
+            for (const group of missing) {
+                try {
+                    await servarrMetadata.syncReleaseGroup(group.mbid, artistMbid);
+                    added++;
+                } catch (error) {
+                    console.warn(`[AutoImport] Could not add release group ${group.mbid} to the catalog:`, error);
+                }
+            }
+            return added;
+        } catch (error) {
+            console.warn("[AutoImport] Online MusicBrainz lookup failed:", error);
+            return 0;
+        }
+    }
+
+    /** ADR-13 step 3: AcoustID recording MBIDs per file (fingerprint.ts via the identification service). */
+    async fingerprintFiles(files: UnmappedFile[]): Promise<FingerprintEvidence> {
+        const evidence: FingerprintEvidence = new Map();
+        for (const file of files) {
+            if (file.library_root === "videos" || !fs.existsSync(file.file_path)) continue;
+            try {
+                const result = await this.identifyByAcoustId(file.file_path, {});
+                if (result.recordingIds.length > 0) evidence.set(file.id, result.recordingIds);
+            } catch (error) {
+                console.warn(`[AutoImport] Fingerprint failed for ${file.file_path}:`, error);
+            }
+        }
+        return evidence;
+    }
+
+    /** Planning half of autoImportFolderGroup: never touches library files; may add catalog metadata (online lookup). */
     async planAutoImportForFolder(anchorFile: UnmappedFile): Promise<{ files: UnmappedFile[]; plan: FolderAutoImportPlan }> {
         const folder = path.dirname(anchorFile.file_path);
         const siblings = (db.prepare(`
@@ -714,13 +766,31 @@ export class UnmappedFilesService {
             });
         }
 
-        const plan = planFolderAutoImport({
+        // ADR-13 identification order: own catalog by tags (step 1-2), then an
+        // online MusicBrainz lookup that adds a missing release group to the
+        // catalog, then AcoustID fingerprints for tie-breaks and verification.
+        let lastQuery: CandidateQuery | null = null;
+        const folderArtistMbid = /\{mbid-([0-9a-f-]{36})\}/i.exec(folder)?.[1] ?? null;
+        const decide = (fingerprints?: FingerprintEvidence) => planFolderAutoImport({
             files: autoFiles,
             libraries,
             findRelease: (releaseMbid) => this.getCanonicalImportRelease(releaseMbid),
-            findCandidates: (query) => this.findCatalogCandidates(query),
-            folderArtistMbid: /\{mbid-([0-9a-f-]{36})\}/i.exec(folder)?.[1] ?? null,
+            findCandidates: (query) => { lastQuery = query; return this.findCatalogCandidates(query); },
+            folderArtistMbid,
+            fingerprints,
         });
+        let plan = decide();
+        const query = lastQuery as CandidateQuery | null;
+        if (plan.decision === "review" && plan.needsEvidence === "online" && query?.artistMbid && query.album) {
+            const added = await this.addMissingReleaseGroupsFromCatalogSource(query.artistMbid, query.album);
+            if (added > 0) plan = decide();
+        }
+        const needsFingerprint = (plan.decision === "review" && plan.needsEvidence === "fingerprint")
+            || (plan.decision === "import" && plan.via === "distance");
+        if (needsFingerprint) {
+            const fingerprints = await this.fingerprintFiles(files);
+            if (fingerprints.size > 0) plan = decide(fingerprints);
+        }
         return { files, plan };
     }
 }

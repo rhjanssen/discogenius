@@ -71,8 +71,27 @@ export type FolderAutoImportPlan =
         libraryId: number;
         editionId: number;
         mappings: Array<{ unmappedFileId: number; trackId: number }>;
+        /** "distance": chosen by ADR-2 step 2; callers verify it by fingerprint. */
+        via?: "tags" | "distance";
     }
-    | { decision: "review"; reason: string };
+    | {
+        decision: "review";
+        reason: string;
+        /**
+         * Evidence that could still settle this folder (ADR-13 order):
+         * "online" = no close catalog release, look the release up on MusicBrainz
+         * and add it; "fingerprint" = two different releases are too close.
+         */
+        needsEvidence?: "online" | "fingerprint";
+    };
+
+/** AcoustID recording MBIDs per unmapped file id; a missing or empty entry means no evidence. */
+export type FingerprintEvidence = Map<number, string[]>;
+
+/** Share of fingerprinted files that must agree with the chosen release. */
+export const FINGERPRINT_MIN_AGREEMENT = 0.8;
+/** A fingerprint tie-break needs the winner to agree on this much more of the files. */
+export const FINGERPRINT_MARGIN = 0.5;
 
 export const DURATION_TOLERANCE_SECONDS = 10;
 
@@ -121,6 +140,8 @@ export function planFolderAutoImport(input: {
     findCandidates?: (query: CandidateQuery) => AutoImportCandidateRelease[];
     /** Artist MBID from the folder name ("{mbid-…}") when tags lack one. */
     folderArtistMbid?: string | null;
+    /** ADR-13 step 3: AcoustID evidence for tie-breaks and verification. */
+    fingerprints?: FingerprintEvidence;
 }): FolderAutoImportPlan {
     const { files } = input;
     if (files.length === 0) return { decision: "review", reason: "No files in this folder" };
@@ -136,7 +157,7 @@ export function planFolderAutoImport(input: {
 
     const releaseMbids = new Set(files.map(releaseMbidOf));
     if (releaseMbids.size === 1 && releaseMbids.has(null) && input.findCandidates) {
-        return planByDistance(files, library.id, input.findCandidates, input.folderArtistMbid ?? null);
+        return planByDistance(files, library.id, input.findCandidates, input.folderArtistMbid ?? null, input.fingerprints);
     }
     if (releaseMbids.has(null)) {
         return { decision: "review", reason: releaseMbids.size === 1
@@ -269,7 +290,7 @@ export function trackDistance(file: AutoImportFile, track: AutoImportReleaseTrac
     return 0.6 * titleDistance(readTag(file.tags, "title"), track.title) + 0.4 * durationDistance(file.durationSeconds, track.durationMs);
 }
 
-interface ScoredCandidate {
+export interface ScoredCandidate {
     release: AutoImportCandidateRelease;
     distance: number;
     worstTrack: number;
@@ -319,11 +340,32 @@ function trackListKey(release: AutoImportRelease): string {
     return release.tracks.map((track) => track.recordingMbid ?? normalizeTitle(track.title)).join("|");
 }
 
+/**
+ * Share of fingerprinted files whose AcoustID recordings include the recording
+ * of the track they map to; null when no file has fingerprint evidence.
+ */
+export function fingerprintAgreement(candidate: ScoredCandidate, fingerprints: FingerprintEvidence | undefined): { agreement: number; coverage: number } | null {
+    if (!fingerprints) return null;
+    const recordingByTrack = new Map(candidate.release.tracks.map((track) => [track.id, track.recordingMbid?.toLowerCase() ?? null]));
+    let known = 0;
+    let agree = 0;
+    for (const mapping of candidate.mappings) {
+        const recordings = fingerprints.get(mapping.unmappedFileId);
+        if (!recordings || recordings.length === 0) continue;
+        known++;
+        const recording = recordingByTrack.get(mapping.trackId);
+        if (recording && recordings.some((id) => id.toLowerCase() === recording)) agree++;
+    }
+    if (known === 0) return null;
+    return { agreement: agree / known, coverage: known / Math.max(1, candidate.mappings.length) };
+}
+
 function planByDistance(
     files: AutoImportFile[],
     libraryId: number,
     findCandidates: (query: CandidateQuery) => AutoImportCandidateRelease[],
     folderArtistMbid: string | null,
+    fingerprints?: FingerprintEvidence,
 ): FolderAutoImportPlan {
     const album = mostCommon(files.map((file) => readTag(file.tags, "album")));
     const artistName = mostCommon(files.map((file) => readTag(file.tags, "albumartist", "album artist", "artist")));
@@ -332,24 +374,49 @@ function planByDistance(
     if (!album) return { decision: "review", reason: "Files have no MusicBrainz release id and no album tag" };
     const candidates = findCandidates({ libraryId, artistMbid, artistName, album });
     if (candidates.length === 0) {
-        return { decision: "review", reason: `No catalog release matches album "${album}"${artistName ? ` by ${artistName}` : ""}; refresh the artist first` };
+        return { decision: "review", needsEvidence: "online", reason: `No catalog release matches album "${album}"${artistName ? ` by ${artistName}` : ""}` };
     }
     const scored = candidates
         .map((release) => scoreCandidate(files, release, album, artistMbid))
         .sort((a, b) => a.distance - b.distance || Number(b.release.preferred) - Number(a.release.preferred) || a.release.id - b.release.id);
-    const best = scored[0];
     const describe = (c: ScoredCandidate) => `${c.release.title} (${c.release.mbid}) distance ${c.distance.toFixed(3)}`;
-    if (best.unmatchedFiles > 0) return { decision: "review", reason: `Best candidate ${describe(best)} leaves ${best.unmatchedFiles} file(s) unmatched` };
-    if (best.distance > ALBUM_DISTANCE_THRESHOLD) return { decision: "review", reason: `Best candidate ${describe(best)} is above ${ALBUM_DISTANCE_THRESHOLD}` };
+    const describeFp = (c: ScoredCandidate) => {
+        const fp = fingerprintAgreement(c, fingerprints);
+        return fp ? `${describe(c)}, fingerprint ${(fp.agreement * 100).toFixed(0)}%` : describe(c);
+    };
+    let best = scored[0];
+    if (best.unmatchedFiles > 0) return { decision: "review", needsEvidence: "online", reason: `Best candidate ${describe(best)} leaves ${best.unmatchedFiles} file(s) unmatched` };
+    if (best.distance > ALBUM_DISTANCE_THRESHOLD) return { decision: "review", needsEvidence: "online", reason: `Best candidate ${describe(best)} is above ${ALBUM_DISTANCE_THRESHOLD}` };
     // Releases with the same recordings are the same content: not a real
     // ambiguity, so the closest edition wins outright (its titles and album
     // name fit the files best). The monitored edition only breaks exact ties,
     // which the sort above already does.
     const rival = scored.find((c) => trackListKey(c.release) !== trackListKey(best.release));
     if (rival && rival.distance - best.distance < DISTANCE_MARGIN) {
-        return { decision: "review", reason: `Too close: ${describe(best)} vs ${describe(rival)}` };
+        // ADR-13 step 3: different recordings (e.g. mono vs stereo mix) that
+        // tags cannot tell apart; the fingerprint decides, with its own margin.
+        const close = scored.filter((c) => c.unmatchedFiles === 0 && c.distance <= ALBUM_DISTANCE_THRESHOLD && c.distance - best.distance < DISTANCE_MARGIN);
+        const ranked = close
+            .map((c) => ({ c, fp: fingerprintAgreement(c, fingerprints) }))
+            .filter((x): x is { c: ScoredCandidate; fp: { agreement: number; coverage: number } } => x.fp !== null)
+            .sort((x, y) => y.fp.agreement - x.fp.agreement || x.c.distance - y.c.distance);
+        const top = ranked[0];
+        const runnerUp = ranked.find((x) => trackListKey(x.c.release) !== trackListKey(top?.c.release ?? best.release));
+        if (!top || ranked.length < close.length) {
+            return { decision: "review", needsEvidence: "fingerprint", reason: `Too close: ${describe(best)} vs ${describe(rival)}` };
+        }
+        if (top.fp.coverage < 0.5 || top.fp.agreement < FINGERPRINT_MIN_AGREEMENT
+            || (runnerUp && top.fp.agreement - runnerUp.fp.agreement < FINGERPRINT_MARGIN)) {
+            return { decision: "review", reason: `Too close even by fingerprint: ${describeFp(top.c)} vs ${describeFp(runnerUp?.c ?? rival)}` };
+        }
+        best = top.c;
     }
-    return { decision: "import", libraryId, editionId: best.release.id, mappings: best.mappings };
+    // Verification: fingerprints that clearly contradict the choice veto it.
+    const fp = fingerprintAgreement(best, fingerprints);
+    if (fp && fp.coverage >= 0.5 && fp.agreement < 0.5) {
+        return { decision: "review", reason: `Fingerprints disagree with ${describeFp(best)}` };
+    }
+    return { decision: "import", libraryId, editionId: best.release.id, mappings: best.mappings, via: "distance" };
 }
 
 function mostCommon(values: Array<string | null>): string | null {
