@@ -25,6 +25,11 @@ export function shouldTagManuallyImportedFiles(config: MetadataConfig): boolean 
         || config.write_audio_tags_policy === "sync";
 }
 
+/** Auto-import adopts foreign files into the library standard, so it tags even when the policy is new-files-only. */
+export function shouldApplyCanonicalImportTags(config: MetadataConfig, forceStandardTags = false): boolean {
+    return forceStandardTags || shouldTagManuallyImportedFiles(config);
+}
+
 export interface ManualImportSummary {
     requested: number;
     imported: number;
@@ -60,7 +65,11 @@ export function resolveManualImportArtistIdentity(artistKey: string): ManualImpo
 export class ManualImportService {
     async bulkImportUnmapped(
         items: { id: number, providerId: string }[],
-        options?: { libraryRootPath?: string; onImportedFiles?: (files: Record<string, number>) => void | Promise<void> },
+        options?: {
+            libraryRootPath?: string;
+            forceCanonicalTags?: boolean;
+            onImportedFiles?: (files: Record<string, number>) => void | Promise<void>;
+        },
     ): Promise<ManualImportSummary> {
         const { db } = await import("../../database.js");
         const { streamingProviderManager } = await import("../providers/index.js");
@@ -917,7 +926,7 @@ export class ManualImportService {
         if (audioInsertedIds.length > 0) {
             const { getConfigSection } = await import("../config/config.js");
             const metadataConfig = getConfigSection("metadata");
-            if (shouldTagManuallyImportedFiles(metadataConfig)) {
+            if (shouldApplyCanonicalImportTags(metadataConfig, options?.forceCanonicalTags === true)) {
                 try {
                     const { AudioTagService } = await import("./audio-tag-service.js");
                     const result = await AudioTagService.apply(audioInsertedIds);

@@ -128,12 +128,10 @@ test("canonical manual import pins Library, Release, Track and Recording", async
        AND release.edition_id = 10
       WHERE release_group.library_id = 1 AND release_group.release_group_id = 1
     `).get(), {
-      group_mode: "manual",
-      // Importing establishes a custom selection and monitors the group, but it
-      // is NOT a lock: "automatic curation may not change this" is separate
-      // user intent. See the dedicated lock-preservation test below.
+      group_mode: "auto",
+      // Importing monitors the album. It is not an edition choice and not a lock.
       group_locked: 0,
-      release_mode: "manual",
+      release_mode: "auto",
     });
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
@@ -370,7 +368,7 @@ test("only the newly imported row is updated when the same track exists in anoth
   }
 });
 
-test("manual import monitors and custom-selects without silently locking", async () => {
+test("manual import monitors without making an edition choice or locking", async () => {
   fixture();
   try {
 
@@ -402,18 +400,20 @@ test("manual import monitors and custom-selects without silently locking", async
       mappings: [{ unmappedFileId: 1, trackId: 1000 }],
     });
 
-    // Monitored and custom-selected, but NOT locked: lock is separate user intent.
+    // Monitored, automatic, and not locked.
     const group = db.prepare(`
       SELECT selection_mode, locked FROM LibraryAlbums
       WHERE library_id = 1 AND release_group_id = 1
     `).get() as Record<string, unknown> | undefined;
     // The row's existence is the monitoring statement.
     assert.ok(group, "importing monitors the album in this library");
-    assert.equal(group.selection_mode, "manual");
-    assert.equal(group.locked, 0, "manual import must not silently lock the group");
+    assert.equal(group.selection_mode, "auto", "an import is not an edition choice");
+    assert.equal(group.locked, 0, "manual import must not lock the group");
 
-    // An existing lock is preserved across a later import.
-    db.prepare("UPDATE LibraryAlbums SET locked = 1 WHERE library_id = 1").run();
+    // An existing manual choice and lock are preserved across a later import.
+    db.prepare(`
+      UPDATE LibraryAlbums SET selection_mode = 'manual', locked = 1 WHERE library_id = 1
+    `).run();
     db.prepare("DELETE FROM TrackFiles WHERE id = 1").run();
     db.prepare(`
       INSERT INTO UnmappedFiles (id, file_path, relative_path, library_root, filename, extension)
@@ -426,9 +426,11 @@ test("manual import monitors and custom-selects without silently locking", async
       mappings: [{ unmappedFileId: 2, trackId: 1000 }],
     });
 
-    assert.equal((db.prepare(`
-      SELECT locked FROM LibraryAlbums WHERE library_id = 1 AND release_group_id = 1
-    `).get() as { locked: number }).locked, 1, "an existing lock survives a later import");
+    const kept = db.prepare(`
+      SELECT selection_mode, locked FROM LibraryAlbums WHERE library_id = 1 AND release_group_id = 1
+    `).get() as { selection_mode: string; locked: number };
+    assert.equal(kept.locked, 1, "an existing lock survives a later import");
+    assert.equal(kept.selection_mode, "manual", "an existing edition choice survives a later import");
   } finally {
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
@@ -603,4 +605,45 @@ test("canonical operation identities are bound before tag finalization and survi
   assert.ok(db.prepare('SELECT id FROM UnmappedFiles WHERE id=1').get());
   assert.equal((await service.import(request)).imported, 1);
   assert.equal((db.prepare('SELECT COUNT(*) count FROM TrackFiles WHERE id=123').get() as { count: number }).count, 1);
+});
+
+test("import keeps an existing copy of the same recording", async () => {
+  fixture();
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const oldPath = path.join(tempDir, "existing-copy.flac");
+  fs.writeFileSync(oldPath, "existing-copy");
+  try {
+    db.prepare(`
+      INSERT INTO TrackFiles (
+        id, artist_metadata_id, library_root, file_type, library_id, release_group_id,
+        album_edition_id, track_id, recording_id, file_path, relative_path, filename, extension, file_class
+      ) VALUES (
+        5, 1, '/library/stereo', 'track', 1, 1, 20, 2000, 100,
+        ?, 'existing-copy.flac', 'existing-copy.flac', 'flac', 'audio'
+      )
+    `).run(oldPath);
+    const service = new CanonicalManualImportService(db, async () => {
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          id, artist_metadata_id, library_root, file_type, library_id, album_edition_id,
+          track_id, recording_id, file_path, relative_path, filename, extension, file_class
+        ) VALUES (
+          6, 1, '/library/stereo', 'track', 1, 10, 1000, 100,
+          '/library/stereo/Artist/Release A/01 Track A.flac',
+          'Artist/Release A/01 Track A.flac', '01 Track A.flac', 'flac', 'audio'
+        )
+      `).run();
+      return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 6 } };
+    });
+    await service.import({
+      libraryId: 1,
+      editionId: 10,
+      mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+    });
+    assert.equal(fs.readFileSync(oldPath, "utf8"), "existing-copy");
+    assert.equal((db.prepare("SELECT COUNT(*) AS n FROM TrackFiles WHERE id = 5").get() as { n: number }).n, 1);
+  } finally {
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
 });

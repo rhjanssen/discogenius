@@ -1,8 +1,22 @@
 import fs from "fs";
 import path from "path";
 import * as mm from "music-metadata";
-import { db } from "../../database.js";
+import { db, withDbWrite } from "../../database.js";
+import { getConfigSection } from "../config/config.js";
+import { CommandNames } from "../commands/command-names.js";
+import { CommandQueueManager } from "../commands/command-queue-manager.js";
+import { isReleaseStatusIncluded } from "../metadata/musicbrainz-release-group-filter.js";
 import { UnmappedFileRepository, type UnmappedFile } from "../../repositories/mediafiles/UnmappedFileRepository.js";
+import {
+    isAutoImportStatusAllowed,
+    planFolderAutoImport,
+    titleDistance,
+    type AutoImportCandidateRelease,
+    type AutoImportFile,
+    type CandidateQuery,
+    type FingerprintEvidence,
+    type FolderAutoImportPlan,
+} from "./folder-auto-import-plan.js";
 import { IdentificationService, type AlbumCandidateMatch } from "./identification-service.js";
 import { ImportDecisionEngine } from "../import-decision/engine.js";
 import type { ImportDecisionMode } from "../import-decision/types.js";
@@ -73,12 +87,54 @@ async function readEmbeddedMusicBrainzRecordingMbid(filePath: string): Promise<s
     return null;
 }
 
+/** Release groups an online lookup may add per folder, and how close the title must be. */
+const ONLINE_LOOKUP_MAX_GROUPS = 5;
+const ONLINE_LOOKUP_TITLE_DISTANCE = 0.25;
+
+export type AutoImportAction =
+    | { type: "review"; reason: string }
+    | { type: "add-missing-release"; album: string }
+    | {
+        type: "monitor";
+        libraryId: number;
+        editionId: number;
+        selectionMode: "auto";
+        locked: false;
+    }
+    | {
+        type: "import";
+        unmappedFileId: number;
+        trackId: number;
+        effects: ["rename", "retag", "cover", "register"];
+    };
+
+export interface AutoImportFolderReport {
+    folder: string;
+    fileIds: number[];
+    decision: "import" | "review";
+    reason?: string;
+    needsEvidence?: "online" | "fingerprint";
+    editionId?: number;
+    libraryId?: number;
+    mappings?: Array<{ unmappedFileId: number; trackId: number }>;
+    queued?: number;
+    /** True when this call did not move, rename, tag, or delete any library file. */
+    filesUntouched: boolean;
+    /**
+     * An existing copy of the same recording is deleted only when a later
+     * upgrade replaces it with a better copy. Auto-import never deletes it.
+     */
+    replacementPolicy: "delete-only-when-replaced-by-better-copy";
+    actions: AutoImportAction[];
+}
+
 export class UnmappedFilesService {
     constructor(
         private readonly repository: UnmappedFileRepository = unmappedFileRepository,
         private readonly importService: ImportService = new ImportService(),
         private readonly identifyByAcoustId = identifyAudioFileByAcoustId,
         private readonly readEmbeddedRecordingMbid = readEmbeddedMusicBrainzRecordingMbid,
+        private readonly readTags: (filePath: string) => Promise<Record<string, string>> = readIdentityTags,
     ) { }
 
     listFiles(limit?: number, offset?: number): { items: UnmappedFile[]; total: number } {
@@ -619,10 +675,424 @@ export class UnmappedFilesService {
         return evaluatedMatch;
     }
 
-    async autoImportFolderGroup(anchorFile: UnmappedFile): Promise<number> {
-        void anchorFile;
-        // Candidate discovery can assist review, but acquisition authority
-        // requires an explicit Library + Edition/Recording selection.
-        return 0;
+    /**
+     * Group the given unmapped files by folder and decide each folder.
+     * `dryRun` reports the planned rename, retag, cover, and monitor actions
+     * and does not queue work, write catalog rows, or touch files.
+     */
+    async autoImportByIds(ids: number[], options: { dryRun: boolean }): Promise<{
+        dryRun: boolean;
+        folders: AutoImportFolderReport[];
+    }> {
+        const seenFolders = new Set<string>();
+        const folders: AutoImportFolderReport[] = [];
+        for (const id of ids) {
+            const file = this.getFile(id);
+            if (!file) continue;
+            const folder = path.dirname(file.file_path);
+            if (seenFolders.has(folder)) continue;
+            seenFolders.add(folder);
+            const planned = await this.planAutoImportForFolder(file, { writeCatalog: !options.dryRun });
+            const queued = options.dryRun ? undefined : await this.autoImportFolderGroup(file, planned);
+            folders.push(this.describeAutoImport(folder, planned, { dryRun: options.dryRun, queued }));
+        }
+        return { dryRun: options.dryRun, folders };
+    }
+
+    /**
+     * Import one folder without a person when its tags prove one catalog
+     * release and the files map onto that release's tracks. Otherwise the
+     * folder stays in Unmapped with the review reason. Returns how many files
+     * were queued. Does not delete an existing library copy.
+     */
+    async autoImportFolderGroup(
+        anchorFile: UnmappedFile,
+        planned?: { files: UnmappedFile[]; plan: FolderAutoImportPlan },
+    ): Promise<number> {
+        const result = planned ?? await this.planAutoImportForFolder(anchorFile);
+        if (result.plan.decision !== "import") {
+            const reason = `Auto-import: ${result.plan.reason}`;
+            await withDbWrite(() => {
+                const update = db.prepare(`
+                    UPDATE UnmappedFiles
+                    SET reason = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                `);
+                for (const file of result.files) update.run(reason, file.id);
+            });
+            return 0;
+        }
+
+        const plan = result.plan;
+        const sortedIds = plan.mappings.map((mapping) => mapping.unmappedFileId).sort((left, right) => left - right);
+        await withDbWrite(() =>
+            CommandQueueManager.push(
+                CommandNames.ImportUnmappedFiles,
+                {
+                    applyStandardTags: true,
+                    canonical: {
+                        libraryId: plan.libraryId,
+                        editionId: plan.editionId,
+                        mappings: plan.mappings,
+                    },
+                    title: "Auto-importing files",
+                    description: `Auto-importing ${plan.mappings.length} file${plan.mappings.length === 1 ? "" : "s"}`,
+                },
+                `canonical-unmapped-import:${plan.libraryId}:${plan.editionId}:${sortedIds.join(",")}`,
+            ),
+        );
+        return plan.mappings.length;
+    }
+
+    /** Catalog editions whose title is close to the album tag. Official unless the status filter says otherwise. */
+    findCatalogCandidates(query: CandidateQuery): AutoImportCandidateRelease[] {
+        if (!query.album) return [];
+        const artistMbids = query.artistMbid
+            ? [query.artistMbid]
+            : (db.prepare(`
+                SELECT mbid FROM ArtistMetadata WHERE lower(name) = lower(?)
+            `).all(query.artistName ?? "") as Array<{ mbid: string }>).map((row) => row.mbid);
+        const out: AutoImportCandidateRelease[] = [];
+        const filtering = getConfigSection("filtering");
+        for (const artistMbid of artistMbids) {
+            const editions = db.prepare(`
+                SELECT edition.id, edition.mbid, edition.title, edition.artist_mbid AS artistMbid,
+                       album.title AS releaseGroupTitle,
+                       (SELECT name FROM ArtistMetadata WHERE mbid = edition.artist_mbid) AS artistName,
+                       album.first_release_date AS albumDate, edition.date AS releaseDate,
+                       edition.media_count AS mediaCount, edition.media AS media, edition.country AS country,
+                       edition.label AS label, edition.disambiguation AS disambiguation,
+                       edition.old_foreign_ids AS oldIds, edition.status AS status,
+                       EXISTS(
+                         SELECT 1 FROM LibraryEditions monitored
+                         WHERE monitored.edition_id = edition.id AND monitored.library_id = ?
+                       ) AS preferred,
+                       EXISTS(
+                         SELECT 1 FROM AcquisitionPlans plan
+                         WHERE plan.edition_id = edition.id AND plan.library_id = ?
+                           AND plan.state = 'current' AND plan.target_track_count > 0
+                           AND plan.coverage * 2 > plan.target_track_count
+                       ) AS providerOffers
+                FROM AlbumEditions edition
+                JOIN Albums album ON album.id = edition.release_group_id
+                WHERE edition.artist_mbid = ? AND edition.mbid IS NOT NULL
+                ORDER BY edition.id
+            `).all(query.libraryId, query.libraryId, artistMbid) as Array<{
+                id: number;
+                mbid: string;
+                title: string;
+                artistMbid: string;
+                releaseGroupTitle: string;
+                artistName: string | null;
+                albumDate: string | null;
+                releaseDate: string | null;
+                mediaCount: number | null;
+                media: string | null;
+                country: string | null;
+                label: string | null;
+                disambiguation: string | null;
+                oldIds: string | null;
+                status: string | null;
+                preferred: number;
+                providerOffers: number;
+            }>;
+            for (const edition of editions) {
+                if (!isAutoImportStatusAllowed(
+                    edition.status,
+                    isReleaseStatusIncluded(edition.status, filtering),
+                    Boolean(edition.providerOffers),
+                )) continue;
+                if (Math.min(
+                    titleDistance(query.album, edition.title),
+                    titleDistance(query.album, edition.releaseGroupTitle),
+                ) > 0.4) continue;
+                const release = this.getCanonicalImportRelease(edition.mbid);
+                if (!release || release.tracks.length === 0) continue;
+                out.push({
+                    id: release.id,
+                    mbid: release.mbid,
+                    title: edition.title,
+                    releaseGroupTitle: edition.releaseGroupTitle,
+                    artistMbid: edition.artistMbid,
+                    artistName: edition.artistName ?? "",
+                    preferred: Boolean(edition.preferred),
+                    oldMbids: jsonStrings(edition.oldIds).map((id) => id.toLowerCase()),
+                    albumYear: yearOf(edition.albumDate),
+                    releaseYear: yearOf(edition.releaseDate),
+                    mediaCount: edition.mediaCount ?? undefined,
+                    mediaFormats: mediaFormats(edition.media),
+                    countries: jsonStrings(edition.country).map((country) => country.toUpperCase()),
+                    labels: jsonStrings(edition.label, ["name", "Name", "label"]),
+                    disambiguation: edition.disambiguation,
+                    tracks: release.tracks.map((track) => ({
+                        id: track.id,
+                        mbid: track.mbid,
+                        recordingMbid: track.recordingMbid,
+                        mediumPosition: track.mediumPosition,
+                        position: track.position,
+                        title: track.title,
+                        durationMs: track.durationMs,
+                    })),
+                });
+                if (out.length >= 60) return out;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Ask the active catalog for the artist's release groups and add those
+     * whose title is close to the album tag but are not stored yet.
+     * Catalog metadata only; library files are not moved.
+     */
+    async addMissingReleaseGroupsFromCatalogSource(artistMbid: string, album: string): Promise<number> {
+        try {
+            const { catalogProviderRegistry } = await import("../catalog/index.js");
+            const groups = await catalogProviderRegistry.getActive().getArtistReleaseGroups(artistMbid);
+            const known = new Set((db.prepare(`
+                SELECT lower(mbid) AS mbid FROM Albums WHERE mbid IS NOT NULL
+            `).all() as Array<{ mbid: string }>).map((row) => row.mbid));
+            const missing = groups
+                .filter((group) => group.mbid && !known.has(group.mbid.toLowerCase())
+                    && titleDistance(album, group.title) <= ONLINE_LOOKUP_TITLE_DISTANCE)
+                .sort((left, right) => titleDistance(album, left.title) - titleDistance(album, right.title))
+                .slice(0, ONLINE_LOOKUP_MAX_GROUPS);
+            if (missing.length === 0) return 0;
+            const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+            let added = 0;
+            for (const group of missing) {
+                try {
+                    await servarrMetadata.syncReleaseGroup(group.mbid, artistMbid);
+                    added += 1;
+                } catch (error) {
+                    console.warn(`[AutoImport] Could not add release group ${group.mbid}:`, error);
+                }
+            }
+            return added;
+        } catch (error) {
+            console.warn("[AutoImport] Catalog lookup failed:", error);
+            return 0;
+        }
+    }
+
+    /** AcoustID recording ids per file. A missing entry means the lookup found nothing. */
+    async fingerprintFiles(files: UnmappedFile[]): Promise<FingerprintEvidence> {
+        const evidence: FingerprintEvidence = new Map();
+        for (const file of files) {
+            if (file.library_root === "videos" || !fs.existsSync(file.file_path)) continue;
+            try {
+                const result = await this.identifyByAcoustId(file.file_path, {});
+                if (result.recordingIds.length > 0) evidence.set(file.id, result.recordingIds);
+            } catch (error) {
+                console.warn(`[AutoImport] Fingerprint failed for ${file.file_path}:`, error);
+            }
+        }
+        return evidence;
+    }
+
+    /**
+     * Planning half of a folder import. With `writeCatalog` false (dry-run)
+     * a missing release is reported and not inserted.
+     */
+    async planAutoImportForFolder(
+        anchorFile: UnmappedFile,
+        options: { writeCatalog?: boolean } = {},
+    ): Promise<{ files: UnmappedFile[]; plan: FolderAutoImportPlan }> {
+        const folder = path.dirname(anchorFile.file_path);
+        const siblings = (db.prepare(`
+            SELECT id FROM UnmappedFiles
+            WHERE library_root = ? AND file_path LIKE ? ESCAPE '\\'
+        `).all(anchorFile.library_root, `${folder.replace(/[\\%_]/g, (char) => `\\${char}`)}%`) as Array<{ id: number }>)
+            .map((row) => this.repository.findById(row.id))
+            .filter((file): file is UnmappedFile => Boolean(file) && path.dirname(file!.file_path) === folder);
+        const files = siblings.length > 0 ? siblings : [anchorFile];
+        const libraries = this.listManualImportLibraries().map((library) => ({
+            id: library.id,
+            rootPath: library.rootPath,
+        }));
+        const autoFiles: AutoImportFile[] = [];
+        for (const file of files) {
+            autoFiles.push({
+                id: file.id,
+                libraryRoot: libraryRootPathFor(file.file_path, libraries) ?? file.library_root,
+                ignored: file.ignored,
+                durationSeconds: file.duration ?? null,
+                tags: await this.readTags(file.file_path),
+            });
+        }
+
+        const captured: { query: CandidateQuery | null } = { query: null };
+        const folderArtistMbid = /\{mbid-([0-9a-f-]{36})\}/i.exec(folder)?.[1] ?? null;
+        const decide = (fingerprints?: FingerprintEvidence) => planFolderAutoImport({
+            files: autoFiles,
+            libraries,
+            findRelease: (releaseMbid) => {
+                const release = this.getCanonicalImportRelease(releaseMbid);
+                if (!release) return null;
+                return {
+                    id: release.id,
+                    mbid: release.mbid,
+                    tracks: release.tracks.map((track) => ({
+                        id: track.id,
+                        mbid: track.mbid,
+                        recordingMbid: track.recordingMbid,
+                        mediumPosition: track.mediumPosition,
+                        position: track.position,
+                        title: track.title,
+                        durationMs: track.durationMs,
+                    })),
+                };
+            },
+            findCandidates: (query) => {
+                captured.query = query;
+                return this.findCatalogCandidates(query);
+            },
+            folderArtistMbid,
+            fingerprints,
+        });
+        let plan = decide();
+        const query = captured.query;
+        if (plan.decision === "review" && plan.needsEvidence === "online" && options.writeCatalog && query?.album) {
+            const artistMbid = query.artistMbid ?? artistMbidForName(query.artistName);
+            if (artistMbid) {
+                const added = await this.addMissingReleaseGroupsFromCatalogSource(artistMbid, query.album);
+                if (added > 0) plan = decide();
+            }
+        }
+        if (plan.decision === "review" && plan.needsEvidence === "fingerprint") {
+            plan = decide(await this.fingerprintFiles(files));
+        }
+        return { files, plan };
+    }
+
+    private describeAutoImport(
+        folder: string,
+        planned: { files: UnmappedFile[]; plan: FolderAutoImportPlan },
+        options: { dryRun: boolean; queued?: number },
+    ): AutoImportFolderReport {
+        const { files, plan } = planned;
+        const actions: AutoImportAction[] = [];
+        if (plan.decision === "review") {
+            actions.push({ type: "review", reason: plan.reason });
+            if (plan.needsEvidence === "online") {
+                const album = plan.reason.match(/album "([^"]+)"/)?.[1] ?? "";
+                if (album) actions.push({ type: "add-missing-release", album });
+            }
+        } else {
+            const monitored = db.prepare(`
+                SELECT 1 AS present FROM LibraryEditions
+                WHERE library_id = ? AND edition_id = ?
+            `).get(plan.libraryId, plan.editionId);
+            if (!monitored) {
+                actions.push({
+                    type: "monitor",
+                    libraryId: plan.libraryId,
+                    editionId: plan.editionId,
+                    selectionMode: "auto",
+                    locked: false,
+                });
+            }
+            for (const mapping of plan.mappings) {
+                actions.push({
+                    type: "import",
+                    unmappedFileId: mapping.unmappedFileId,
+                    trackId: mapping.trackId,
+                    effects: ["rename", "retag", "cover", "register"],
+                });
+            }
+        }
+        return {
+            folder,
+            fileIds: files.map((file) => file.id),
+            decision: plan.decision,
+            ...(plan.decision === "review"
+                ? { reason: plan.reason, ...(plan.needsEvidence ? { needsEvidence: plan.needsEvidence } : {}) }
+                : { editionId: plan.editionId, libraryId: plan.libraryId, mappings: plan.mappings }),
+            ...(options.queued !== undefined ? { queued: options.queued } : {}),
+            filesUntouched: options.dryRun,
+            replacementPolicy: "delete-only-when-replaced-by-better-copy",
+            actions,
+        };
+    }
+}
+
+/** Root path of the enabled library that contains filePath (longest match). */
+export function libraryRootPathFor(filePath: string, libraries: Array<{ rootPath: string }>): string | null {
+    const normalized = filePath.replace(/\\/g, "/");
+    let best: string | null = null;
+    for (const { rootPath } of libraries) {
+        const root = rootPath.replace(/\\/g, "/").replace(/\/+$/, "");
+        if ((normalized === root || normalized.startsWith(`${root}/`)) && (!best || root.length > best.length)) {
+            best = root;
+        }
+    }
+    return best;
+}
+
+function artistMbidForName(name: string | null): string | null {
+    if (!name) return null;
+    const row = db.prepare(`
+        SELECT mbid FROM ArtistMetadata WHERE lower(name) = lower(?)
+    `).get(name) as { mbid: string } | undefined;
+    return row?.mbid ?? null;
+}
+
+function jsonStrings(raw: string | null, fields: string[] = []): string[] {
+    if (!raw) return [];
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return [raw]; }
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list.flatMap((item) => {
+        if (typeof item === "string") return [item];
+        if (item && typeof item === "object") {
+            for (const field of fields) {
+                const value = (item as Record<string, unknown>)[field];
+                if (typeof value === "string" && value) return [value];
+            }
+        }
+        return [];
+    });
+}
+
+function mediaFormats(raw: string | null): string[] {
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw ?? "[]"); } catch { return []; }
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((medium) => {
+        const format = medium && typeof medium === "object"
+            ? ((medium as Record<string, unknown>).format ?? (medium as Record<string, unknown>).Format)
+            : null;
+        return typeof format === "string" && format.trim() ? format : "Unknown";
+    });
+}
+
+function yearOf(date: string | null): number | null {
+    const match = date ? /^(\d{4})/.exec(date) : null;
+    return match ? Number(match[1]) : null;
+}
+
+/** Identity tags in the names planFolderAutoImport reads. Empty when the file cannot be parsed. */
+async function readIdentityTags(filePath: string): Promise<Record<string, string>> {
+    try {
+        const { common } = await mm.parseFile(filePath, { skipCovers: true, duration: false });
+        const tags: Record<string, string> = {};
+        const put = (key: string, value: unknown) => {
+            if (value !== undefined && value !== null && String(value).trim()) tags[key] = String(value);
+        };
+        put("MUSICBRAINZ_ALBUMID", common.musicbrainz_albumid);
+        put("MUSICBRAINZ_RELEASETRACKID", common.musicbrainz_trackid);
+        put("MUSICBRAINZ_TRACKID", common.musicbrainz_recordingid);
+        put("TRACK", common.track?.no);
+        put("DISC", common.disk?.no);
+        put("DISCTOTAL", common.disk?.of);
+        put("TITLE", common.title);
+        put("ALBUM", common.album);
+        put("ALBUMARTIST", common.albumartist);
+        put("ARTIST", common.artist);
+        put("MUSICBRAINZ_ALBUMARTISTID", common.musicbrainz_albumartistid?.[0]);
+        put("DATE", common.year);
+        return tags;
+    } catch {
+        return {};
     }
 }
