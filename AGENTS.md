@@ -29,7 +29,18 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - `app/` — React + Vite + Fluent UI v9 + TanStack Query
 - `e2e/` — Playwright tests
 - `config/` — runtime state (TOML config, SQLite DB, provider tokens) — never commit
-- `.ref_*` — read-only reference checkouts; consult them, never import from them
+- `.ref_*` — read-only reference checkouts (gitignored, and excluded from
+  Docker). Consult them, never import from them. Look here first when copying
+  an approach from another project. `scripts/fetch-refs.sh` shallow-clones any
+  that are missing and updates the rest; Cloud Agent install runs it.
+  - `.ref_lidarr` (Lidarr/Lidarr) — command queue, import, and library control plane.
+  - `.ref_fluentui` (microsoft/fluentui) — Fluent UI v9 components, tokens, and tests.
+  - `.ref_jellyfin` (jellyfin/jellyfin) — media-server provider identity and packaging.
+  - `.ref_musicbrainz-docker` (metabrainz/musicbrainz-docker) — local MusicBrainz stack (Postgres, web API, Solr).
+  - `.ref_tidarr` (cstaelen/tidarr) — TypeScript streaming-arr layout and queue shape.
+  - `.ref_tiddl` (oskvr37/tiddl) — TIDAL download CLI the TIDAL adapter wraps.
+  - `.ref_yt-dlp` (yt-dlp/yt-dlp) — YouTube download CLI behavior.
+  - `.ref_apple-music-downloader` (zhaarey/apple-music-downloader) — Apple Music download CLI the adapter wraps.
 - `docs/LIDARR_STRUCTURE_ALIGNMENT.md` is a historical folder-mapping reference.
 
 ## Architecture & development rules
