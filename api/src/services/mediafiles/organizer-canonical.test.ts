@@ -497,6 +497,9 @@ test("metadata pruning removes NFO files when save_nfo is disabled", async () =>
 test("singleton sidecar relocation uses clean metadata identity columns", async () => {
   dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");
+  const relocateAlbum = Number(dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES ('rg-relocate-1', 'artist-mbid', 'Relocated')").run().lastInsertRowid);
+  dbModule.db.prepare(`INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES ('release-relocate-1', ?, 'rg-relocate-1', 'artist-mbid', 'Relocated')`).run(relocateAlbum);
 
   const oldDir = path.join(tempDir, "old");
   const newDir = path.join(tempDir, "new");
@@ -509,8 +512,8 @@ test("singleton sidecar relocation uses clean metadata identity columns", async 
   dbModule.db.prepare(`
     INSERT INTO MetadataFiles (
       artist_id, relative_path, file_path, library_root, extension,
-      type, file_type, provider, provider_entity_type, provider_id, library_slot
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      type, file_type, provider, provider_entity_type, provider_id, library_slot, canonical_release_mbid
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'release-relocate-1')
   `).run(
     "artist-mbid",
     "old/cover.jpg",
@@ -531,6 +534,7 @@ test("singleton sidecar relocation uses clean metadata identity columns", async 
     expectedPath: newPath,
     libraryRoot: tempDir,
     fileType: "cover",
+    releaseMbid: "release-relocate-1",
   });
 
   assert.equal(fs.existsSync(newPath), true);
@@ -548,6 +552,7 @@ test("singleton sidecar relocation uses clean metadata identity columns", async 
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0].provider_id, "provider-album-1");
+  assert.equal(rows[0].canonical_release_mbid, "release-relocate-1");
   assert.equal(rows[0].file_path, newPath);
 });
 
@@ -605,6 +610,87 @@ test("sidecar relocate never copies artwork into a sibling edition folder", asyn
   assert.equal(fs.existsSync(anniversaryCover), false, "sibling edition must resolve its own cover");
   assert.equal(fs.existsSync(deluxeCover), true, "sibling edition cover must stay");
   assert.equal(fs.readFileSync(deluxeCover, "utf8"), "canonical-cover");
+});
+
+function seedReleaseCoverFixture(key: string) {
+  const rg = `aaaaaaaa-0000-4000-8000-${key.padStart(12, "0")}`;
+  const releaseA = `bbbbbbbb-0000-4000-8000-${key.padStart(12, "0")}`;
+  const releaseB = `cccccccc-0000-4000-8000-${key.padStart(12, "0")}`;
+  const artistMbid = `artist-${key}`;
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Release Artist");
+  const album = Number(dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title) VALUES (?, ?, 'Acoustic')").run(rg, artistMbid).lastInsertRowid);
+  for (const mbid of [releaseA, releaseB]) {
+    dbModule.db.prepare(`INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+      VALUES (?, ?, ?, ?, 'Acoustic')`).run(mbid, album, rg, artistMbid);
+  }
+  const dirA = path.join(tempDir, key, `Acoustic (2004) {mbid-${releaseA}}`);
+  const dirB = path.join(tempDir, key, `Acoustic (2007) {mbid-${releaseB}}`);
+  fs.mkdirSync(dirA, { recursive: true });
+  fs.mkdirSync(dirB, { recursive: true });
+  const coverA = path.join(dirA, "cover.jpg");
+  fs.writeFileSync(coverA, "release-a-cover");
+  const insertCover = (filePath: string, release: string, providerId: string) => dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (artist_id, relative_path, file_path, library_root, extension, type, file_type,
+      provider, provider_entity_type, provider_id, library_slot, canonical_release_group_mbid, canonical_release_mbid)
+    VALUES (?, ?, ?, ?, 'jpg', 'cover', 'cover', 'deezer', 'album', ?, 'stereo', ?, ?)
+  `).run(artistMbid, path.relative(tempDir, filePath), filePath, tempDir, providerId, rg, release);
+  return { rg, releaseA, releaseB, artistMbid, dirA, dirB, coverA, coverB: path.join(dirB, "cover.jpg"), insertCover };
+}
+
+test("cover relocation never moves or re-owns another release's cover of the same album", async () => {
+  const f = seedReleaseCoverFixture("1");
+  // Release A's folder has no tracked audio, so the sibling-folder guard
+  // alone would not protect it. Same release group, same provider album.
+  f.insertCover(f.coverA, f.releaseA, "provider-shared");
+
+  await (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+    artistId: f.artistMbid, albumId: "provider-shared", expectedPath: f.coverB, libraryRoot: tempDir,
+    fileType: "cover", releaseMbid: f.releaseB, releaseGroupMbid: f.rg,
+  });
+
+  assert.equal(fs.readFileSync(f.coverA, "utf8"), "release-a-cover");
+  assert.equal(fs.existsSync(f.coverB), false, "release B resolves its own cover");
+  const rows = dbModule.db.prepare("SELECT file_path, canonical_release_mbid FROM MetadataFiles WHERE file_type='cover'").all();
+  assert.deepEqual(rows.map((row) => ({ ...(row as object) })), [{ file_path: f.coverA, canonical_release_mbid: f.releaseA }]);
+});
+
+test("composite plan import keeps source-edition covers and owns its folder cover by the target release", async () => {
+  const f = seedReleaseCoverFixture("2");
+  // Release A is a composite plan's source edition, reached through the
+  // provider album the plan downloads. Release B is the plan's target; its
+  // own cover still sits in a folder from before a rename.
+  f.insertCover(f.coverA, f.releaseA, "provider-composite-source");
+  const renamedFrom = path.join(tempDir, "2", "Acoustic (old name)");
+  fs.mkdirSync(renamedFrom, { recursive: true });
+  const oldCoverB = path.join(renamedFrom, "cover.jpg");
+  fs.writeFileSync(oldCoverB, "release-b-cover");
+  f.insertCover(oldCoverB, f.releaseB, "provider-composite-source");
+
+  await (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+    artistId: f.artistMbid, albumId: "provider-composite-source", expectedPath: f.coverB, libraryRoot: tempDir,
+    fileType: "cover", releaseMbid: f.releaseB, releaseGroupMbid: f.rg,
+  });
+
+  assert.equal(fs.readFileSync(f.coverA, "utf8"), "release-a-cover", "source edition cover stays in its own folder");
+  assert.equal(fs.readFileSync(f.coverB, "utf8"), "release-b-cover", "target release cover follows its rename");
+  assert.equal(fs.existsSync(oldCoverB), false);
+  const rows = dbModule.db.prepare(`SELECT file_path, canonical_release_group_mbid AS rg, canonical_release_mbid AS rel
+    FROM MetadataFiles WHERE file_type='cover' ORDER BY file_path`).all().map((row) => ({ ...(row as object) }));
+  assert.deepEqual(rows, [
+    { file_path: f.coverA, rg: f.rg, rel: f.releaseA },
+    { file_path: f.coverB, rg: f.rg, rel: f.releaseB },
+  ].sort((a, b) => a.file_path.localeCompare(b.file_path)));
+});
+
+test("the folder's release decides a cover's owner when the caller names another release", async () => {
+  const f = seedReleaseCoverFixture("3");
+  fs.writeFileSync(f.coverB, "release-b-cover");
+  await (organizerModule.OrganizerService as any).relocateSingletonSidecar({
+    artistId: f.artistMbid, albumId: "provider-mismatch", expectedPath: f.coverB, libraryRoot: tempDir,
+    fileType: "cover", releaseMbid: f.releaseA, releaseGroupMbid: f.rg,
+  });
+  const row = dbModule.db.prepare("SELECT canonical_release_mbid AS rel FROM MetadataFiles WHERE file_path=?").get(f.coverB) as { rel: string };
+  assert.equal(row.rel, f.releaseB);
 });
 
 test("artist sidecar relocation resolves numeric ArtistMetadata id to MetadataFiles.artist_id", async () => {

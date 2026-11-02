@@ -81,7 +81,37 @@ export interface CatalogIsrcLookupResult {
 
 export interface CatalogArtistCredit {
   artistId: string;
+  /** Credited-as name, exactly as printed on the release ("AFROJACK", "MJ"). */
   name: string;
+  joinPhrase: string;
+  /**
+   * The artist's own MusicBrainz name ("Afrojack"). Only this may become
+   * ArtistMetadata.name; a credited-as name never does.
+   */
+  artistName?: string | null;
+  /** The artist's MusicBrainz sort name ("Jackson, Michael"). */
+  artistSortName?: string | null;
+}
+
+/** One name of a MusicBrainz track's published artist credit. */
+/** One MusicBrainz artist alias that carries a locale (ended aliases excluded). */
+export interface CatalogArtistLocaleAlias {
+  name: string;
+  sortName: string | null;
+  /** MusicBrainz locale as stored ("en", "nl", "en_US"). */
+  locale: string;
+  primaryForLocale: boolean;
+  /** "Artist name", "Legal name", "Search hint" or null. */
+  type: string | null;
+}
+
+export interface CatalogTrackArtistCredit {
+  artistId: string;
+  /** The artist's own MusicBrainz name. */
+  artistName: string;
+  artistSortName: string | null;
+  /** Credited-as name on this track. */
+  creditedName: string;
   joinPhrase: string;
 }
 
@@ -198,11 +228,35 @@ export interface CatalogProvider {
   getCreditedReleaseGroupsForArtist?(artistMbid: string): Promise<CatalogArtistCreditReleaseGroup[]>;
 
   /**
+   * Published artist credit of each track MBID (track-level credit, Picard's
+   * `artist`), keyed by the requested MBID (redirected MBIDs resolve to their
+   * current track). Optional: the Servarr Metadata Server only exposes one
+   * artist id per track; MB-local serves the full credit from Postgres.
+   */
+  getTrackArtistCredits?(trackMbids: string[]): Promise<Map<string, CatalogTrackArtistCredit[]>>;
+
+  /**
+   * Locale aliases of each artist MBID (Picard's translated artist names).
+   * Optional: only MB-local exposes `artist_alias`.
+   */
+  getArtistLocaleAliases?(artistMbids: string[]): Promise<Map<string, CatalogArtistLocaleAlias[]>>;
+
+  /**
    * MusicBrainz video recordings credited to an artist. Optional: hosted Servarr
    * has no video browse, so the sync falls back to the public MB recording search.
    * MB-local reads `recording.video = true` from Postgres.
    */
   getArtistVideoRecordings?(artistMbid: string): Promise<CatalogVideoRecording[]>;
+
+  /**
+   * Composer, performer, and work credits for a refresh batch. Optional:
+   * the hosted metadata server has no relationship graph. A returned bundle
+   * replaces stored credits for the queried MBIDs, including an empty list.
+   */
+  getRelationshipBundle?(
+    recordingMbids: string[],
+    releaseMbids: string[],
+  ): Promise<import("./relationship-credit-model.js").RelationshipBundle>;
 
   /** Free-text search (artists by default). */
   search(query: string, options?: CatalogSearchOptions): Promise<CatalogSearchResults>;

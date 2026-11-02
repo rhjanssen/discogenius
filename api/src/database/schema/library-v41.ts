@@ -114,20 +114,54 @@ export function createLibrarySchemaV41(db: Database.Database): void {
     );
 
     -- A row here means exactly one thing: this Album is monitored in this
-    -- Library. Unmonitoring deletes the row, which takes the Album's lock with
-    -- it. There is deliberately no monitored column: a row saying monitored = 0
-    -- is a second answer to a question the row's existence already answers, and
-    -- the two drift. The same rule governs LibraryEditions below.
+    -- Library. Unmonitoring deletes the row. There is deliberately no monitored
+    -- column: a row saying monitored = 0 is a second answer to a question the
+    -- row's existence already answers, and the two drift. A user unmonitor is
+    -- remembered in LibraryUserExclusions, which survives the delete.
+    -- decision is who chose the current row: user (locked = 1) or curation.
     CREATE TABLE LibraryAlbums (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL,
       release_group_id INTEGER NOT NULL,
       selection_mode TEXT NOT NULL CHECK(selection_mode IN ('auto', 'manual')),
       locked BOOLEAN NOT NULL DEFAULT 0,
+      decision TEXT NOT NULL DEFAULT 'curation' CHECK(decision IN ('user', 'curation')),
       reason TEXT,
       curation_version INTEGER NOT NULL,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(library_id, release_group_id),
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE
+    );
+
+    -- Survives unmonitor. edition_id NULL is the whole release group.
+    -- Curation skips these in both automatic-curation modes.
+    CREATE TABLE LibraryUserExclusions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      library_id INTEGER NOT NULL,
+      release_group_id INTEGER NOT NULL,
+      edition_id INTEGER,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
+      FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE,
+      FOREIGN KEY(edition_id) REFERENCES AlbumEditions(id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX idx_library_user_exclusions_album
+      ON LibraryUserExclusions(library_id, release_group_id) WHERE edition_id IS NULL;
+    CREATE UNIQUE INDEX idx_library_user_exclusions_edition
+      ON LibraryUserExclusions(library_id, edition_id) WHERE edition_id IS NOT NULL;
+
+    -- Why curation last unmonitored a release group. The album row is gone,
+    -- so the album page reads the reason from here.
+    CREATE TABLE LibraryCurationOutcomes (
+      library_id INTEGER NOT NULL,
+      release_group_id INTEGER NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('replaced', 'waiting')),
+      replacement_title TEXT,
+      covered INTEGER,
+      total INTEGER,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(library_id, release_group_id),
       FOREIGN KEY(library_id) REFERENCES Libraries(id) ON DELETE CASCADE,
       FOREIGN KEY(release_group_id) REFERENCES Albums(id) ON DELETE CASCADE
     );
@@ -142,6 +176,7 @@ export function createLibrarySchemaV41(db: Database.Database): void {
       library_id INTEGER NOT NULL,
       edition_id INTEGER NOT NULL,
       selection_mode TEXT NOT NULL CHECK(selection_mode IN ('auto', 'manual')),
+      decision TEXT NOT NULL DEFAULT 'curation' CHECK(decision IN ('user', 'curation')),
       -- The representative ("Primary") Edition of its Album in this Library.
       -- Exactly one monitored Edition per (library, album) carries it; the rest
       -- are supplemental.

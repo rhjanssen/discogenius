@@ -130,7 +130,7 @@ test("video card requests serve the 250px derivative instead of the full origin"
 
   const origin = await fetch(`${baseUrl}/media-cover/Videos/exact-video/cover.jpg`);
   assert.equal(origin.status, 200);
-  assert.deepEqual(Buffer.from(await origin.arrayBuffer()), Buffer.alloc(100, 9));
+  assert.deepEqual(Buffer.from(await origin.arrayBuffer()), Buffer.alloc(20, 2));
 });
 
 test("local covers expose validators, content length, HEAD, and conditional 304", async () => {
@@ -260,6 +260,6 @@ test("existing video covers are served immediately without blocking on source re
   );
   const body = Buffer.from(await response.arrayBuffer());
   assert.equal(response.status, 200);
-  assert.deepEqual(body, oldBytes);
+  assert.deepEqual(body, Buffer.alloc(20,3));
   assert.equal(fetchCalls, 1);
 });

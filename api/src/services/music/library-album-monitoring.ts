@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { clearUserExclusions, recordAlbumUserExclusion } from "./library-user-decisions.js";
 
 /**
  * Monitoring an Album in a Library, and which Libraries a command may touch.
@@ -104,14 +105,21 @@ export function monitorAlbumInLibraries(
   if (libraryIds.length === 0) return 0;
   const selectionMode = options.selectionMode
     ?? (options.actor === "user" ? "manual" : "auto");
+  // A person pressing monitor is a user decision. Automation must not clear it.
+  const locked = options.actor === "user" ? 1 : 0;
+  const decision = options.actor === "user" ? "user" : "curation";
   const insert = db.prepare(`
     INSERT INTO LibraryAlbums (
-      library_id, release_group_id, selection_mode, locked,
+      library_id, release_group_id, selection_mode, locked, decision,
       reason, curation_version, updated_at
-    ) VALUES (?, ?, ?, 0, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(library_id, release_group_id) DO UPDATE SET
       selection_mode = CASE WHEN ? = 'automation' AND LibraryAlbums.locked = 1
         THEN LibraryAlbums.selection_mode ELSE excluded.selection_mode END,
+      locked = CASE WHEN ? = 'automation' AND LibraryAlbums.locked = 1
+        THEN LibraryAlbums.locked ELSE excluded.locked END,
+      decision = CASE WHEN ? = 'automation' AND LibraryAlbums.locked = 1
+        THEN LibraryAlbums.decision ELSE excluded.decision END,
       reason = CASE WHEN ? = 'automation' AND LibraryAlbums.locked = 1
         THEN LibraryAlbums.reason ELSE excluded.reason END,
       curation_version = CASE WHEN ? = 'automation' AND LibraryAlbums.locked = 1
@@ -124,12 +132,17 @@ export function monitorAlbumInLibraries(
       libraryId,
       releaseGroupId,
       selectionMode,
+      locked,
+      decision,
       options.reason,
       options.curationVersion ?? 1,
       options.actor,
       options.actor,
       options.actor,
+      options.actor,
+      options.actor,
     ).changes;
+    if (options.actor === "user") clearUserExclusions(db, libraryId, releaseGroupId);
   }
   return changed;
 }
@@ -169,6 +182,11 @@ export function unmonitorAlbumInLibraries(
   `);
   let removed = 0;
   for (const libraryId of libraryIds) {
+    if (options.actor === "user") {
+      // The row is about to disappear. The exclusion is what stops the next
+      // curation pass from monitoring the album again.
+      recordAlbumUserExclusion(db, libraryId, releaseGroupId);
+    }
     if (options.actor === "automation") {
       deleteEditions.run(libraryId, releaseGroupId, libraryId, releaseGroupId);
     } else {

@@ -61,6 +61,12 @@ Track materialization is the critical acquisition contract:
 | SoundCloud | Unofficial `api-v2` client with browser `oauth_token` + public `client_id` (experimental; official OAuth 2.1 deferred) | Native progressive MP3 when entitlement allows; `yt-dlp` fallback with OAuth header/cookies | lossy only | favorite tracks, playlists |
 | YouTube Music | Unofficial YouTube Music web API via `ytmusicapi`-style clients | `yubal` as a self-hosted downloader/reference, ultimately wrapping `yt-dlp` | lossy audio (`opus`/mp3/m4a), potentially stronger video resolution than audio fidelity | library/subscriptions/playlists/liked music, depending on cookies/auth |
 
+Login expiry is not a per-album failure. A provider reports it as
+`ProviderAuthError`. The queue holds that provider's waiting albums until a
+valid credential is saved. Deezer's ARL is a pasted browser cookie: it is not
+refreshed, and email/password login is not used. See
+[PROVIDER_AUTH.md](PROVIDER_AUTH.md).
+
 ## Research Notes
 
 - Apple Music API/web endpoints are the correct catalog/personalization source.

@@ -20,7 +20,6 @@ test("config update parsers return only validated partial updates", () => {
     embed_cover: true,
     embed_lyrics: true,
     upgrade_existing_files: true,
-    downconvert_existing_files: false,
     convert_video_mp4: true,
     extract_flac: true,
   });
@@ -89,6 +88,7 @@ test("config update parsers return only validated partial updates", () => {
     include_video_official_audio: true,
     prefer_explicit: true,
     enable_redundancy_filter: true,
+    compilation_policy: "original_discography",
     require_provider_availability: true,
   });
   assert.deepEqual(filteringUpdate, {
@@ -141,7 +141,6 @@ test("config update parsers reject unsupported keys and invalid values", () => {
       embed_cover: true,
       embed_lyrics: true,
       upgrade_existing_files: true,
-      downconvert_existing_files: false,
       convert_video_mp4: true,
       extract_flac: true,
     });
@@ -156,7 +155,6 @@ test("config update parsers reject unsupported keys and invalid values", () => {
       embed_cover: true,
       embed_lyrics: true,
       upgrade_existing_files: true,
-      downconvert_existing_files: false,
       convert_video_mp4: true,
       extract_flac: true,
     });

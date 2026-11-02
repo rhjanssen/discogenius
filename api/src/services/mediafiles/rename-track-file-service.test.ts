@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { after, before, beforeEach, test } from "node:test";
 import {
   seedAcceptedProviderTrackMatch,
@@ -218,6 +219,7 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", a
   assert.equal(result.renamed, 1);
   assert.equal(result.conflicts, 0);
   assert.equal(result.missing, 0);
+  assert.equal(result.cleanedDirectories, 1);
   assert.equal(fs.existsSync(seeded.sourcePath), false);
   assert.equal(fs.existsSync(seeded.expectedPath), true);
   assert.equal(fs.existsSync(seeded.sourceDir), false);
@@ -234,6 +236,44 @@ test("RenameTrackFileService owns preview and apply flow for tracked renames", a
   assert.equal(trackedFile.needsRename, 0);
 });
 
+test("case-only path renames the directory entry instead of conflicting", async () => {
+  const seeded = seedTrackedFile();
+  const wrongPath = path.join(seeded.musicRoot, "Artist One", "album one", "01 - track one.flac");
+  fs.mkdirSync(path.dirname(wrongPath), { recursive: true });
+  fs.renameSync(seeded.sourcePath, wrongPath);
+  dbModule.db.prepare(`
+    UPDATE TrackFiles
+    SET file_path = ?, relative_path = ?, needs_rename = 1
+    WHERE provider_id = '100'
+  `).run(wrongPath, path.join("Artist One", "album one", "01 - track one.flac"));
+
+  const tracked = dbModule.db.prepare("SELECT id FROM TrackFiles WHERE provider_id = '100'").get() as { id: number };
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([tracked.id]);
+
+  assert.equal(result.conflicts, 0);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.renamed, 1);
+  assert.equal(fs.existsSync(seeded.expectedPath), true);
+  assert.ok(fs.readdirSync(path.join(seeded.musicRoot, "Artist One")).includes("Album One"));
+  assert.ok(fs.readdirSync(path.dirname(seeded.expectedPath)).includes("01 - Track One.flac"));
+});
+
+test("rename work ids leave an already-correct file out of the command plan", () => {
+  const seeded = seedTrackedFile();
+  const service = renameTrackFileServiceModule.RenameTrackFileService;
+  assert.equal(service.getRenameWorkIds({ artistId: "1" }).length, 1);
+
+  fs.mkdirSync(path.dirname(seeded.expectedPath), { recursive: true });
+  fs.renameSync(seeded.sourcePath, seeded.expectedPath);
+  dbModule.db.prepare(`
+    UPDATE TrackFiles
+    SET file_path = ?, relative_path = ?, needs_rename = 1
+    WHERE provider_id = '100'
+  `).run(seeded.expectedPath, path.join("Artist One", "Album One", "01 - Track One.flac"));
+
+  assert.deepEqual(service.getRenameWorkIds({ artistId: "1" }), []);
+});
+
 test("id-only renames avoid library-wide post-processing", async () => {
   const seeded = seedTrackedFile();
   const unrelatedEmptyDir = path.join(configModule.Config.getVideoPath(), "Unrelated Artist", "Empty Album");
@@ -244,7 +284,7 @@ test("id-only renames avoid library-wide post-processing", async () => {
   const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([trackedFile.id]);
 
   assert.equal(result.renamed, 1);
-  assert.equal(result.cleanedDirectories, 0);
+  assert.equal(result.cleanedDirectories, 1);
   assert.equal(fs.existsSync(seeded.expectedPath), true);
   assert.equal(fs.existsSync(seeded.sourceDir), false);
   assert.equal(fs.existsSync(unrelatedEmptyDir), true);
@@ -1380,7 +1420,148 @@ test("a failed rename database commit restores the original file path", async ()
   assert.equal(path.resolve(after.filePath), path.resolve(originalPath));
 });
 
-test("a failed duplicate-sidecar commit restores the staged source sidecar", async () => {
+function seedAudioDuplicate(differentAudio = false) {
+  seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
+  const root = configModule.Config.getMusicPath();
+  const source = path.join(root, "Artist One", "Imports", "source.flac");
+  const destination = path.join(root, "Artist One", "Album One", "01 - Track One.flac");
+  for (const file of [source, destination]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    execFileSync(process.env.FFMPEG_PATH || (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"),
+      ["-v", "error", "-f", "lavfi", "-i", `sine=frequency=${file === destination && differentAudio ? 880 : 440}:duration=0.2`,
+        "-ac", "2", "-ar", "44100", "-c:a", "flac", "-metadata", `comment=${file === source ? "old tags" : "retained tags"}`, file],
+      { windowsHide: true });
+  }
+  const sourceId = upsertCanonicalAudioFile({ filePath: source, libraryRoot: root, librarySlot: "stereo" });
+  const destinationId = upsertCanonicalAudioFile({ filePath: destination, libraryRoot: root, librarySlot: "stereo" });
+  dbModule.db.prepare("UPDATE TrackFiles SET codec='FLAC',sample_rate=44100,bit_depth=16,channels=2 WHERE id IN (?,?)")
+    .run(sourceId, destinationId);
+  return { root, source, destination, sourceId, destinationId };
+}
+
+test("same-edition decoded audio duplicates retain the destination and transfer exact sidecar ownership", async () => {
+  const f = seedAudioDuplicate();
+  const retainedBytes = fs.readFileSync(f.destination);
+  const preview = renameTrackFileServiceModule.RenameTrackFileService.getRenamePreviews({artistId:"1"})
+    .find(item => item.id === f.sourceId);
+  assert.equal(preview?.conflict,true);
+  assert.equal(preview?.verify_duplicate,true);
+  assert.equal(preview?.drop_duplicate,undefined,"preview has not proved equal audio");
+  assert.notDeepEqual(fs.readFileSync(f.source), retainedBytes, "different metadata must not require equal container bytes");
+  const linked: Array<{ table: string; id: number }> = [];
+  for (const table of ["MetadataFiles", "LyricFiles", "ExtraFiles"]) {
+    const file = path.join(path.dirname(f.source), `${table}.lrc`);
+    const extra = table === "MetadataFiles" ? ", type, file_type" : table === "ExtraFiles" ? ", file_type" : "";
+    const values = table === "MetadataFiles" ? ", 'lyrics', 'lyrics'" : table === "ExtraFiles" ? ", 'lyrics'" : "";
+    const id = Number(dbModule.db.prepare(`INSERT INTO ${table}
+      (artist_id,track_file_id,file_path,relative_path,library_root,extension${extra})
+      VALUES ('1',?,?,?,?,'lrc'${values})`).run(f.sourceId, file, path.relative(f.root,file), f.root).lastInsertRowid);
+    linked.push({ table, id });
+  }
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([f.sourceId]);
+  assert.equal(result.conflicts, 0);
+  assert.deepEqual(result.errors, []);
+  assert.equal(fs.existsSync(f.source), false);
+  assert.deepEqual(fs.readFileSync(f.destination), retainedBytes);
+  assert.equal(dbModule.db.prepare("SELECT id FROM TrackFiles WHERE id=?").get(f.sourceId), undefined);
+  for (const { table,id } of linked) assert.equal((dbModule.db.prepare(`SELECT track_file_id FROM ${table} WHERE id=?`)
+    .get(id) as {track_file_id:number}).track_file_id, f.destinationId);
+  assert.equal((await import("./file-mutation-journal.js")).FileMutationJournal.hasPending(), false);
+});
+
+test("audio consolidation co-moves real lyrics and its repeat is a no-op", async () => {
+  const f = seedAudioDuplicate();
+  const sourceLyric = path.join(path.dirname(f.source), "source.lrc");
+  fs.writeFileSync(sourceLyric,"[00:01.00] retained lyric");
+  const lyricId = Number(dbModule.db.prepare(`INSERT INTO LyricFiles
+    (artist_id,track_file_id,file_path,relative_path,library_root,extension,
+     canonical_artist_mbid,canonical_release_group_mbid,canonical_release_mbid,canonical_track_mbid,canonical_recording_mbid)
+    VALUES ('1',?,?,?,?,'lrc','artist-one-mbid','release-group-mbid-1','release-mbid-1','track-mbid-1','recording-mbid-1')`)
+    .run(f.sourceId,sourceLyric,path.relative(f.root,sourceLyric),f.root).lastInsertRowid);
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([f.sourceId]);
+  assert.deepEqual(result.errors,[]);
+  assert.equal(result.conflicts,0);
+  const lyric = dbModule.db.prepare("SELECT file_path,track_file_id FROM LyricFiles WHERE id=?")
+    .get(lyricId) as {file_path:string;track_file_id:number};
+  assert.equal(lyric.track_file_id,f.destinationId);
+  assert.equal(lyric.file_path,path.join(path.dirname(f.destination),"01 - Track One.lrc"));
+  assert.equal(fs.readFileSync(lyric.file_path,"utf8"),"[00:01.00] retained lyric");
+  assert.equal(fs.existsSync(path.dirname(f.source)),false);
+  const repeat = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([f.destinationId]);
+  assert.equal(repeat.renamed,0);
+  assert.equal(repeat.conflicts,0);
+  assert.deepEqual(repeat.errors,[]);
+});
+
+test("same-slot audio with different samples remains a rename conflict", async () => {
+  const f = seedAudioDuplicate(true);
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([f.sourceId]);
+  assert.equal(result.conflicts, 1);
+  assert.deepEqual(result.errors, []);
+  assert.equal(fs.existsSync(f.source), true);
+});
+
+test("equal audio from another edition is never consolidated", async () => {
+  const f = seedAudioDuplicate();
+  dbModule.db.prepare(`INSERT INTO AlbumEditions (mbid,release_group_mbid,artist_mbid,title)
+    VALUES ('other-edition','release-group-mbid-1','artist-one-mbid','Album One')`).run();
+  const edition = dbModule.db.prepare("SELECT id FROM AlbumEditions WHERE mbid='other-edition'").get() as {id:number};
+  dbModule.db.prepare("UPDATE TrackFiles SET album_edition_id=?,canonical_release_mbid='other-edition' WHERE id=?")
+    .run(edition.id,f.destinationId);
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([f.sourceId]);
+  assert.equal(result.conflicts, 1);
+  assert.equal(fs.existsSync(f.source), true);
+});
+
+for (const field of ["library_slot", "sample_rate", "bit_depth", "track_id"] as const) {
+  test(`audio duplicate consolidation preserves incompatible ${field}`, async () => {
+    const f = seedAudioDuplicate();
+    const value = field === "library_slot" ? "spatial" : field === "sample_rate" ? 48000 : field === "bit_depth" ? 24 : null;
+    dbModule.db.prepare(`UPDATE TrackFiles SET ${field}=? WHERE id=?`).run(value,f.destinationId);
+    const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([f.sourceId]);
+    assert.equal(result.conflicts,1);
+    assert.deepEqual(result.errors,[]);
+    assert.equal(fs.existsSync(f.source),true);
+    assert.equal(fs.existsSync(f.destination),true);
+  });
+}
+
+test("audio duplicate transaction failure restores the source and its linked sidecars", async () => {
+  const f = seedAudioDuplicate();
+  const lyric = path.join(path.dirname(f.source), "source.lrc");
+  const id = Number(dbModule.db.prepare(`INSERT INTO LyricFiles
+    (artist_id,track_file_id,file_path,relative_path,library_root,extension)
+    VALUES ('1',?,?,?,?,'lrc')`).run(f.sourceId,lyric,path.relative(f.root,lyric),f.root).lastInsertRowid);
+  dbModule.db.exec(`CREATE TRIGGER fail_audio_duplicate BEFORE DELETE ON TrackFiles WHEN OLD.id=${f.sourceId}
+    BEGIN SELECT RAISE(ABORT,'simulated audio consolidation failure'); END;`);
+  let result;
+  try { result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([f.sourceId]); }
+  finally { dbModule.db.exec("DROP TRIGGER fail_audio_duplicate"); }
+  assert.match(result.errors[0]?.error || "", /simulated audio consolidation failure/);
+  assert.equal(fs.existsSync(f.source), true);
+  assert.equal((dbModule.db.prepare("SELECT track_file_id FROM LyricFiles WHERE id=?").get(id) as {track_file_id:number}).track_file_id,f.sourceId);
+  assert.equal((await import("./file-mutation-journal.js")).FileMutationJournal.hasPending(),false);
+});
+
+test("audio duplicate destination replacement after staging restores the source", async () => {
+  const f = seedAudioDuplicate();
+  const { FileMutationJournal } = await import("./file-mutation-journal.js");
+  const move = FileMutationJournal.move;
+  FileMutationJournal.move = async id => {
+    const staged = await move.call(FileMutationJournal,id);
+    fs.writeFileSync(f.destination,"external replacement");
+    return staged;
+  };
+  let result;
+  try { result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([f.sourceId]); }
+  finally { FileMutationJournal.move=move; }
+  assert.match(result.errors[0]?.error || "", /audio or ownership changed/);
+  assert.equal(fs.existsSync(f.source),true);
+  assert.equal(dbModule.db.prepare("SELECT id FROM TrackFiles WHERE id=?").get(f.sourceId) != null,true);
+  assert.equal(FileMutationJournal.hasPending(),false);
+});
+
+function seedConflictingLyrics(destinationContents = "[00:01.00] source") {
   seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
   const musicRoot = configModule.Config.getMusicPath();
   const albumDir = path.join(musicRoot, "Artist One", "Album One");
@@ -1393,7 +1574,7 @@ test("a failed duplicate-sidecar commit restores the staged source sidecar", asy
   const destinationLyricPath = path.join(albumDir, "01 - Track One.lrc");
   fs.writeFileSync(audioPath, "audio");
   fs.writeFileSync(sourceLyricPath, "[00:01.00] source");
-  fs.writeFileSync(destinationLyricPath, "[00:01.00] destination");
+  fs.writeFileSync(destinationLyricPath, destinationContents);
   const audioId = upsertCanonicalAudioFile({
     filePath: audioPath,
     libraryRoot: musicRoot,
@@ -1420,6 +1601,138 @@ test("a failed duplicate-sidecar commit restores the staged source sidecar", asy
     sourceLyricPath,
     musicRoot,
   ) as { id: number }).id);
+
+  return { audioId, lyricId, importDir, sourceLyricPath, destinationLyricPath };
+}
+
+test("rename keeps a different lyric beside the existing one instead of blocking", async () => {
+  const seeded = seedConflictingLyrics("[00:01.00] a different transcription");
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([seeded.audioId]);
+  const kept = path.join(path.dirname(seeded.destinationLyricPath), "01 - Track One (2).lrc");
+  assert.equal(result.conflicts, 0);
+  assert.equal(result.errors.length, 0);
+  assert.equal(fs.existsSync(seeded.sourceLyricPath), false);
+  assert.equal(fs.readFileSync(kept, "utf8"), "[00:01.00] source");
+  assert.equal(fs.readFileSync(seeded.destinationLyricPath, "utf8"), "[00:01.00] a different transcription");
+  assert.equal((dbModule.db.prepare("SELECT file_path FROM LyricFiles WHERE id = ?")
+    .get(seeded.lyricId) as { file_path: string }).file_path, kept);
+});
+
+test("rename removes identical duplicate lyrics and prunes their abandoned folder", async () => {
+  const seeded = seedConflictingLyrics();
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([seeded.audioId]);
+  assert.equal(result.conflicts, 0);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.cleanedDirectories, 1);
+  assert.equal(fs.existsSync(seeded.sourceLyricPath), false);
+  assert.equal(fs.existsSync(seeded.importDir), false);
+  assert.equal(fs.readFileSync(seeded.destinationLyricPath, "utf8"), "[00:01.00] source");
+  assert.equal(dbModule.db.prepare("SELECT id FROM LyricFiles WHERE id = ?").get(seeded.lyricId), undefined);
+});
+
+test("duplicate cleanup restores its staged source when the retained file changes", async () => {
+  const seeded = seedConflictingLyrics();
+  const { FileMutationJournal } = await import("./file-mutation-journal.js");
+  const originalMove = FileMutationJournal.move;
+  FileMutationJournal.move = async (id: string) => {
+    const staged = await originalMove.call(FileMutationJournal, id);
+    fs.writeFileSync(seeded.destinationLyricPath, "new retained transcription");
+    return staged;
+  };
+  let result: Awaited<ReturnType<typeof renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles>>;
+  try {
+    result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([seeded.audioId]);
+  } finally {
+    FileMutationJournal.move = originalMove;
+  }
+  assert.match(result.errors[0]?.error || "", /changed before deletion/);
+  assert.equal(fs.readFileSync(seeded.sourceLyricPath, "utf8"), "[00:01.00] source");
+  assert.equal(fs.readFileSync(seeded.destinationLyricPath, "utf8"), "new retained transcription");
+  assert.equal((dbModule.db.prepare("SELECT file_path FROM LyricFiles WHERE id = ?")
+    .get(seeded.lyricId) as { file_path: string }).file_path, seeded.sourceLyricPath);
+  assert.equal(FileMutationJournal.hasPending(), false);
+});
+
+for (const identical of [true, false]) {
+  test(`rename ${identical ? "removes identical" : "preserves different"} tracked album cover collision`, async () => {
+    seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
+    const root = configModule.Config.getMusicPath();
+    const source = path.join(root, "Artist One", "Imports", "cover.jpg");
+    const destination = path.join(root, "Artist One", "Album One", "cover.jpg");
+    for (const file of [source, destination]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, file === source || identical ? "selected original cover" : "alternate original cover");
+      libraryFilesModule.LibraryFilesService.upsertLibraryFile({
+        artistId: "1", albumId: null, mediaId: null, filePath: file,
+        libraryRoot: root, fileType: "cover", librarySlot: "stereo",
+        canonicalArtistMbid: "artist-one-mbid", canonicalReleaseGroupMbid: "release-group-mbid-1",
+        canonicalReleaseMbid: "release-mbid-1",
+      });
+    }
+    const sourceRow = dbModule.db.prepare("SELECT id FROM MetadataFiles WHERE file_path = ?")
+      .get(source) as { id: number };
+    const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([10_000_000 + sourceRow.id]);
+    assert.equal(result.errors.length, 0);
+    assert.equal(result.conflicts, identical ? 0 : 1);
+    assert.equal(fs.existsSync(source), !identical);
+    assert.equal(Boolean(dbModule.db.prepare("SELECT id FROM MetadataFiles WHERE id = ?").get(sourceRow.id)), !identical);
+    assert.equal(fs.readFileSync(destination, "utf8"), identical ? "selected original cover" : "alternate original cover");
+  });
+}
+
+// The stale-row branch only exists where both spellings resolve to one
+// directory entry (case-insensitive mounts such as Windows/macOS/SMB). On a
+// case-sensitive filesystem the two spellings are separate entries and the
+// canonical row is a genuine DB conflict, so the premise cannot be built.
+function filesystemFoldsCase(dir: string): boolean {
+  fs.mkdirSync(dir, { recursive: true });
+  const probe = path.join(dir, `.CaseProbe-${process.pid}`);
+  fs.writeFileSync(probe, "");
+  try {
+    return fs.existsSync(probe.toLowerCase().replace(dir.toLowerCase(), dir));
+  } finally {
+    fs.rmSync(probe, { force: true });
+  }
+}
+
+test("case-only cover rename drops the stale row when the canonical path is already registered", async (t) => {
+  if (!filesystemFoldsCase(configModule.Config.getMusicPath())) {
+    t.skip("requires a case-insensitive filesystem");
+    return;
+  }
+  seedCanonicalGraph({ albumTitle: "Album One", trackTitle: "Track One" });
+  const root = configModule.Config.getMusicPath();
+  const stalePath = path.join(root, "Artist One", "album one", "cover.jpg");
+  const canonicalPath = path.join(root, "Artist One", "Album One", "cover.jpg");
+  fs.mkdirSync(path.dirname(stalePath), { recursive: true });
+  fs.writeFileSync(stalePath, "cover-bytes");
+  const insert = dbModule.db.prepare(`
+    INSERT INTO MetadataFiles (
+      artist_id, relative_path, file_path, library_root, extension, type, file_type,
+      canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid
+    ) VALUES ('1', ?, ?, ?, 'jpg', 'AlbumImage', 'cover', 'artist-one-mbid', 'release-group-mbid-1', 'release-mbid-1')
+  `);
+  const stale = insert.run(path.relative(root, stalePath), stalePath, root);
+  const occupant = insert.run(path.relative(root, canonicalPath), canonicalPath, root);
+
+  const result = await renameTrackFileServiceModule.RenameTrackFileService.executeRenameFiles([
+    10_000_000 + Number(stale.lastInsertRowid),
+  ]);
+
+  assert.equal(result.errors.length, 0, result.errors.map((error) => error.error).join("; "));
+  assert.equal(result.conflicts, 0);
+  assert.equal(fs.existsSync(canonicalPath), true);
+  assert.equal(fs.readFileSync(canonicalPath, "utf8"), "cover-bytes");
+  assert.equal(dbModule.db.prepare("SELECT id FROM MetadataFiles WHERE id = ?").get(stale.lastInsertRowid), undefined);
+  assert.equal(
+    (dbModule.db.prepare("SELECT file_path FROM MetadataFiles WHERE id = ?").get(occupant.lastInsertRowid) as { file_path: string }).file_path,
+    canonicalPath,
+  );
+  assert.ok(fs.readdirSync(path.join(root, "Artist One")).includes("Album One"));
+});
+
+test("a failed duplicate-sidecar commit restores the staged source sidecar", async () => {
+  const { audioId, lyricId, importDir, sourceLyricPath, destinationLyricPath } = seedConflictingLyrics();
 
   dbModule.db.exec(`
     CREATE TRIGGER fail_duplicate_sidecar_commit
@@ -1464,6 +1777,18 @@ test("RenameTrackFileService supports albumId and editionId scopes without colum
 
   const statusByEdition = renameTrackFileServiceModule.RenameTrackFileService.getRenameStatus({ editionId: "edition-test-123" });
   assert.equal(typeof statusByEdition.total, "number");
+});
+
+test("rename dry-run lists moves without touching files", () => {
+  const seeded = seedTrackedFile();
+  const before = fs.readFileSync(seeded.sourcePath);
+  const report = renameTrackFileServiceModule.RenameTrackFileService.getRenameDryRun({ artistId: "1" });
+  assert.ok(report.moves >= 1);
+  assert.equal(report.collisions, 0);
+  assert.ok(report.byAlbum.length >= 1);
+  assert.equal(report.byAlbum[0].moves[0].from, seeded.sourcePath);
+  assert.equal(fs.readFileSync(seeded.sourcePath).equals(before), true);
+  assert.equal(fs.existsSync(seeded.sourcePath), true);
 });
 
 

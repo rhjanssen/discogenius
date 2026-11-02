@@ -133,9 +133,17 @@ export function isMissingLibraryFile(options: {
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const root = resolveLibraryRootPath(options.libraryRoot, file);
   try {
-    if (root && fs.statSync(root).isDirectory()) return true;
+    if (root && fs.lstatSync(root).isDirectory()) {
+      // Like Lidarr's empty-root guard, an empty mount point cannot establish
+      // that previously owned files disappeared. Read one entry, not the entire
+      // root listing, and only perform this check for a missing owned/review file.
+      const directory = fs.opendirSync(root);
+      try {
+        if (directory.readSync() !== null) return true;
+      } finally { directory.closeSync(); }
+    }
   } catch { /* Report the root, rather than treating every child as deleted. */ }
-  throw new Error(`Library root unavailable; inventory was preserved: ${root || options.libraryRoot}`);
+  throw new Error(`Library root unavailable or empty; inventory was preserved: ${root || options.libraryRoot}`);
 }
 
 export function resolveStoredLibraryPath(options: {

@@ -25,7 +25,8 @@ test("disk cancellation keeps ownership until the work unit settles and prevents
         assert.equal(queue.CommandQueueManager.get(id)?.status, "started");
         assert.equal(queue.CommandQueueManager.get(id)?.payload.cancelRequested, true);
         const manager = (await import("./command.js")).CommandManager;
-        assert.equal(manager.canStartCommand("RetagFiles").canStart, false);
+        assert.equal(manager.canStartCommand("RetagFiles").canStart, true, "folder-scoped retag runs beside rename");
+        assert.equal(manager.canStartCommand("BackupDatabase").canStart, false);
         const ctx = await import("./command-context.js");
         const { CommandContinuation } = await import("./command-continuation.js");
         assert.equal(await ctx.persistCommandOutcome(job, new CommandContinuation({ renameWork: { version: 1 } })), "cancelled");

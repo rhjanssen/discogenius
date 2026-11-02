@@ -24,8 +24,9 @@ import {
     releaseGroupHasMultipleMonitoredEditions,
     resolveAlbumArtwork,
     resolveEditionArtwork,
-    syncCachedMediaCoverToFile,
+    resolveArtistArtwork,
 } from "../metadata/media-cover-service.js";
+import { materializeMediaCoverToFile } from "../metadata/media-cover-materialization.js";
 import {
     findAdjacentLyricSidecar,
     lyricSidecarPath,
@@ -173,8 +174,9 @@ class LibraryMetadataBackfillService {
                 try {
                     const artistRow = db.prepare("SELECT mbid FROM ArtistMetadata WHERE id = ?").get(artistId) as { mbid?: string | null } | undefined;
                     const artistMbid = artistRow?.mbid ? String(artistRow.mbid) : artistId;
-                    const syncResult = repairMissingOnly && fs.existsSync(picPath) ? "unchanged" : syncCachedMediaCoverToFile({
-                            libraryRoot: libraryRoot,
+                    if (!repairMissingOnly || !fs.existsSync(picPath)) await resolveArtistArtwork({ artistMbid });
+                    const syncResult = repairMissingOnly && fs.existsSync(picPath) ? "unchanged" : await materializeMediaCoverToFile({
+                        libraryRoot,
                         entityId: artistMbid,
                         coverEntity: "Artist",
                         coverTypes: ["poster", "headshot"],
@@ -285,7 +287,9 @@ class LibraryMetadataBackfillService {
                 ? db.prepare(`
                     SELECT
                       plan.provider AS selected_provider,
-                      provider_release.provider_id AS selected_provider_id,
+                      CASE WHEN matched_release.release_group_id = selected_release.release_group_id
+                        AND (plan.composition = 'single_source' OR release_match.relation IN ('exact', 'source_superset'))
+                        THEN provider_release.provider_id END AS selected_provider_id,
                       selected_release.mbid AS selected_release_mbid,
                       (
                         SELECT COALESCE(NULLIF(TRIM(variant.provider_quality_label), ''), variant.quality_class)
@@ -304,10 +308,16 @@ class LibraryMetadataBackfillService {
                       provider_release.title,
                       provider_release.version,
                       provider_release.release_date,
-                      COALESCE(
+                      CASE WHEN matched_release.release_group_id = selected_release.release_group_id
+                        AND (plan.composition = 'single_source' OR release_match.relation IN ('exact', 'source_superset'))
+                        THEN COALESCE(
                         provider_release.cover_id,
                         provider_release.artwork_url
-                      ) AS cover
+                      ) END AS cover,
+                      -- Overlap and source_subset are donors, even on this edition.
+                      CASE WHEN matched_release.release_group_id = selected_release.release_group_id
+                        AND (plan.composition = 'single_source' OR release_match.relation IN ('exact', 'source_superset'))
+                        THEN 1 ELSE 0 END AS owns_cover
                     FROM LibraryEditions library_release
                     JOIN AlbumEditions selected_release
                       ON selected_release.id = library_release.edition_id
@@ -320,6 +330,8 @@ class LibraryMetadataBackfillService {
                     JOIN ProviderEditionMatches release_match
                       ON release_match.id = plan_source.provider_edition_match_id
                      AND release_match.match_state = 'accepted'
+                    JOIN AlbumEditions matched_release
+                      ON matched_release.id = release_match.edition_id
                     JOIN ProviderItems provider_release
                       ON provider_release.id = release_match.provider_edition_item_id
                     WHERE library_release.library_id = ?
@@ -335,6 +347,7 @@ class LibraryMetadataBackfillService {
                     version?: string | null;
                     release_date?: string | null;
                     cover?: string | null;
+                    owns_cover?: number | null;
                 } | undefined
                 : undefined;
             const albumProviderItem = selectedPlan
@@ -452,7 +465,7 @@ class LibraryMetadataBackfillService {
                                 await resolveEditionArtwork({
                                     releaseMbid: canonicalReleaseMbid,
                                     libraryId: sourceAlbum.library_id,
-                                    providerCandidates: albumProviderItem ? [{
+                                    providerCandidates: albumProviderItem && selectedPlan?.owns_cover === 1 ? [{
                                         provider: albumProviderItem.provider,
                                         entityId: albumProviderItem.provider_id,
                                         imageId: albumProviderItem.cover,
@@ -461,7 +474,7 @@ class LibraryMetadataBackfillService {
                                 });
                                 discardEditionCoverIfDuplicateOfAlbum(canonicalReleaseMbid, albumMbid);
                             }
-                            syncResult = syncCachedMediaCoverToFile({
+                            syncResult = await materializeMediaCoverToFile({
                                 libraryRoot: libraryRoot,
                                 entityId: canonicalReleaseMbid,
                                 coverEntity: "Edition",
@@ -469,7 +482,7 @@ class LibraryMetadataBackfillService {
                                 outputPath: coverPath,
                             });
                             if (syncResult === "missing" && albumMbid) {
-                                syncResult = syncCachedMediaCoverToFile({
+                                syncResult = await materializeMediaCoverToFile({
                                     libraryRoot,
                                     entityId: albumMbid,
                                     coverEntity: "Album",

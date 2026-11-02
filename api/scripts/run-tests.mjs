@@ -114,6 +114,14 @@ const initialIsolation = testFiles.length === 1 ? "none" : "process";
 let result = runOnce(testFiles, { capture: true, isolation: initialIsolation });
 writeCaptured(result);
 
+// Retry only completed test runs. An interrupted runner can contain an earlier
+// clone-flake signature; retrying just those files would skip the rest of the
+// suite and incorrectly report success.
+if (result.error || result.signal || !/^1\.\.\d+\s*$/m.test(String(result.stdout || ""))) {
+  console.error("[api tests] Test runner did not complete; refusing clone-flake retries.");
+  process.exit(result.status || 1);
+}
+
 // Node's test runner intermittently fails a whole file with "Unable to
 // deserialize cloned data" — a child-process result-serialization flake, not a
 // test assertion. Detect it across both output streams because Node has emitted

@@ -12,8 +12,12 @@ export type CanonicalAlbumArtist = {
 
 type MusicBrainzArtistCredit = {
   artistId: string;
+  /** Credited-as name (credit tables only). */
   name: string;
   joinPhrase: string;
+  /** The artist's own MusicBrainz name, when the source supplies it. */
+  artistName?: string | null;
+  artistSortName?: string | null;
 };
 
 type MusicBrainzReleaseGroup = {
@@ -39,7 +43,10 @@ function catalogReleaseGroupToMusicBrainzReleaseGroup(group: CatalogArtistCredit
       joinphrase: credit.joinPhrase,
       artist: {
         id: credit.artistId,
-        name: credit.name,
+        // The artist's own name. Falling back to the credited-as name here is
+        // what turned "Afrojack" into "AFROJACK" and "Michael Jackson" into "MJ".
+        name: credit.artistName || undefined,
+        "sort-name": credit.artistSortName || undefined,
       },
     })),
   };
@@ -78,20 +85,39 @@ function parseArtistCredits(rawCredits: unknown, fallbackArtistMbid?: string): M
         artistId,
         name,
         joinPhrase: String(rawCredit?.joinphrase || ""),
+        artistName: String(rawCredit?.artist?.name || "").trim() || null,
+        artistSortName: String(rawCredit?.artist?.["sort-name"] || "").trim() || null,
       };
     })
     .filter(Boolean) as MusicBrainzArtistCredit[];
 }
 
+/**
+ * Credits mint catalog rows only. Library membership is never created here.
+ *
+ * ArtistMetadata.name is the artist's own MusicBrainz name. A credited-as name
+ * ("AFROJACK", "MJ", "The Golden Earrings") may seed a row that does not exist
+ * yet, but it never overwrites an existing name: only `artistName` (the
+ * artist's own name from the catalogue) does. Every tag, folder, and Plex/
+ * Jellyfin artist reads this column.
+ */
 function ensureArtist(artist: MusicBrainzArtistCredit, _origin = "musicbrainz-credit"): void {
-  // Credits mint catalog rows only. Library membership is never created here.
+  const canonicalName = String(artist.artistName || "").trim() || null;
+  const canonicalSort = String(artist.artistSortName || "").trim() || null;
+  const seedName = canonicalName || artist.name;
   db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name, sort_name, updated_at)
     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(mbid) DO UPDATE SET
-      name = CASE WHEN excluded.name = excluded.mbid THEN ArtistMetadata.name ELSE excluded.name END,
+      name = CASE
+        WHEN ? IS NOT NULL THEN ?
+        WHEN ArtistMetadata.name IS NULL OR TRIM(ArtistMetadata.name) = '' OR ArtistMetadata.name = ArtistMetadata.mbid
+          THEN CASE WHEN excluded.name = excluded.mbid THEN ArtistMetadata.name ELSE excluded.name END
+        ELSE ArtistMetadata.name
+      END,
+      sort_name = COALESCE(?, ArtistMetadata.sort_name),
       updated_at = CURRENT_TIMESTAMP
-  `).run(artist.artistId, artist.name, artist.name);
+  `).run(artist.artistId, seedName, canonicalSort ?? seedName, canonicalName, canonicalName, canonicalSort);
 }
 
 function upsertScope(artistMbid: string, releaseGroupMbid: string, relationship: string): void {
@@ -183,16 +209,18 @@ function replaceAlbumArtists(releaseGroupMbid: string, credits: MusicBrainzArtis
 
 export class MusicBrainzArtistCreditService {
   static ensureArtist(artistMbid: string, artistName?: string, origin = "musicbrainz-primary"): void {
+    // Callers pass the catalogue artist's own name (or nothing).
     ensureArtist({
       artistId: artistMbid,
       name: String(artistName || artistMbid).trim(),
       joinPhrase: "",
+      artistName: String(artistName || "").trim() || null,
     }, origin);
   }
 
   static ensurePrimaryScope(releaseGroupMbid: string, artistMbid: string, artistName?: string): void {
     const name = String(artistName || artistMbid).trim();
-    const credit = { artistId: artistMbid, name, joinPhrase: "" };
+    const credit = { artistId: artistMbid, name, joinPhrase: "", artistName: String(artistName || "").trim() || null };
     ensureArtist(credit, "musicbrainz-primary");
     upsertScope(artistMbid, releaseGroupMbid, "primary");
 

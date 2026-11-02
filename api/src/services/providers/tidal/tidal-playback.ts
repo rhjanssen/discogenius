@@ -242,7 +242,7 @@ export async function getPlaybackInfo(trackId: string, preferredQuality?: string
 
     // All qualities failed — possibly expired token.  Refresh once and retry.
     try {
-        await refreshTidalToken(true);
+        await refreshTidalToken();
         token = loadToken();
         if (!token) return null;
 
@@ -270,7 +270,7 @@ export async function getBrowserPlaybackInfo(trackId: string, preferredQuality?:
     }
 
     try {
-        await refreshTidalToken(true);
+        await refreshTidalToken();
         token = loadToken();
         if (!token) return null;
 
@@ -334,7 +334,7 @@ export async function getVideoPlaybackInfo(videoId: string): Promise<VideoPlayba
     }
 
     try {
-        await refreshTidalToken(true);
+        await refreshTidalToken();
         token = loadToken();
         if (!token) return null;
 

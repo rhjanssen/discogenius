@@ -63,12 +63,32 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
     if (failures.length > 0) throw new Error(`Curation failed for ${failures.length} of ${artists.length} artists: ${failures[0].artistName || failures[0].artistId}: ${failures[0].error}`);
 };
 
+/** A scheduled upgrade pass queues at most this many album/track downloads or
+ * conversions, and does nothing while this many upgrade downloads still wait. */
+const SCHEDULED_UPGRADE_UNIT_BUDGET = 25;
+const SCHEDULED_UPGRADE_QUEUE_CEILING = 50;
+
 export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
         progress: 10,
         description: "Tracked files - comparing against quality profile cutoffs",
     });
-    const result = await UpgraderService.checkUpgrades(true);
+    const mode = job.payload.mode ?? "manual";
+    if (mode === "scheduled") {
+        const pending = UpgraderService.pendingUpgradeCount();
+        if (pending >= SCHEDULED_UPGRADE_QUEUE_CEILING) {
+            ctx.updateCommandDescription(job, {
+                progress: 100,
+                description: `Skipped: ${pending} upgrade downloads already waiting`,
+            });
+            return;
+        }
+    }
+    const result = await UpgraderService.checkUpgrades(
+        mode === "manual",
+        undefined,
+        mode === "scheduled" ? { maxUnits: SCHEDULED_UPGRADE_UNIT_BUDGET } : {},
+    );
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Queued ${result.details.length} upgrade candidate(s)`,

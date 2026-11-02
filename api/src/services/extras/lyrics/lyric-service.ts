@@ -553,17 +553,54 @@ function lyricCandidateFile(candidate: LyricCandidateRow): LyricFileRow {
   };
 }
 
-async function fetchProviderLyrics(providerId: string, providerMediaId: string): Promise<ProviderLyrics | null> {
+/**
+ * Provider tracks that definitively have no lyrics (the provider answered
+ * "none", not an error), so retag/import/refresh passes stop asking again.
+ * Positive results persist as sidecar files and LyricFiles rows; this only
+ * remembers absence. In memory: bounded, and a restart simply re-asks once.
+ */
+export const PROVIDER_LYRICS_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const PROVIDER_LYRICS_MISS_MAX_ENTRIES = 50_000;
+const providerLyricsMisses = new Map<string, number>();
+
+function providerLyricsMissKey(providerId: string, providerMediaId: string): string {
+  return `${providerId}:${providerMediaId}`;
+}
+
+function rememberProviderLyricsMiss(key: string, now: number): void {
+  providerLyricsMisses.delete(key);
+  providerLyricsMisses.set(key, now + PROVIDER_LYRICS_MISS_TTL_MS);
+  while (providerLyricsMisses.size > PROVIDER_LYRICS_MISS_MAX_ENTRIES) {
+    const oldest = providerLyricsMisses.keys().next().value;
+    if (oldest === undefined) break;
+    providerLyricsMisses.delete(oldest);
+  }
+}
+
+export function resetProviderLyricsMissesForTests(): void {
+  providerLyricsMisses.clear();
+}
+
+export async function fetchProviderLyrics(providerId: string, providerMediaId: string, now = Date.now()): Promise<ProviderLyrics | null> {
+  const key = providerLyricsMissKey(providerId, providerMediaId);
+  const missUntil = providerLyricsMisses.get(key);
+  if (missUntil !== undefined) {
+    if (missUntil > now) return null;
+    providerLyricsMisses.delete(key);
+  }
+  let lyrics: ProviderLyrics | null;
   try {
     const provider = streamingProviderManager.getStreamingProvider(providerId);
-    const lyrics = await provider.getLyrics?.(providerMediaId) ?? null;
-    if (!lyrics?.subtitles && !lyrics?.text) {
-      return null;
-    }
-    return lyrics;
+    lyrics = await provider.getLyrics?.(providerMediaId) ?? null;
   } catch {
+    // Transient (network, session): not evidence of absence, ask again later.
     return null;
   }
+  if (!lyrics?.subtitles && !lyrics?.text) {
+    rememberProviderLyricsMiss(key, now);
+    return null;
+  }
+  return lyrics;
 }
 
 async function recordSharedLyricsRelation(provider: string, media: ProviderTrackLyricsRow, sourceMedia: ProviderTrackLyricsRow): Promise<void> {

@@ -32,6 +32,7 @@ import statusRouter from "./routes/status.js";
 import systemStatusRouter from "./routes/system-status.js";
 import systemTaskRouter from "./routes/system-task.js";
 import tracksRouter from "./routes/v1/track.js";
+import trackFileRouter from "./routes/v1/trackfile.js";
 import unmappedRouter from "./routes/unmapped.js";
 import videosRouter from "./routes/v1/video.js";
 import { closeAppLogging, initAppLogging } from "./services/config/app-logger.js";
@@ -44,6 +45,7 @@ import {
 } from "./services/commands/runtime-diagnostics.js";
 import { runRuntimeMaintenance } from "./services/commands/runtime-maintenance.js";
 import { collectHealthDiagnosticsSnapshot } from "./services/commands/health.js";
+import { listProviderAuthPublic } from "./services/providers/provider-auth-state.js";
 import { CommandExecutor } from "./services/commands/command-executor.js";
 import { CommandWorkerPool } from "./services/commands/worker/command-worker-pool.js";
 import { readIntEnv } from "./utils/env.js";
@@ -187,6 +189,9 @@ initDatabase();
 initAppLogging();
 const fileRecoveryErrors = await FileMutationJournal.recoverPending();
 for (const error of fileRecoveryErrors) console.error(`[FileRecovery] ${error}`);
+const { recoverArtworkMaterializeFollowUps } = await import("./services/metadata/artwork-materialize-followup.js");
+const artworkFollowUpErrors = await recoverArtworkMaterializeFollowUps();
+for (const error of artworkFollowUpErrors) console.error(`[ArtworkFollowUp] ${error}`);
 startRuntimeDiagnostics();
 const startupHealthSnapshot = collectHealthDiagnosticsSnapshot();
 if (startupHealthSnapshot.status !== "healthy") {
@@ -232,6 +237,7 @@ app.use("/api/v1/config", authMiddleware, configRouter);
 app.use("/api/v1/artist", authMiddleware, artistsRouter);
 app.use("/api/v1/album", authMiddleware, albumsRouter);
 app.use("/api/v1/track", authMiddleware, tracksRouter);
+app.use("/api/v1/trackfile", authMiddleware, trackFileRouter);
 app.use("/api/v1/video", authMiddleware, videosRouter);
 app.use("/api/v1/queue", authMiddleware, queueRouter);
 app.use("/api/v1/command", authMiddleware, commandRouter);
@@ -285,9 +291,17 @@ function sendHealthSnapshot(res: express.Response) {
 app.get("/health", (_req, res) => {
   // Liveness only. Diagnostic snapshots (queue, WAL, imports) live on
   // /api/health so a stale command or last week's failed import cannot 503
-  // a reverse-proxy probe and restart a busy process.
+  // a reverse-proxy probe and restart a busy process. providerAuth is a
+  // read of the persisted login state. status stays "ok" even when a
+  // provider needs a new login.
   res.setHeader("cache-control", "no-store");
-  res.status(200).json({ status: "ok" });
+  let providerAuth: ReturnType<typeof listProviderAuthPublic> = [];
+  try {
+    providerAuth = listProviderAuthPublic();
+  } catch {
+    providerAuth = [];
+  }
+  res.status(200).json({ status: "ok", providerAuth });
 });
 
 app.get("/api/health", authMiddleware, (_, res) => {
@@ -363,6 +377,14 @@ const server = app.listen(port, () => {
   });
 
   scheduleStartupMaintenance();
+
+  // Local matcher replay. Stored automatic matches stay candidates until this
+  // pass rewrites them; it must not block listen and it does not call providers.
+  import("./services/music/matcher-replay-service.js").then(({ startStoredMatcherReplay }) => {
+    startStoredMatcherReplay();
+  }).catch((error) => {
+    console.error("Failed to start stored matcher replay:", error);
+  });
 
   // Always start the off-thread command worker pool at boot (no toggle). Both
   // the command executor and the download processor's import step dispatch

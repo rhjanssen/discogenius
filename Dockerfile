@@ -1,6 +1,8 @@
 # tiddl requires Python >= 3.13
 ARG APPLE_MUSIC_DOWNLOADER_IMAGE=ghcr.io/zhaarey/apple-music-downloader@sha256:e5f84e46ac4e7adc3c64ad462a0f328ac2f934ed7152d83840792bd21621aac1
-FROM python:3.13-slim-bookworm AS base
+# FFprobe >= 6.1 reports native E-AC-3 JOC/Atmos profiles. Bookworm's 5.1
+# cannot supply that evidence; use the maintained Debian 13 media runtime.
+FROM python:3.13-slim-trixie AS base
 
 # Install Node.js 22.x and system dependencies. yt-dlp's YouTube EJS challenge
 # solver requires Node 22 or newer (and Node is also the Discogenius runtime).

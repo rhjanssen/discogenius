@@ -1,8 +1,11 @@
+import { COMPILATION_POLICY_CONTRACT_VALUES as COMPILATION_POLICY_VALUES, type CompilationPolicyContract as CompilationPolicy } from "../../contracts/config.js";
+const DEFAULT_COMPILATION_POLICY: CompilationPolicy = "original_discography";
 import { db } from "../../database.js";
 import path from "path";
 import { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR } from "./bootstrap.js";
 export { REPO_ROOT, CONFIG_DIR, APP_DATA_DIR };
 import { normalizeMbHost } from "../catalog/mb-connection.js";
+import { resolveAlbumArtistMode, type AlbumArtistMode } from "../mediafiles/album-artist-mode.js";
 
 export interface AppConfig {
   admin_password: string;
@@ -71,7 +74,8 @@ export interface FilteringConfig {
    */
   include_video_official_audio: boolean;
   prefer_explicit: boolean;            // Prefer explicit versions over clean
-  enable_redundancy_filter: boolean;   // Deduplicate album versions/editions
+  enable_redundancy_filter: boolean;   // Automatic curation. Key kept; the setting is labelled Automatic curation.
+  compilation_policy: CompilationPolicy; // Compilations only fill gaps, or compete for fewest albums
   require_provider_availability: boolean; // Only mark release groups wanted when a provider offer exists
 }
 
@@ -125,6 +129,19 @@ export interface MetadataConfig {
   write_audio_tags_policy?: WriteAudioTagsPolicy;
   /** Remove all existing tags before writing desired ones (scrub existing tags first). */
   scrub_audio_tags?: boolean;
+  /**
+   * ALBUMARTIST spelling. `plex_jellyfin` (default): one primary MusicBrainz
+   * name, or Various Artists. `picard`: the release credit with join phrases.
+   */
+  album_artist_mode: AlbumArtistMode;
+  /** Legacy. `true` migrates to `album_artist_mode: "picard"` and is not saved again. */
+  full_album_artist_credit?: boolean;
+  /** Artist names from MusicBrainz locale aliases (Picard "translate artist names"). On: "Tchaikovsky", not "Пётр Ильич Чайковский". */
+  translate_artist_names?: boolean;
+  /** Locale preference, comma separated, first match wins. */
+  artist_name_locales?: string;
+  /** Keep names already written in Latin script. */
+  translate_artist_names_skip_latin?: boolean;
 }
 
 export interface AccountConfig {
@@ -144,8 +161,6 @@ export interface QualityConfig {
   embed_cover: boolean;
   embed_lyrics: boolean;
   upgrade_existing_files: boolean;
-  /** When true, lowering preferred quality transcodes existing stereo files down to that class. */
-  downconvert_existing_files: boolean;
   convert_video_mp4?: boolean;
   extract_flac?: boolean;
 }
@@ -216,12 +231,12 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     embed_cover: true,
     embed_lyrics: true,
     upgrade_existing_files: false,
-    downconvert_existing_files: false,
     convert_video_mp4: true,
     extract_flac: true,
   },
   filtering: {
     enable_redundancy_filter: true,
+    compilation_policy: DEFAULT_COMPILATION_POLICY,
     prefer_explicit: true,
     include_album: true,
     include_ep: true,
@@ -306,6 +321,10 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
     embed_replaygain: true,
     write_audio_tags_policy: "new_files",
     scrub_audio_tags: false,
+    album_artist_mode: "plex_jellyfin",
+    translate_artist_names: true,
+    artist_name_locales: "en,nl",
+    translate_artist_names_skip_latin: true,
   },
   streaming: {
     default_provider: "tidal",
@@ -340,6 +359,9 @@ function normalizeMonitoringConfig(raw?: Partial<MonitoringConfig>): MonitoringC
 function normalizeFilteringConfig(raw?: Partial<FilteringConfig>): FilteringConfig {
   return {
     enable_redundancy_filter: raw?.enable_redundancy_filter ?? DEFAULT_CONFIG.filtering.enable_redundancy_filter,
+    compilation_policy: (COMPILATION_POLICY_VALUES as readonly string[]).includes(String(raw?.compilation_policy))
+      ? raw!.compilation_policy as CompilationPolicy
+      : DEFAULT_CONFIG.filtering.compilation_policy,
     prefer_explicit: raw?.prefer_explicit ?? DEFAULT_CONFIG.filtering.prefer_explicit,
     include_album: raw?.include_album ?? DEFAULT_CONFIG.filtering.include_album,
     include_ep: raw?.include_ep ?? DEFAULT_CONFIG.filtering.include_ep,
@@ -406,6 +428,12 @@ function normalizeMetadataConfig(raw?: Partial<MetadataConfig>): MetadataConfig 
       ? writeAudioTagsPolicy
       : DEFAULT_CONFIG.metadata.write_audio_tags_policy,
     scrub_audio_tags: raw?.scrub_audio_tags ?? DEFAULT_CONFIG.metadata.scrub_audio_tags,
+    album_artist_mode: resolveAlbumArtistMode(raw),
+    translate_artist_names: raw?.translate_artist_names ?? DEFAULT_CONFIG.metadata.translate_artist_names,
+    artist_name_locales: typeof raw?.artist_name_locales === "string" && raw.artist_name_locales.trim()
+      ? raw.artist_name_locales.trim()
+      : DEFAULT_CONFIG.metadata.artist_name_locales,
+    translate_artist_names_skip_latin: raw?.translate_artist_names_skip_latin ?? DEFAULT_CONFIG.metadata.translate_artist_names_skip_latin,
   };
 }
 
@@ -454,7 +482,6 @@ function normalizeQualityConfig(raw?: Partial<QualityConfig>): QualityConfig {
     embed_cover: raw?.embed_cover ?? DEFAULT_CONFIG.quality.embed_cover,
     embed_lyrics: raw?.embed_lyrics ?? DEFAULT_CONFIG.quality.embed_lyrics,
     upgrade_existing_files: raw?.upgrade_existing_files ?? DEFAULT_CONFIG.quality.upgrade_existing_files,
-    downconvert_existing_files: raw?.downconvert_existing_files ?? DEFAULT_CONFIG.quality.downconvert_existing_files,
     convert_video_mp4: raw?.convert_video_mp4 ?? DEFAULT_CONFIG.quality.convert_video_mp4,
     extract_flac: raw?.extract_flac ?? DEFAULT_CONFIG.quality.extract_flac,
   };

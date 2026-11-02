@@ -6,10 +6,6 @@ import { after, before, beforeEach, test } from "node:test";
 import { seedLibraryArtistMonitoring } from "../../test-support/active-schema-fixture.js";
 import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 import { seedAcceptedProviderTrackMatch } from "../../test-support/normalized-provider-fixtures.js";
-import {
-  resolveArtistMetadataId,
-  stampArtistLibraryPath,
-} from "../music/managed-artists.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-files-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -25,6 +21,7 @@ let libraryScanModule: typeof import("./library-scan.js");
 let audioLibraryPathModule: typeof import("./audio-library-path.js");
 let artistStatisticsModule: typeof import("../music/artist-statistics-service.js");
 let extraFileServiceModule: typeof import("../extras/files/extra-file-service.js");
+let managedArtistsModule: typeof import("../music/managed-artists.js");
 
 
 function seedCatalogArtist(options: {
@@ -42,13 +39,13 @@ function seedCatalogArtist(options: {
     monitored: options.monitored !== false,
   });
   if (options.path) {
-    stampArtistLibraryPath(artistMetadataId, options.path, true);
+    managedArtistsModule.stampArtistLibraryPath(artistMetadataId, options.path, true);
   }
   return { metadataId: artistMetadataId, mbid: options.mbid };
 }
 
 function requireCatalogArtistId(mbidOrKey: string): number {
-  const id = resolveArtistMetadataId(mbidOrKey);
+  const id = managedArtistsModule.resolveArtistMetadataId(mbidOrKey);
   if (id == null) throw new Error(`missing ArtistMetadata for ${mbidOrKey}`);
   return id;
 }
@@ -167,6 +164,7 @@ before(async () => {
 
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
+  managedArtistsModule = await import("../music/managed-artists.js");
 
   configModule = await import("../config/config.js");
   libraryFilesModule = await import("./library-files.js");
@@ -598,12 +596,13 @@ test("removeEmptyParents prunes nested empty download folders up to the stop dir
   fs.mkdirSync(jobDir, { recursive: true });
   fs.rmdirSync(jobDir);
 
-  libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot);
+  assert.equal(libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot), 3);
 
   assert.equal(fs.existsSync(path.join(downloadRoot, "tidal", "12345", "album")), false);
   assert.equal(fs.existsSync(path.join(downloadRoot, "tidal", "12345")), false);
   assert.equal(fs.existsSync(path.join(downloadRoot, "tidal")), false);
   assert.ok(fs.existsSync(downloadRoot));
+  assert.equal(libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot), 0);
 });
 
 test("removeEmptyParents prunes empty video job trees under downloads/videos", () => {
@@ -612,7 +611,7 @@ test("removeEmptyParents prunes empty video job trees under downloads/videos", (
   fs.mkdirSync(jobDir, { recursive: true });
   fs.rmdirSync(jobDir);
 
-  libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot);
+  assert.equal(libraryFilesModule.removeEmptyParents(path.dirname(jobDir), downloadRoot), 3);
 
   assert.equal(fs.existsSync(path.join(downloadRoot, "videos", "tidal", "99999")), false);
   assert.equal(fs.existsSync(path.join(downloadRoot, "videos", "tidal")), false);
@@ -631,6 +630,44 @@ test("removeEmptyParents never prunes a prefix-sibling outside the stop root", (
 
   assert.equal(fs.existsSync(outsideNested), true);
   assert.equal(fs.existsSync(outsideRoot), true);
+});
+
+test("removeEmptyParents preserves a nonempty ancestor and reports only removed folders", () => {
+  const root = path.join(tempDir, "prune-nonempty-root");
+  const parent = path.join(root, "artist");
+  const empty = path.join(parent, "old-album", "disc");
+  fs.mkdirSync(empty, { recursive: true });
+  fs.writeFileSync(path.join(parent, "artist.nfo"), "owned sidecar");
+
+  assert.equal(libraryFilesModule.removeEmptyParents(empty, root), 2);
+  assert.equal(fs.existsSync(empty), false);
+  assert.equal(fs.readFileSync(path.join(parent, "artist.nfo"), "utf8"), "owned sidecar");
+  assert.equal(fs.existsSync(root), true);
+});
+
+test("removeEmptyParents never traverses a directory link to delete outside the root", () => {
+  const root = path.join(tempDir, "prune-link-root");
+  const outside = path.join(tempDir, "prune-link-outside");
+  const outsideEmpty = path.join(outside, "album", "disc");
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(outsideEmpty, { recursive: true });
+  const alias = path.join(root, "artist");
+  fs.symlinkSync(outside, alias, process.platform === "win32" ? "junction" : "dir");
+
+  assert.equal(libraryFilesModule.removeEmptyParents(path.join(alias, "album", "disc"), root), 0);
+  assert.equal(fs.existsSync(outsideEmpty), true);
+  assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
+  assert.equal(fs.existsSync(root), true);
+});
+
+test("removeEmptyParents recognizes the same Windows root with different path casing", { skip: process.platform !== "win32" }, () => {
+  const root = path.join(tempDir, "prune-casing-root");
+  const empty = path.join(root, "artist", "album");
+  fs.mkdirSync(empty, { recursive: true });
+  assert.equal(libraryFilesModule.removeEmptyParents(empty, root.toLowerCase()), 2);
+  assert.equal(fs.existsSync(root), true);
+  assert.equal(libraryFilesModule.removeEmptyParents(root.toUpperCase(), root.toLowerCase()), 0);
+  assert.equal(fs.existsSync(root), true);
 });
 
 test("resolveArtistFolderForPersistence reuses the canonical folder for provider rows with the same MusicBrainz artist", () => {
@@ -990,7 +1027,7 @@ test("disk scan relinks album covers and renamed lyrics to their provider album 
   });
 
   const matchFileToMedia = (libraryScanModule.DiskScanService as any).matchFileToMedia.bind(libraryScanModule.DiskScanService);
-  const scanArtistId = String(requireCatalogArtistId("artist-mbid-1"));
+  const scanArtistId = "artist-mbid-1";
   assert.deepEqual(matchFileToMedia(coverPath, scanArtistId, "music"), {
     albumId: "provider-album-1",
     mediaId: null,
@@ -1330,7 +1367,7 @@ test("upsertLibraryFile keeps stereo and spatial track rows separate for the sam
   assert.equal(snapshot.files?.total, 2);
 });
 
-test("upsertLibraryFile merges duplicate path and tracked asset identity rows during rescan", () => {
+test("upsertLibraryFile updates exact path identity while preserving distinct sidecars for verified cleanup", () => {
   seedCatalogArtist({ mbid: "1", name: "Queen", path: "Queen" });
 const root = configModule.Config.getMusicPath();
   const targetPath = path.join(root, "Queen", "A Night at the Opera", "cover.jpg");
@@ -1365,11 +1402,12 @@ const root = configModule.Config.getMusicPath();
     ORDER BY id
   `).all() as Array<{ id: number; releaseGroupMbid: string; file_type: string; file_path: string }>;
 
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0]?.id, id);
-  assert.equal(rows[0]?.releaseGroupMbid, "10");
-  assert.equal(rows[0]?.file_type, "cover");
-  assert.equal(rows[0]?.file_path, targetPath);
+  assert.equal(rows.length, 2);
+  const target = rows.find(row => row.file_path === targetPath);
+  assert.equal(target?.id, id);
+  assert.equal(target?.releaseGroupMbid, "10");
+  assert.equal(target?.file_type, "cover");
+  assert.equal(fs.readFileSync(stalePath,"utf8"),"cover");
 
   const metadataFile = dbModule.db.prepare(`
     SELECT artist_id, canonical_release_group_mbid AS releaseGroupMbid, file_path, file_type, type
@@ -1387,7 +1425,7 @@ const root = configModule.Config.getMusicPath();
     FROM MetadataFiles
     WHERE file_path = ?
   `).get(stalePath);
-  assert.equal(staleMetadataFile, undefined);
+  assert.ok(staleMetadataFile);
 });
 
 test("tracked sidecars do not collide when providers reuse the same external ID", () => {

@@ -27,6 +27,11 @@ export function buildProviderReleaseGroupMatches(
             providerUrl: album.url ?? null,
             title: String(album.title || ""),
             version: album.version ?? null,
+            artistCredit: [
+                album.artist_name,
+                ...(Array.isArray(album.artists) ? album.artists.map((artist: { name?: string | null }) => artist?.name) : []),
+            ].filter(Boolean).join("\n") || null,
+            label: album.label ?? album.copyright ?? null,
             releaseDate: album.release_date ?? null,
             type: album.type ?? null,
             quality: album.quality ?? null,

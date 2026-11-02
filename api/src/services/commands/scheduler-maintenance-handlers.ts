@@ -5,7 +5,7 @@ import {
     runDeepDatabaseHealthCheck,
     type HealthDiagnosticsSnapshot,
 } from "./health.js";
-import { DiskScanService } from "../mediafiles/library-scan.js";
+import { libraryMetadataBackfillService, type MetadataFillOptions } from "../mediafiles/library-metadata-backfill.js";
 import { OrganizerService } from "../mediafiles/organizer.js";
 import { CommandModel, type CommandModelOf } from "./command-model.js";
 import { CommandNames } from "./command-names.js";
@@ -13,11 +13,6 @@ import { CommandQueueManager } from "./command-queue-manager.js";
 import { ArtistTopTrackService } from "../music/artist-top-track-service.js";
 import { AlbumLibraryIndexService } from "../music/album-library-index-service.js";
 import { TrackLibraryIndexService } from "../music/track-library-index-service.js";
-import {
-    refreshArtworkPreferenceCache,
-    type ArtworkPreferenceRefreshOptions,
-    type ArtworkPreferenceRefreshSummary,
-} from "../metadata/artwork-preference-refresh.js";
 
 export interface SchedulerJobDescriptionUpdate {
     progress?: number;
@@ -30,11 +25,13 @@ export interface SchedulerMaintenanceHandlerContext {
 }
 
 export interface ConfigPruneMaintenanceDependencies {
-    refreshArtworkPreferenceCache: (
-        options: ArtworkPreferenceRefreshOptions,
-    ) => Promise<ArtworkPreferenceRefreshSummary>;
     pruneDisabledMetadata: () => Promise<void>;
-    reconcileLibraryMetadata: () => Promise<{
+    reconcileArtistMetadata?: (artistId: string, options: MetadataFillOptions) => Promise<{
+        downloaded: number;
+        failed: number;
+        skipped: number;
+    }>;
+    reconcileLibraryMetadata: (options: MetadataFillOptions) => Promise<{
         downloaded: number;
         failed: number;
         skipped: number;
@@ -42,74 +39,65 @@ export interface ConfigPruneMaintenanceDependencies {
 }
 
 const CONFIG_PRUNE_DEPENDENCIES: ConfigPruneMaintenanceDependencies = {
-    refreshArtworkPreferenceCache,
     pruneDisabledMetadata: () => OrganizerService.pruneDisabledMetadata(),
-    reconcileLibraryMetadata: () => DiskScanService.fillMissingMetadataFilesForLibrary(),
+    reconcileLibraryMetadata: options => libraryMetadataBackfillService.fillMissingMetadataFilesForLibrary(options),
+    reconcileArtistMetadata: (artistId, options) => libraryMetadataBackfillService.fillMissingMetadataFiles(artistId, options),
 };
 
-/**
- * Preference flips add a global, durable cache-acquisition phase before the
- * existing ConfigPrune sidecar/embed reconciliation. Without the payload flag,
- * this remains the ordinary two-step ConfigPrune behavior.
- */
+/** Reconcile actual library owners once. The backfill resolves selected
+ * edition/artist artwork before replacing sidecars and embedded covers. */
 export async function runConfigPruneMaintenance(
     job: CommandModelOf<typeof CommandNames.ConfigPrune>,
     context: SchedulerMaintenanceHandlerContext,
     dependencies: ConfigPruneMaintenanceDependencies = CONFIG_PRUNE_DEPENDENCIES,
 ): Promise<void> {
+    if (job.payload.cleanupArtworkCache === true) {
+        if (job.payload.refreshArtworkPreference === true) throw new Error("Complete library artwork replacement before starting cache cleanup");
+        const { runArtworkCacheWork } = await import("./artwork-cache-work.js");
+        return runArtworkCacheWork(job,context);
+    }
     const refreshArtworkPreference = job.payload.refreshArtworkPreference === true;
-    let artworkSummary: ArtworkPreferenceRefreshSummary | null = null;
-
     if (refreshArtworkPreference) {
-        context.updateCommandDescription({
-            progress: 1,
-            description: "Refreshing artwork preference across the canonical catalog",
-        });
-        artworkSummary = await dependencies.refreshArtworkPreferenceCache({
-            yieldToEventLoop: context.yieldToEventLoop,
-            onProgress: (progress) => {
-                const percent = progress.total > 0
-                    ? Math.min(85, Math.max(1, Math.round((progress.completed / progress.total) * 85)))
-                    : 85;
-                context.updateCommandDescription({
-                    progress: percent,
-                    description:
-                        `Refreshing canonical artwork (${progress.completed}/${progress.total}; ` +
-                        `${progress.albumsCompleted} album(s), ${progress.artistsCompleted} artist(s))`,
-                });
-            },
-        });
-        context.updateCommandDescription({
-            progress: 88,
-            description:
-                `Refreshed artwork for ${artworkSummary.completed}/${artworkSummary.total} ` +
-                `catalog item(s)${artworkSummary.failed > 0 ? ` (${artworkSummary.failed} failed)` : ""}`,
-        });
+        context.updateCommandDescription({ progress: 1, description: "Applying library artwork settings" });
     }
-
+    const fillOptions: MetadataFillOptions = {
+        repairMissingOnly: !refreshArtworkPreference,
+        writeEmbeddedMediaMetadata: refreshArtworkPreference,
+        fetchMissingLyrics: false,
+        onProgress: refreshArtworkPreference ? description => context.updateCommandDescription({
+            description: `Applying selected artwork - ${description}`,
+        }) : undefined,
+    };
+    const scopedArtistIds = refreshArtworkPreference && Array.isArray(job.payload.artistIds)
+        ? [...new Set(job.payload.artistIds.map((id) => String(id || "").trim()).filter(Boolean))]
+        : [];
+    let reconciliation: { downloaded: number; failed: number; skipped: number };
+    if (scopedArtistIds.length > 0 && dependencies.reconcileArtistMetadata) {
+        // Artwork re-resolution for named artists only (for example after an
+        // artwork selection fix); the rest of the library is not revisited.
+        reconciliation = { downloaded: 0, failed: 0, skipped: 0 };
+        for (const [index, artistId] of scopedArtistIds.entries()) {
+            context.updateCommandDescription({
+                progress: Math.max(1, Math.floor((index / scopedArtistIds.length) * 100)),
+                description: `Applying selected artwork - artist ${index + 1}/${scopedArtistIds.length}`,
+            });
+            const result = await dependencies.reconcileArtistMetadata(artistId, { ...fillOptions, onProgress: undefined });
+            reconciliation.downloaded += result.downloaded;
+            reconciliation.failed += result.failed;
+            reconciliation.skipped += result.skipped;
+            await context.yieldToEventLoop?.();
+        }
+    } else {
+        await dependencies.pruneDisabledMetadata();
+        reconciliation = await dependencies.reconcileLibraryMetadata(fillOptions);
+    }
+    if (refreshArtworkPreference && reconciliation.failed > 0) {
+        throw new Error(`Artwork preference update incomplete: ${reconciliation.failed} library metadata operation(s) failed`);
+    }
     if (refreshArtworkPreference) {
-        context.updateCommandDescription({
-            progress: 90,
-            description: "Pruning metadata disabled by the current configuration",
-        });
-    }
-    await dependencies.pruneDisabledMetadata();
-
-    if (refreshArtworkPreference) {
-        context.updateCommandDescription({
-            progress: 95,
-            description: "Reconciling library artwork sidecars and embedded covers",
-        });
-    }
-    const reconciliation = await dependencies.reconcileLibraryMetadata();
-
-    if (refreshArtworkPreference && artworkSummary) {
         context.updateCommandDescription({
             progress: 100,
-            description:
-                `Artwork preference applied to ${artworkSummary.completed - artworkSummary.failed}/` +
-                `${artworkSummary.total} catalog item(s); reconciled ${reconciliation.downloaded} ` +
-                `library metadata file(s), ${reconciliation.failed} failed`,
+            description: `Artwork preference applied; reconciled ${reconciliation.downloaded} library metadata file(s), 0 failed`,
         });
     }
 }

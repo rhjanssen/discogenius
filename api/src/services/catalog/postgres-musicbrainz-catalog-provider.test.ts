@@ -49,6 +49,8 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
       }];
     }
     if (sql.includes("JOIN medium m")) {
+      assert.match(sql,/track_gid_redirect redirect WHERE redirect.new_id=t.id/);
+      assert.match(sql,/recording_gid_redirect redirect WHERE redirect.new_id=rec.id/);
       return [{
         rg_id: 101,
         edition_id: 201,
@@ -61,6 +63,8 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
         format: "Digital Media",
         medium_name: "",
         track_gid: "04f5b2f0-ec1f-4b81-9dd6-61a21b451f52",
+        old_track_ids: ["old-track-id"],
+        old_recording_ids: ["old-recording-id"],
         track_pos: 1,
         track_number: "1",
         track_name: "The Spirit",
@@ -70,6 +74,9 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
         recording_length: 205000,
         video: false,
         isrcs: "GBUMTEST00001",
+        script_iso: "Latn",
+        language_iso: "eng",
+        amazon_asin: "B000123456",
       }];
     }
     if (sql.includes("release_unknown_country")) {
@@ -85,7 +92,7 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
       || sql.includes("l_genre_release_group") || sql.includes("release_group_tag")
       || sql.includes("l_release_group_url") || sql.includes("release_group_alias")) {
       if (sql.includes("JOIN release_label")) {
-        return [{ release_gid: "d75f9d41-a70a-4ee1-9343-b58a628d5130", label_name: "Island" }];
+        return [{ release_gid: "d75f9d41-a70a-4ee1-9343-b58a628d5130", label_name: "Island", catalog_number: "I-1" }];
       }
       if (sql.includes("l_release_url")) {
         return [{
@@ -121,8 +128,14 @@ test("bulk MusicBrainz hydration keeps release-group and unknown-country dates",
     assert.equal(entry.detail.releasedate, "2020-05-15");
     assert.equal(entry.detail.Releases[0].ReleaseDate, "2021-06-24");
     assert.deepEqual(entry.detail.Releases[0].Label, ["Island"]);
+    assert.deepEqual(entry.detail.Releases[0].CatalogNumbers, ["I-1"]);
+    assert.equal(entry.detail.Releases[0].Asin, "B000123456");
+    assert.equal(entry.detail.Releases[0].Script, "Latn");
+    assert.equal(entry.detail.Releases[0].Language, "eng");
     assert.deepEqual(entry.detail.Releases[0].ExternalUrls, ["https://tidal.com/album/123"]);
     assert.deepEqual(entry.detail.Releases[0].Tracks[0].Isrcs, ["GBUMTEST00001"]);
+    assert.deepEqual(entry.detail.Releases[0].Tracks[0].OldIds,["old-track-id"]);
+    assert.deepEqual(entry.detail.Releases[0].Tracks[0].OldRecordingIds,["old-recording-id"]);
     assert.deepEqual(entry.detail.genres, ["pop", "alternative"]);
     assert.deepEqual(entry.detail.aliases, ["Spirit"]);
     assert.deepEqual(entry.detail.links, [{ type: "official homepage", target: "https://example.com/spirit" }]);
@@ -202,4 +215,69 @@ test("earlierDate compares partial ISO dates with precision preference", () => {
   assert.equal(earlierDate("2016-04-29", "2016-03-01"), "2016-03-01");
   assert.equal(earlierDate("2016-04-15", "2016-04-29"), "2016-04-15");
   assert.equal(earlierDate("2016-04-29", "2016-04-15"), "2016-04-15");
+});
+
+test("track artist credits come from the track's own artist credit, in bounded batches, keyed by the requested MBID", async () => {
+  const provider = new PostgresMusicBrainzCatalogProvider({ connectionString: "postgresql://unused:unused@127.0.0.1:1/unused" });
+  const tracks = Array.from({ length: 501 }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`);
+  const batches: number[] = [];
+  (provider as any).query = async (sql: string, values: unknown[]) => {
+    assert.match(sql, /acn\.artist_credit = requested\.artist_credit/);
+    assert.match(sql, /track_gid_redirect/);
+    const batch = values[0] as string[];
+    batches.push(batch.length);
+    if (!batch.includes(tracks[0])) return [];
+    return [
+      { requested_gid: tracks[0].toUpperCase(), position: 0, artist_gid: "a3ee920f-4e7f-4993-8aca-4b8538cfaa4a", artist_name: "Afrojack", artist_sort_name: "Afrojack", credited_name: "AFROJACK", join_phrase: " feat. " },
+      { requested_gid: tracks[0], position: 1, artist_gid: "481cbdd9-02ac-46fd-825f-afed658bc505", artist_name: "Eva Simons", artist_sort_name: "Simons, Eva", credited_name: "Eva Simons", join_phrase: "" },
+    ];
+  };
+  try {
+    const result = await provider.getTrackArtistCredits([...tracks, "not-a-uuid", tracks[0]]);
+    assert.deepEqual(batches, [500, 1]);
+    assert.deepEqual(result.get(tracks[0]), [
+      { artistId: "a3ee920f-4e7f-4993-8aca-4b8538cfaa4a", artistName: "Afrojack", artistSortName: "Afrojack", creditedName: "AFROJACK", joinPhrase: " feat. " },
+      { artistId: "481cbdd9-02ac-46fd-825f-afed658bc505", artistName: "Eva Simons", artistSortName: "Simons, Eva", creditedName: "Eva Simons", joinPhrase: "" },
+    ]);
+    assert.equal(result.size, 1);
+  } finally { await provider.dispose(); }
+});
+
+test("folksonomy genres keep only tags MusicBrainz recognises as genres", async () => {
+  const provider = new PostgresMusicBrainzCatalogProvider({ connectionString: "postgresql://unused:unused@127.0.0.1:1/unused" });
+  let tagSql = "";
+  (provider as any).query = async (sql: string) => {
+    if (sql.includes("JOIN release_group_tag")) tagSql = sql;
+    if (sql.includes("WHERE rg.gid = ANY")) return [{ id: 1, gid: "rg", name: "rg", secondary_types: [] }];
+    return [];
+  };
+  try {
+    await provider.getReleaseGroupDetails(["rg"]);
+    assert.match(tagSql, /FROM genre g WHERE lower\(g\.name\) = lower\(t\.name\)/);
+    assert.match(tagSql, /FROM genre_alias ga/);
+  } finally { await provider.dispose(); }
+});
+
+test("artist locale aliases: unended aliases with a locale, grouped per requested artist", async () => {
+  const provider = new PostgresMusicBrainzCatalogProvider({ connectionString: "postgresql://unused:unused@127.0.0.1:1/unused" });
+  let aliasSql = "";
+  const tchaikovsky = "9ddd7abc-9e1b-471d-8031-583bc6bc8be9";
+  const other = "a3ee920f-4e7f-4993-8aca-4b8538cfaa4a";
+  (provider as any).query = async (sql: string) => {
+    aliasSql = sql;
+    return [
+      { artist_gid: tchaikovsky.toUpperCase(), name: "Pyotr Ilyich Tchaikovsky", sort_name: "Tchaikovsky, Pyotr Ilyich", locale: "en", primary_for_locale: true, type_name: "Artist name" },
+      { artist_gid: tchaikovsky, name: " ", sort_name: null, locale: "de", primary_for_locale: false, type_name: null },
+    ];
+  };
+  try {
+    const result = await provider.getArtistLocaleAliases([tchaikovsky, other, "nope"]);
+    assert.match(aliasSql, /NOT aa\.ended/);
+    assert.match(aliasSql, /aa\.locale IS NOT NULL/);
+    assert.deepEqual(result.get(tchaikovsky), [
+      { name: "Pyotr Ilyich Tchaikovsky", sortName: "Tchaikovsky, Pyotr Ilyich", locale: "en", primaryForLocale: true, type: "Artist name" },
+    ]);
+    assert.deepEqual(result.get(other), []);
+    assert.equal(result.size, 2);
+  } finally { await provider.dispose(); }
 });

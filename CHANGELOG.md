@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.22.0] - 2026-11-02
+
+### Added
+
+- Unmapped folders can be imported without clicking each track. Discogenius groups the files by folder, prefers a shared MusicBrainz release id, and otherwise scores album, artist, title, track number, and length the way Lidarr does. David Bowie's 1967 album and Taylor Swift's 1989 deluxe land on the official editions. A dry run (`POST /api/v1/unmapped/auto-import` with `dryRun: true`) reports the planned monitor, rename, retag, and cover actions and does not move or change any file. A folder that is still unclear stays in review with the reason. Linked track files can be sent back to Unmapped for another match without moving them on disk.
+- Tags follow Picard's multi-value fields: separate artist, label, catalog number, genre, and credit values, album artist as either the full credit or one primary artist, and MusicBrainz relationship credits (composer, producer, and the other credited roles) on audio and music videos.
+- Release type is written as the MusicBrainz primary type plus each secondary type, one value per field, so Plex can file a remix under Remixes. `mixtape/street` stays one type. An old single field such as `album; compilation` no longer matches, so the next retag rewrites it.
+- Library curation can be left on automatic. A person's album decision is kept, and every album can be unlocked at once without dropping edition choices or exclusions. Compilations fill gaps unless you ask for the fewest albums.
+- Provider sign-in is remembered as ok, needs a new login, or unknown. A dead login holds that provider's queue and a banner offers to connect again. TIDAL refreshes itself instead of locking you out until a manual login, and Apple is probed until its helper answers.
+- Rename can preview the whole library, including collisions, paths that are too long, and folders that should share one MusicBrainz id. Duplicate copies of the same track in one library can be resolved, and a manual import replaces the album's existing file for that recording only after the new file is in place.
+
+### Changed
+
+- Artist folders use one display name, reuse an existing MusicBrainz id folder, and keep each path piece within 255 bytes. Artist names can come from MusicBrainz locale aliases. Track artist tags use the MusicBrainz track credit.
+- Quality keeps one setting as the source of truth and stores the quality that was actually delivered separately. Album badges show the best track you have, next to the provider's label. Scheduled upgrade checks wait on upgrade downloads rather than the whole queue.
+- Retag and rename walk one album at a time and can resume after a restart. FLAC and MP3 tags are rewritten in place when the file has room. MP4 tags are rewritten in place when the atom layout allows it. A bad cover or a tag that fails to read back no longer fails the whole library.
+- Downloads and imports keep going when one album is busy, a provider offer is stale, or the process restarts before the first file change. An import does not count as choosing an edition and does not lock the album.
+
+### Fixed
+
+- A file with no known length is not scored as zero seconds. Planning reads the length from the file and falls back to the stored one, and a release that simply has no lengths does not beat a closer title match.
+- Artwork recovery no longer stalls the library when one cover intent fails. A failed replacement is retired and a new cover is fetched. Images you placed yourself are kept. Selected covers are published as real library images, and cache originals are removed only after a library copy exists.
+- Catalogue refresh keeps recording credits, video links, and acquisition plans when MusicBrainz merges or moves a recording. A provider item that could fill two different tracks matches neither. Karaoke and tribute releases are refused. An upgrade does not delete another album's copy of the same recording.
+- Scans resume, keep uncertain files for review, and do not treat an unfinished inventory as complete. Empty-folder cleanup stays inside what the scan actually verified.
+
 ## [2.21.0] - 2026-10-06
 
 ### Fixed

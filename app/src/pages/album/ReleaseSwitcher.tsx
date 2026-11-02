@@ -651,7 +651,7 @@ export function ReleaseSwitcher({
       library.qualityProfile,
       labelHint,
       selection?.locked
-        ? "Locked — automatic curation will not change this album."
+        ? "Chosen by you. Automatic curation will not swap this edition."
         : null,
       summary?.tooltip,
     ].filter(Boolean).join("\n") || slotLabel;
@@ -740,6 +740,11 @@ export function ReleaseSwitcher({
                 </AppTooltip>
               );
           })()}
+          {monitored && selection?.plan && selection.plan.state !== "current" ? (
+            <Text size={200} className={styles.unavailable}>
+              {selection.plan.state === "stale" ? "Selected offer needs refreshing" : "Selected offer is unavailable"}
+            </Text>
+          ) : null}
           {selection?.locked ? (
             <Badge appearance="tint" color="warning" size="small">Locked</Badge>
           ) : null}

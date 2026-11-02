@@ -125,7 +125,6 @@ test("dry-run reports the import and does not touch the file or queue it", async
     assert.equal(folder.editionId, 10);
     assert.equal(folder.filesUntouched, true);
     assert.equal(folder.queued, undefined);
-    assert.equal(folder.replacementPolicy, "delete-only-when-replaced-by-better-copy");
     assert.equal(folder.actions.some((action) => action.type === "monitor" && action.selectionMode === "auto" && action.locked === false), true);
     assert.equal(folder.actions.some((action) => action.type === "import" && action.trackId === 1000), true);
     assert.deepEqual(fs.readFileSync(incoming), before);

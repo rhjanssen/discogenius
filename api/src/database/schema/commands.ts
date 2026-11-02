@@ -10,6 +10,10 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       total INTEGER NOT NULL,
       cursor INTEGER NOT NULL DEFAULT 0,
       result TEXT NOT NULL,
+      -- 1 once every work row exists. Existing plans default to complete so a
+      -- checkpoint from the previous process resumes at its cursor. Streaming
+      -- plans insert 0 and append one album at a time.
+      plan_complete INTEGER NOT NULL DEFAULT 1,
       CHECK (cursor >= 0 AND cursor <= total)
     );
     CREATE TABLE ${guard} CommandRenameWork (
@@ -19,6 +23,7 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       file_id INTEGER NOT NULL,
       identity_snapshot TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'started', 'settled')),
+      restart_claims INTEGER NOT NULL DEFAULT 0,
       result TEXT,
       PRIMARY KEY (command_id, generation, ordinal),
       UNIQUE (command_id, generation, file_id)
@@ -39,6 +44,43 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (table_name, row_id)
     );
+    CREATE TABLE ${guard} LibraryCleanupJournal (
+      id TEXT PRIMARY KEY,
+      inventory_command_id INTEGER NOT NULL,
+      source_path TEXT NOT NULL UNIQUE,
+      staged_path TEXT NOT NULL UNIQUE,
+      root_path TEXT NOT NULL,
+      root_identity TEXT NOT NULL,
+      source_identity TEXT NOT NULL,
+      review_id INTEGER,
+      review_snapshot TEXT,
+      phase TEXT NOT NULL DEFAULT 'prepared' CHECK (phase IN ('prepared','committed')),
+      recovery_error TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE ${guard} LibraryCleanupCandidates (
+      inventory_command_id INTEGER NOT NULL REFERENCES commands(id) ON DELETE CASCADE,
+      file_path TEXT NOT NULL,
+      root_path TEXT NOT NULL,
+      source_identity TEXT NOT NULL,
+      reason TEXT NOT NULL CHECK (reason IN ('unowned', 'unresolved_sidecar', 'review_sidecar')),
+      PRIMARY KEY (inventory_command_id, file_path)
+    );
+    CREATE TABLE ${guard} LibraryCleanupResults (
+      inventory_command_id INTEGER NOT NULL REFERENCES commands(id) ON DELETE CASCADE,
+      file_path TEXT NOT NULL,
+      cleanup_command_id INTEGER REFERENCES commands(id) ON DELETE SET NULL,
+      status TEXT NOT NULL CHECK (status IN ('deleted','protected','refused')),
+      reason TEXT NOT NULL,
+      directory_witnesses TEXT NOT NULL DEFAULT '[]',
+      prune_done INTEGER NOT NULL DEFAULT 1,
+      pruned INTEGER NOT NULL DEFAULT 0,
+      prune_error TEXT,
+      PRIMARY KEY (inventory_command_id,file_path),
+      FOREIGN KEY (inventory_command_id,file_path) REFERENCES LibraryCleanupCandidates(inventory_command_id,file_path) ON DELETE CASCADE
+    );
+    CREATE INDEX ${guard} idx_cleanup_results_pending_prune
+      ON LibraryCleanupResults(cleanup_command_id,prune_done,file_path);
     CREATE TABLE ${guard} CommandFileWorkPlans (
       command_id INTEGER PRIMARY KEY REFERENCES commands(id) ON DELETE CASCADE,
       operation TEXT NOT NULL CHECK (operation IN ('retag', 'strip')),
@@ -52,6 +94,9 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       error_count INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      -- See CommandRenamePlans.plan_complete. Default 1 keeps a fully inserted
+      -- plan from the previous code complete across this deploy.
+      plan_complete INTEGER NOT NULL DEFAULT 1,
       CHECK (cursor >= 0 AND cursor <= total)
     );
     CREATE TABLE ${guard} CommandFileWork (
@@ -62,6 +107,7 @@ export function createCommandFileWorkSchema(db: Database.Database, options: { if
       track_file_id INTEGER NOT NULL,
       identity_snapshot TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'started', 'settled')),
+      restart_claims INTEGER NOT NULL DEFAULT 0,
       intent_path TEXT,
       intent_size INTEGER,
       intent_modified_at TEXT,
@@ -90,6 +136,9 @@ export function createDownloadQueueSchema(
       media_kind TEXT NOT NULL CHECK (media_kind IN ('album', 'track', 'video')),
       command_name TEXT NOT NULL,
       plan_id INTEGER,
+      -- Album identity (E3). Set for full-edition album waits; survives re-plans.
+      library_id INTEGER,
+      edition_id INTEGER,
       track_ids TEXT,
       provider TEXT,
       provider_id TEXT,
@@ -125,6 +174,10 @@ export function createDownloadQueueSchema(
   // reading thousands of large payload rows on the HTTP event loop.
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_unclaimed_names
     ON DownloadQueue(command_name) WHERE command_id IS NULL`);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_waiting_intent
+    ON DownloadQueue(json_extract(payload, '$.libraryId'), json_extract(payload, '$.releaseMbid'),
+      COALESCE(provider, json_extract(payload, '$.provider')))
+    WHERE command_id IS NULL AND json_valid(payload)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_album_id ON DownloadQueue(album_id)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_artist_id ON DownloadQueue(artist_id)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_provider_id ON DownloadQueue(provider_id)`);

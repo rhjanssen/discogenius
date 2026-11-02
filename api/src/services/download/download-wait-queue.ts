@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, retrySqliteBusySync } from "../../database.js";
 import { CommandTrigger } from "../commands/command-trigger.js";
 import {
   CommandNames,
@@ -7,9 +7,12 @@ import {
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { appEvents, AppEvent } from "../commands/app-events.js";
 import {
-  buildAcquisitionDownloadCommand,
+  evaluateAcquisitionDownload,
+  type AcquisitionWaitReason,
 } from "../music/acquisition-download-command.js";
+import { evaluateWaitingAcquisitionPlan } from "./waiting-acquisition-plan.js";
 import type { AnyCommandBody } from "../commands/command-model.js";
+import { authHoldRecord, providerNeedsReauth } from "../providers/provider-auth-state.js";
 
 export type DownloadWaitMediaKind = "album" | "track" | "video";
 export type DownloadWaitPosition = "front" | "back";
@@ -76,7 +79,7 @@ const QUEUE_RANK_STEP = 1024;
 const QUEUE_REBALANCE_WINDOW = 64;
 const CUTOVER_NOTIFY = true;
 
-type QueueRankRow = { id: number; queue_order: number };
+export type QueueRankRow = { id: number; queue_order: number };
 
 function parseJsonObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -234,6 +237,126 @@ export class DownloadWaitQueue {
     return row ? hydrateWaitRow(row) : null;
   }
 
+  /**
+   * Album waits are keyed by acquisition plan id. Curation replaces an
+   * edition's plan (new offer, re-plan after refresh), which used to leave
+   * the old wait row behind and append a second one for the same edition.
+   * One album download per library and edition (release MBID) is
+   * the invariant: a newer plan takes over the waiting row in place (keeping
+   * its queue position), and a running download is never duplicated.
+   * Track-subset plans keep their own rows.
+   */
+  private static albumIdentity(input: DownloadWaitEnqueueInput): { library_id: number; edition_id: number } | null {
+    if (input.mediaKind !== "album") return null;
+    if ((input.trackIds?.length ?? 0) > 0) return null;
+    if (input.planId == null) return null;
+    const plan = db.prepare(`SELECT library_id, edition_id FROM AcquisitionPlans WHERE id = ?`)
+      .get(input.planId) as { library_id: number | null; edition_id: number | null } | undefined;
+    if (!plan || plan.library_id == null || plan.edition_id == null) return null;
+    return { library_id: plan.library_id, edition_id: plan.edition_id };
+  }
+
+  private static adoptExistingAlbumJob(input: DownloadWaitEnqueueInput, refKey: string): DownloadWaitRow | null {
+    const plan = this.albumIdentity(input);
+    if (!plan) return null;
+    // The identity lives on the row (idx_download_queue_album_edition), so a
+    // row whose plan was replaced and deleted is still found. Legacy rows
+    // without identity fall back to the plan join.
+    const row = (db.prepare(`
+      SELECT * FROM DownloadQueue
+      WHERE library_id = ? AND edition_id = ? AND media_kind = 'album' AND track_ids IS NULL
+      LIMIT 1
+    `).get(plan.library_id, plan.edition_id) ?? db.prepare(`
+      SELECT queue.* FROM AcquisitionPlans plan
+      JOIN DownloadQueue queue ON queue.plan_id = plan.id
+      WHERE plan.library_id = ? AND plan.edition_id = ?
+        AND queue.media_kind = 'album' AND queue.track_ids IS NULL AND queue.edition_id IS NULL
+      ORDER BY (queue.command_id IS NOT NULL) DESC, queue.queue_order, queue.id
+      LIMIT 1
+    `).get(plan.library_id, plan.edition_id)) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const existing = hydrateWaitRow(row);
+    if (existing.command_id == null && existing.ref_key !== refKey) {
+      const conflict = db.prepare(`
+        SELECT id FROM DownloadQueue WHERE media_kind = 'album' AND ref_key = ? AND id != ? LIMIT 1
+      `).get(refKey, existing.id);
+      if (!conflict) {
+        db.prepare(`
+          UPDATE DownloadQueue
+          SET ref_key = ?, plan_id = ?, library_id = ?, edition_id = ?, provider = ?, provider_id = ?, quality = ?,
+              title = COALESCE(?, title), artist = COALESCE(?, artist), cover = COALESCE(?, cover),
+              payload = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND command_id IS NULL
+        `).run(
+          refKey,
+          input.planId ?? null,
+          plan.library_id,
+          plan.edition_id,
+          input.provider ?? null,
+          input.providerId ?? null,
+          input.quality ?? null,
+          input.title ?? null,
+          input.artist ?? null,
+          input.cover ?? null,
+          JSON.stringify(input.payload ?? {}),
+          existing.id,
+        );
+        return this.get(existing.id) ?? existing;
+      }
+    }
+    return existing;
+  }
+
+  /**
+   * Remove waiting (unclaimed) rows in one statement. Running and claimed
+   * downloads are never touched. Used by the queue prune endpoint.
+   */
+  static pruneUnclaimed(options: { mediaKind?: DownloadWaitMediaKind | null; dryRun?: boolean } = {}): number {
+    const kind = options.mediaKind ?? null;
+    if (options.dryRun) {
+      const row = db.prepare(`
+        SELECT COUNT(*) AS count FROM DownloadQueue
+        WHERE command_id IS NULL AND (? IS NULL OR media_kind = ?)
+      `).get(kind, kind) as { count?: number };
+      return Number(row.count || 0);
+    }
+    const result = db.prepare(`
+      DELETE FROM DownloadQueue
+      WHERE command_id IS NULL AND (? IS NULL OR media_kind = ?)
+    `).run(kind, kind);
+    const removed = Number(result.changes ?? 0);
+    if (removed > 0) notifyQueueChanged();
+    return removed;
+  }
+
+  /**
+   * Drop waiting album rows that duplicate another album row for the same
+   * library and edition (whole-album rows only). Keeps the claimed row, or
+   * else the one nearest the front of the queue.
+   */
+  static dedupeUnclaimedAlbums(options: { dryRun?: boolean } = {}): number {
+    const dupes = `
+      SELECT id FROM (
+        SELECT queue.id AS id, queue.command_id AS command_id, ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(queue.library_id, plan.library_id), COALESCE(queue.edition_id, plan.edition_id)
+          ORDER BY (queue.command_id IS NOT NULL) DESC, (queue.edition_id IS NOT NULL) DESC, queue.queue_order, queue.id
+        ) AS rn
+        FROM DownloadQueue queue
+        LEFT JOIN AcquisitionPlans plan ON plan.id = queue.plan_id
+        WHERE queue.media_kind = 'album' AND queue.track_ids IS NULL
+          AND COALESCE(queue.edition_id, plan.edition_id) IS NOT NULL
+      ) WHERE rn > 1 AND command_id IS NULL
+    `;
+    if (options.dryRun) {
+      const row = db.prepare(`SELECT COUNT(*) AS count FROM (${dupes})`).get() as { count?: number };
+      return Number(row.count || 0);
+    }
+    const result = db.prepare(`DELETE FROM DownloadQueue WHERE id IN (${dupes})`).run();
+    const removed = Number(result.changes ?? 0);
+    if (removed > 0) notifyQueueChanged();
+    return removed;
+  }
+
   static getByCommandId(commandId: number): DownloadWaitRow | null {
     const row = db.prepare(`
       SELECT * FROM DownloadQueue WHERE command_id = ?
@@ -295,28 +418,36 @@ export class DownloadWaitQueue {
     }
 
     const existing = this.findExistingTypedJob(input, refKey)
-      ?? this.findExistingVideoJob(input);
+      ?? this.findExistingVideoJob(input)
+      ?? this.adoptExistingAlbumJob(input, refKey);
     if (existing) {
       return { id: existing.id, created: false, commandId: existing.command_id };
     }
 
     const position = input.position === "front" ? "front" : "back";
-    const payload = input.payload ?? {};
+    const payload = { ...(input.payload ?? {}) };
+    const providerId = String(input.provider || payload.provider || "").trim().toLowerCase();
+    if (providerId && providerNeedsReauth(providerId) && payload.authHold == null) {
+      payload.authHold = authHoldRecord(providerId);
+    }
     const trackIds = input.trackIds ?? [];
-    const inserted = db.transaction(() => {
+    const identity = this.albumIdentity(input);
+    const inserted = retrySqliteBusySync(() => db.transaction(() => {
       const rank = position === "front" ? this.nextFrontRank() : this.nextAppendRank();
       const info = db.prepare(`
         INSERT INTO DownloadQueue (
-          ref_key, media_kind, command_name, plan_id, track_ids,
+          ref_key, media_kind, command_name, plan_id, library_id, edition_id, track_ids,
           provider, provider_id, artist_id, album_id,
           title, artist, cover, quality, slot, payload,
           queue_order, priority, trigger
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         refKey,
         input.mediaKind,
         input.commandName,
         input.planId ?? null,
+        identity?.library_id ?? null,
+        identity?.edition_id ?? null,
         trackIds.length > 0 ? JSON.stringify(trackIds) : null,
         input.provider ?? null,
         input.providerId ?? null,
@@ -333,7 +464,7 @@ export class DownloadWaitQueue {
         input.trigger ?? CommandTrigger.Unspecified,
       );
       return Number(info.lastInsertRowid);
-    })();
+    })());
 
     if (input.notify !== false) {
       notifyQueueChanged();
@@ -395,35 +526,66 @@ export class DownloadWaitQueue {
     return waitId;
   }
 
-  static claimNext(excludeProviders: ReadonlySet<string> = new Set()): {
-    wait: DownloadWaitRow;
-    commandId: number;
-  } | null {
+  static claimNextPage(excludeProviders: ReadonlySet<string> = new Set(), after: QueueRankRow | null = null): {
+    claimed: { wait: DownloadWaitRow; commandId: number } | null;
+    nextCursor: QueueRankRow | null;
+    verificationWait?: DownloadWaitRow;
+  } {
+    // Each scheduling turn admits one bounded page. The worker releases its
+    // write gate before continuing, so blocked requests cannot stall the API.
     const candidates = db.prepare(`
       SELECT *
-      FROM DownloadQueue
+      FROM DownloadQueue INDEXED BY idx_download_queue_unclaimed_order
       WHERE command_id IS NULL
+        ${after ? "AND (queue_order, id) > (?, ?)" : ""}
       ORDER BY queue_order ASC, id ASC
       LIMIT 40
-    `).all() as Array<Record<string, unknown>>;
+    `).all(...(after ? [after.queue_order, after.id] : [])) as Array<Record<string, unknown>>;
 
     for (const raw of candidates) {
       const wait = hydrateWaitRow(raw);
       const provider = (wait.provider || String(wait.payload.provider || "")).toLowerCase();
-      if (provider && excludeProviders.has(provider)) {
+      if (provider && (excludeProviders.has(provider) || providerNeedsReauth(provider))) {
         continue;
       }
 
       const claimed = this.claim(wait.id);
       if (claimed) {
-        return claimed;
+        return { claimed, nextCursor: null };
+      }
+      if (this.get(wait.id)?.payload.acquisitionWaitReason === 'imported_files_need_verification') {
+        return { claimed:null, nextCursor:{id:wait.id,queue_order:wait.queue_order}, verificationWait:wait };
       }
     }
 
-    return null;
+    const last = candidates.at(-1);
+    return { claimed: null, nextCursor: candidates.length === 40 && last
+      ? { id: Number(last.id), queue_order: Number(last.queue_order) } : null };
   }
 
-  static claim(waitId: number): { wait: DownloadWaitRow; commandId: number } | null {
+  /** Put a started download back on its wait row without failing it or burning a retry. */
+  static releaseForAuthHold(commandId: number, provider: string): void {
+    const hold = JSON.stringify(authHoldRecord(provider));
+    const release = db.transaction(() => {
+      db.prepare(`
+        UPDATE DownloadQueue
+        SET command_id = NULL,
+            claimed_at = NULL,
+            payload = json_set(
+              CASE WHEN json_valid(payload) THEN payload ELSE '{}' END,
+              '$.authHold',
+              json(?)
+            ),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE command_id = ?
+      `).run(hold, commandId);
+      db.prepare(`DELETE FROM commands WHERE id = ? AND status = 'started'`).run(commandId);
+    });
+    release();
+    notifyQueueChanged();
+  }
+
+  static claim(waitId: number, verifiedTrackIds?: ReadonlySet<number>): { wait: DownloadWaitRow; commandId: number } | null {
     const wait = this.get(waitId);
     if (!wait || wait.command_id != null) {
       return wait?.command_id != null
@@ -431,56 +593,34 @@ export class DownloadWaitQueue {
         : null;
     }
 
+    const provider = (wait.provider || String(wait.payload.provider || "")).toLowerCase();
+    if (provider && providerNeedsReauth(provider)) return null;
+
     let commandName: CommandName = wait.command_name as CommandName;
     let body: AnyCommandBody;
     let refId = wait.ref_key;
 
     if (wait.plan_id != null) {
-      let command = buildAcquisitionDownloadCommand(db, wait.plan_id, {
-        trackIds: wait.track_ids,
-      });
-      if (!command && wait.album_id) {
-        const current = db.prepare(`
-          SELECT plan.id
-          FROM SelectedAcquisitionPlans plan
-          JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
-          JOIN Libraries library ON library.id = library_release.library_id
-          JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
-          JOIN AlbumEditions release ON release.id = library_release.edition_id
-          JOIN Albums release_group ON release_group.id = release.release_group_id
-          WHERE plan.state = 'current'
-            AND library.enabled = 1
-            AND release_group.mbid = ?
-            AND (
-              (? = 'spatial' AND EXISTS (
-                SELECT 1
-                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-                WHERE LOWER(CAST(allowed.value AS TEXT)) = 'spatial'
-              ))
-              OR ((? IS NULL OR ? = 'stereo')
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-                  WHERE LOWER(CAST(allowed.value AS TEXT)) = 'spatial'
-                )
-                AND EXISTS (
-                  SELECT 1
-                  FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
-                  WHERE LOWER(CAST(allowed.value AS TEXT)) IN ('lossy', 'lossless', 'hires-lossless')
-                )
-              )
-            )
-          ORDER BY library.id
-          LIMIT 1
-        `).get(wait.album_id, wait.slot, wait.slot, wait.slot) as { id: number } | undefined;
-        if (current) {
-          command = buildAcquisitionDownloadCommand(db, current.id, {
-            trackIds: wait.track_ids,
-          });
-        }
+      const plan = evaluateWaitingAcquisitionPlan(db, wait.plan_id, wait.payload, wait.provider);
+      const result = plan.status === "blocked" ? plan : evaluateAcquisitionDownload(db, plan.planId, { trackIds: wait.track_ids, verifiedTrackIds });
+      // Unavailable, stale or ambiguous plans are not cancelled requests.
+      // Keep their exact intent until replanning or an explicit user cancellation.
+      if (result.status === "blocked") {
+        this.setAdmissionReason(wait, result.reason);
+        return null;
       }
-      if (!command) {
-        this.remove(wait.id);
+      this.setAdmissionReason(wait, null);
+      const command = result.command;
+      if (result.status === 'satisfied') {
+        db.transaction(() => {
+          const commandId = CommandQueueManager.push(command.name, {
+            ...command.body, downloadState: { ...command.body.downloadState, state:'completed',
+              progress:100,statusMessage:'Already imported; files verified' },
+          }, `verified-wait:${wait.id}`, wait.priority, wait.trigger);
+          if (!commandId || !CommandQueueManager.complete(commandId)) throw new Error('Could not record verified acquisition completion');
+          db.prepare('DELETE FROM DownloadQueue WHERE id=? AND command_id IS NULL').run(wait.id);
+        })();
+        notifyQueueChanged();
         return null;
       }
       commandName = command.name;
@@ -525,6 +665,17 @@ export class DownloadWaitQueue {
       return { wait: { ...wait, command_id: commandId }, commandId };
     }
     return { wait: claimed, commandId: claimed.command_id };
+  }
+
+  private static setAdmissionReason(wait: DownloadWaitRow, reason: AcquisitionWaitReason | null): void {
+    if ((wait.payload.acquisitionWaitReason ?? null) === reason) return;
+    const payload = { ...wait.payload };
+    if (reason) payload.acquisitionWaitReason = reason;
+    else delete payload.acquisitionWaitReason;
+    db.prepare("UPDATE DownloadQueue SET payload=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND command_id IS NULL")
+      .run(JSON.stringify(payload), wait.id);
+    // Do not emit a queue kick here. A blocked pass must finish, not restart
+    // itself indefinitely while reporting the same dependency.
   }
 
   static reorder(

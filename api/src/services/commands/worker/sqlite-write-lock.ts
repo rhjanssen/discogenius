@@ -15,12 +15,27 @@ export function writeLockDiagnostics() {
   return { ...active, heldByOwner: ownerToken ? `mutex-owner-${ownerToken}` : null };
 }
 
+/** Test hook. Production leaves capture off, so the hot path is one null check. */
+let capturedWriteLockLabels: string[] | null = null;
+
+export function captureSqliteWriteLockLabels(enabled: boolean): void {
+  capturedWriteLockLabels = enabled ? [] : null;
+}
+
+export function takeSqliteWriteLockLabels(): string[] {
+  if (!capturedWriteLockLabels) return [];
+  const labels = capturedWriteLockLabels;
+  capturedWriteLockLabels = [];
+  return labels;
+}
+
 /** Network calls and file operations belong outside this short write section. */
 export async function withGlobalSqliteWriteLock<T>(
   work: () => T | Promise<T>,
   onStats?: (stats: WriteLockWaitStats) => void,
   label = "unlabelled",
 ): Promise<T> {
+  capturedWriteLockLabels?.push(label);
   const queuedAt = Date.now();
   return withSqliteWriteMutexAsync(() => {
     const grantedAt = Date.now();

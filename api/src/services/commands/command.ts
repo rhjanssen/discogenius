@@ -22,6 +22,8 @@ import {CommandModel} from "./command-model.js";
 import {CommandNames, DOWNLOAD_COMMAND_NAMES, isCommandName} from "./command-names.js";
 import {type CommandName} from "./command-queue-manager.js";
 import {
+    commandDiskScope,
+    commandWritesLibraryFiles,
     getCommandDefinition,
     getCommandTypesForQueueCategory,
     type CommandDefinition,
@@ -47,10 +49,15 @@ export class CommandManager {
      */
     static canStartCommand(jobType: string, payload?: CommandBodyCommon, refId?: string | null, options?: CanStartCommandOptions): { canStart: boolean; reason?: string } {
         const definition = this.getDefinition(jobType);
-        if (definition.requiresDiskAccess && FileMutationJournal.hasPending()) {
+        const diskScope = commandDiskScope(definition);
+        // A pending journal is a half-finished rename. Folder-scoped retag and
+        // import must wait for it too; they no longer take the global disk slot.
+        if (commandWritesLibraryFiles(definition) && FileMutationJournal.hasPending()) {
             return { canStart: false, reason: 'Recover pending file mutations before modifying library files' };
         }
-        if (definition.requiresDiskAccess && jobType !== CommandNames.ImportDownload && hasAgedImportHandoff()) {
+        // An aged import waits ahead of backup and other global maintenance.
+        // It does not park a library retag: that work locks one album folder.
+        if (diskScope === "global" && jobType !== CommandNames.ImportDownload && hasAgedImportHandoff()) {
             return { canStart: false, reason: 'A completed download is waiting for disk admission' };
         }
 
@@ -141,14 +148,17 @@ export class CommandManager {
             }
         }
 
-        // Check disk access exclusivity
-        if (definition.requiresDiskAccess) {
-            const diskAccessRunning = processingJobs.find(j => {
-                const def = this.getDefinition(j.name);
-                return def.requiresDiskAccess;
+        // Global maintenance (backup, cleanup, move artist) still needs the
+        // machine quiet. Folder-scoped commands only step aside for that
+        // global work; they run beside each other and take per-album locks.
+        if (diskScope === "global" || diskScope === "folder") {
+            const blocking = processingJobs.find(job => {
+                const scope = commandDiskScope(this.getDefinition(job.name));
+                if (diskScope === "global") return scope !== "none";
+                return scope === "global";
             });
-            if (diskAccessRunning) {
-                const runningDef = this.getDefinition(diskAccessRunning.name);
+            if (blocking) {
+                const runningDef = this.getDefinition(blocking.name);
                 return {
                     canStart: false,
                     reason: `Disk-intensive command "${runningDef.name}" is running`

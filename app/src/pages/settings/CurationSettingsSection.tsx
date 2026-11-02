@@ -316,10 +316,16 @@ export const CurationSettingsSection = ({
                     afterGroup: true,
                 })}
                 {renderToggleRow({
-                    title: "Deduplicate coverage",
-                    description: "Drop singles, EPs, and re-packages whose tracks are already covered by a larger monitored product (clean/explicit twins count as the same track).",
+                    title: "Automatic curation",
+                    description: "Picks the editions needed to cover the full discography and unmonitors redundant ones.",
                     checked: curationConfig?.enable_redundancy_filter !== false,
                     onChange: (checked) => void onUpdate({ enable_redundancy_filter: checked }),
+                })}
+                {renderToggleRow({
+                    title: "Fewest albums",
+                    description: "Off (default, original discography): keep the artist's own releases and take a compilation only for tracks no original release has. On: cover every track with as few releases as possible, so a compilation can replace the albums it repeats.",
+                    checked: curationConfig?.compilation_policy === "fewest_albums",
+                    onChange: (checked) => void onUpdate({ compilation_policy: checked ? "fewest_albums" : "original_discography" }),
                 })}
                 {renderToggleRow({
                     title: "Require a download source",

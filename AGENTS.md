@@ -48,7 +48,14 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   inline loops.
 - Validate external boundaries explicitly.
 - Respect `monitored_lock` / `monitor_lock`: automation must never flip
-  user-locked monitor state.
+  user-locked monitor state. Automatic curation (`enable_redundancy_filter`,
+  default on) is optional. Off monitors one edition per release group and
+  never auto-unmonitors. A user unmonitor writes `LibraryUserExclusions` and
+  curation does not put that album or edition back. With Remove unmonitored
+  files on, a user unmonitor deletes that album's files immediately; a
+  curation unmonitor deletes a file only when the same recording is already
+  on a monitored edition. A stale automatic match never unmonitors a
+  file-owning edition and never deletes its files.
 - **Provider tooling** stays inside the provider adapter/backend. TIDAL's `tiddl`
   lives in `api/src/services/providers/tidal/`; its auth/config live under
   `config/providers/tidal/.tiddl`. tiddl steering = config (global) + args
@@ -60,7 +67,36 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - **Hi-Res needs ffmpeg**: TIDAL ships hi-res as FLAC-in-MP4; tiddl extracts via
   ffmpeg.
 - **Matching**: one shared matcher scores slot-candidate tracks. Beware
-  camelCase vs snake_case differences between callers.
+  camelCase vs snake_case differences between callers. A matcher version bump
+  must not make stored automatic matches non-candidates. Readers keep using
+  them. The shared-item rule is applied to the stored rows, and a local replay
+  rewrites the cache without provider traffic. `matcher_version` is not a veto
+  and it stays inside the acquisition-plan fingerprint. A replay that finds
+  the same automatic assignments updates that hash and the version stamp; it
+  does not rebuild the plan. An acquisition plan owned by a download or import
+  defers only the release being rewritten. It is retried later. It is not a
+  process-lifetime failure, and it must not roll back the rest of the batch.
+  A provider item that maps to the same recording on two editions is the
+  plan's own track, not ambiguous provenance. Karaoke, tribute, "in the style
+  of", "cover version", and "originally performed by" releases are not the
+  MusicBrainz album: new automatic matches refuse them. Matcher version stays
+  5 so stored accepted rows are not replayed away, and curation does not
+  unmonitor or delete because of them. `listDerivativeSourceFiles` lists
+  on-disk files from those sources and deletes nothing. Provider album art
+  and the album provider id are used only when that provider item is this
+  edition (single-source plan, or relation `exact` / `source_superset`).
+  Overlap and source_subset donors fall back to Cover Art Archive. A short
+  hybrid or YouTube import keeps the organized tracks, records each missing
+  offer, and leaves only those tracks wanted.
+- **Catalog refresh dependents.** One dependent row must not fail a whole
+  artist refresh. A MusicBrainz recording redirect re-keys video artwork
+  (`ArtworkSources` / `ArtworkLibraryLinks` / `ArtworkProxyVariants` /
+  `ArtworkMutationJournal`) onto the surviving recording in the same
+  transaction; artwork files are never deleted to pass the guard. An obsolete
+  edition track detaches or re-points `LibraryVideos` (video files stay;
+  monitoring stays). `ArtistTopTracks` and `TrackLibraryIndex` cascade with
+  the track. Owned `TrackFiles`, sidecar `canonical_track_mbid` rows, live
+  download/import snapshots, and standalone waiting requests still fail closed.
 - **Online catalog** (default) strips ISRC/UPC. Use local-MB mode for exact
   ISRC/UPC; otherwise match on MBID + duration + title distance.
 
@@ -163,7 +199,7 @@ from. Same reason `foreign_release_id` keeps its name.
   `TrackFiles.id` it produced; callers never re-find rows by `provider_id`, and
   never position-match two lists. Missing or ambiguous identity is an error.
 - Never assume one selected edition per album.
-- Every acquisition plan is mono-provider. A composite may use several editions from one provider, never TIDAL plus Deezer (or any other cross-provider mix).
+- Every acquisition plan is mono-provider. A composite may use several editions from one provider, never TIDAL plus Deezer (or any other cross-provider mix). A per-track fallback inside an album download stays on the command provider. A whole-album fallback switches the provider and remaps every offer.
 - **MusicBrainz / the configured catalog provider is the source of truth for
   audio.** Video recordings are catalog identity with a MusicBrainz `mbid`
   and/or a YouTube `youtube_video_id`. Public YouTube listing is core catalog

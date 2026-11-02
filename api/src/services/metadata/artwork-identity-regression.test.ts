@@ -12,6 +12,7 @@ process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 
 let dbModule: typeof import("../../database.js");
 let mediaCoverServiceModule: typeof import("./media-cover-service.js");
+let materializationModule: typeof import("./media-cover-materialization.js");
 let configModule: typeof import("../config/config.js");
 let audioTagServiceModule: typeof import("../mediafiles/audio-tag-service.js");
 let providerModule: typeof import("../providers/index.js");
@@ -34,6 +35,13 @@ function sha256(buf: Buffer): string {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
+async function materializeAlbumMaster(mbid: string): Promise<string> {
+  const outputPath=path.join(tempDir,"library",mbid,"cover.jpg");
+  const result=await materializationModule.materializeMediaCoverToFile({entityId:mbid,coverEntity:"Album",outputPath});
+  assert.notEqual(result,"missing","Selected artwork must materialize as a library master");
+  return outputPath;
+}
+
 const ALBUM_ARTWORK_A = createTestJpeg(1200, 1200, 255, 0, 0); // Red (Primary Album Art A)
 const SINGLE_ARTWORK_B = createTestJpeg(1200, 1200, 0, 0, 255); // Blue (Supplemental Single Art B)
 const PROVIDER_ARTWORK_C = createTestJpeg(1200, 1200, 0, 255, 0); // Green (Provider Album Art C)
@@ -45,12 +53,15 @@ const HASH_B = sha256(SINGLE_ARTWORK_B);
 const HASH_C = sha256(PROVIDER_ARTWORK_C);
 const HASH_D = sha256(MANUAL_ARTWORK_D);
 const HASH_E = sha256(EDITION_2_ARTWORK_E);
+const CAA_ARTWORK_F = createTestJpeg(1200, 1200, 0, 255, 255); // Cyan (Cover Art Archive front F)
+const HASH_F = sha256(CAA_ARTWORK_F);
 
 before(async () => {
   dbModule = await import("../../database.js");
   dbModule.initDatabase();
   configModule = await import("../config/config.js");
   mediaCoverServiceModule = await import("./media-cover-service.js");
+  materializationModule = await import("./media-cover-materialization.js");
   audioTagServiceModule = await import("../mediafiles/audio-tag-service.js");
   providerModule = await import("../providers/index.js");
   libraryBackfillModule = await import("../mediafiles/library-metadata-backfill.js");
@@ -101,6 +112,9 @@ before(async () => {
     }
     if (url.includes("manual-D.jpg")) {
       return new Response(MANUAL_ARTWORK_D, { status: 200, headers: { "content-type": "image/jpeg" } });
+    }
+    if (url.startsWith("https://coverartarchive.org/release-group/rg-composite-")) {
+      return new Response(CAA_ARTWORK_F, { status: 200, headers: { "content-type": "image/jpeg" } });
     }
     if (url.includes("edition-E.jpg")) {
       return new Response(EDITION_2_ARTWORK_E, { status: 200, headers: { "content-type": "image/jpeg" } });
@@ -277,7 +291,7 @@ test("supplemental-provider-artwork-cannot-own-primary-album", async () => {
   const resolvedUrl = await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
   assert.ok(resolvedUrl, "Expected resolved artwork URL");
 
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath), "Expected origin cover in cache");
 
   const cachedBytes = fs.readFileSync(originPath);
@@ -318,8 +332,8 @@ test("hybrid-source-order-is-artwork-invariant", async () => {
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid1 });
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid2 });
 
-  const originPath1 = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid1, "Album", "Cover");
-  const originPath2 = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid2, "Album", "Cover");
+  const originPath1 = await materializeAlbumMaster(mbid1);
+  const originPath2 = await materializeAlbumMaster(mbid2);
 
   assert.ok(originPath1 && fs.existsSync(originPath1), "Expected origin 1");
   assert.ok(originPath2 && fs.existsSync(originPath2), "Expected origin 2");
@@ -343,7 +357,7 @@ test("canonical-cache-survives-hybrid-import", async () => {
   fs.writeFileSync(path.join(cacheFolder, "origin.jpg"), ALBUM_ARTWORK_A);
   fs.writeFileSync(path.join(cacheFolder, "cover.jpg"), ALBUM_ARTWORK_A);
 
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_A, "Canonical cache must survive hybrid import without mutation");
 });
@@ -397,7 +411,7 @@ test("canonical-preference-preserves-canonical-cache", async () => {
   configModule.updateConfig("metadata", { artwork_preference: "canonical", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_A, "Must preserve canonical artwork A when preference is canonical");
 });
@@ -416,7 +430,7 @@ test("canonical-missing-provider-fallback-populates-cache", async () => {
   configModule.updateConfig("metadata", { artwork_preference: "canonical", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_C, "Must fallback to provider artwork C when canonical is missing");
 });
@@ -435,7 +449,7 @@ test("provider-preference-replaces-canonical-cache-at-refresh", async () => {
   configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_C, "Must select provider artwork C when preference is provider");
 });
@@ -459,7 +473,7 @@ test("provider-preference-selects-owner-provider-at-refresh", async () => {
   configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.ok(originPath && fs.existsSync(originPath));
   assert.equal(sha256(fs.readFileSync(originPath)), HASH_C, "Must select owner album C over supplemental single B");
 });
@@ -475,7 +489,7 @@ test("preference-change-requires-artwork-refresh", async () => {
   // Changing config preference alone should NOT alter existing cached bytes without an explicit refresh call
   configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
   
-  const originPath = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+  const originPath = await materializeAlbumMaster(mbid);
   assert.equal(sha256(fs.readFileSync(originPath!)), HASH_A, "Cache must remain unchanged after config preference change until refresh occurs");
 });
 
@@ -578,6 +592,7 @@ test("ui-mediacover-route-does-not-lazily-fetch", async () => {
 
     // When mediaCoverFolder or route is evaluated for an uncached album, it must not call fetch
     const folder = mediaCoverServiceModule.getCachedMediaCoverOriginalFilePath(mbid, "Album", "Cover");
+    assert.equal(folder, null);
     assert.equal(networkCalled, false, "UI route helpers must not lazily fetch remote artwork");
   } finally {
     globalThis.fetch = tempFetch;
@@ -708,12 +723,8 @@ test("provenance-updates-atomically-with-selected-bytes", async () => {
   });
 
   await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
-  const cacheFolder = path.join(tempDir, "media-cover", "Albums", mbid);
-  const provPath = path.join(cacheFolder, ".cover.source.json");
-
-  // In A1, provenance must be persisted atomically
-  assert.ok(fs.existsSync(provPath), "Expected atomic provenance sidecar file in cache folder");
-  const prov = JSON.parse(fs.readFileSync(provPath, "utf-8"));
+  const prov = db.prepare("SELECT content_hash AS contentHash, fulfilled_by AS sourceKind FROM ArtworkSources WHERE cover_entity = 'Album' AND entity_id = ? AND cover_type = 'cover'").get(mbid) as { contentHash: string; sourceKind: string };
+  assert.ok(prov, "Expected durable provenance outside the disposable cache");
   assert.equal(prov.contentHash, HASH_A, "Provenance content hash must match written artwork bytes");
   assert.ok(prov.sourceKind, "Expected sourceKind in provenance");
 });
@@ -777,7 +788,7 @@ test("explicit manual override wins in either preference mode", async () => {
   const canonicalModeUrl = await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: mbid });
   assert.match(canonicalModeUrl || "", /cover\.jpg$/);
   const cacheFolder = path.join(tempDir, "media-cover", "Albums", mbid);
-  assert.equal(sha256(fs.readFileSync(path.join(cacheFolder, "cover.jpg"))), HASH_D, "Manual artwork D must win under canonical preference");
+  assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(mbid))), HASH_D, "Manual artwork D must win under canonical preference");
   assert.deepEqual(
     db.prepare(`
       SELECT source_kind, content_hash, source_identity
@@ -800,7 +811,7 @@ test("explicit manual override wins in either preference mode", async () => {
     providerCandidates: [{ provider: "tidal", entityId: "p-manual", imageId: "img-manual", url: "http://test/album-C.jpg" }],
   });
   assert.match(providerModeUrl || "", /cover\.jpg$/);
-  assert.equal(sha256(fs.readFileSync(path.join(cacheFolder, "cover.jpg"))), HASH_D, "Manual artwork D must win under provider preference");
+  assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(mbid))), HASH_D, "Manual artwork D must win under provider preference");
   assert.equal(
     (db.prepare(`
       SELECT source_kind FROM MediaCoverSelections
@@ -808,5 +819,211 @@ test("explicit manual override wins in either preference mode", async () => {
     `).get(mbid) as { source_kind: string }).source_kind,
     "manual",
     "Provider preference must not demote manual artwork authority",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// COMPOSITE PLANS: SOURCE ALBUMS OF OTHER RELEASE GROUPS
+// ---------------------------------------------------------------------------
+
+/** The provider album of `sourceMbid` matched to that release group's edition. */
+function providerMatchIdFor(db: any, sourceMbid: string): number {
+  return (db.prepare(`
+    SELECT release_match.id
+    FROM ProviderEditionMatches release_match
+    JOIN AlbumEditions release ON release.id = release_match.edition_id
+    WHERE release.mbid = ?
+  `).get(`${sourceMbid}-release`) as { id: number }).id;
+}
+
+/**
+ * Monitor `targetMbid`'s edition with a current composite plan whose sources
+ * are the given provider matches, as the planner writes it for a compilation
+ * assembled from tracks of other provider albums.
+ */
+function seedCompositePlan(db: any, targetMbid: string, sourceMatchIds: number[]): void {
+  db.exec(`
+    INSERT OR IGNORE INTO MetadataProfiles (id, name, release_type_policy, explicit_policy, require_provider_availability, redundancy_enabled)
+      VALUES (1, 'Default', '{}', 'allow', 1, 0);
+    INSERT OR IGNORE INTO Libraries (id, name, root_path, metadata_profile_id, quality_profile_id, enabled)
+      VALUES (1, 'Stereo', '/music', 1, 1, 1);
+  `);
+  const releaseGroup = db.prepare("SELECT id, artist_mbid FROM Albums WHERE mbid = ?").get(targetMbid) as {
+    id: number;
+    artist_mbid: string;
+  };
+  const editionMbid = `${targetMbid}-release`;
+  db.prepare(`
+    INSERT OR IGNORE INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(editionMbid, releaseGroup.id, targetMbid, releaseGroup.artist_mbid, targetMbid);
+  const edition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(editionMbid) as { id: number };
+  const planKey = `plan-${targetMbid}`;
+  db.transaction(() => {
+    const plan = db.prepare(`
+      INSERT INTO AcquisitionPlans (
+        library_id, edition_id, provider, composition, download_mode, state,
+        plan_key, rank, coverage, target_track_count, planner_version, policy_hash, computed_at
+      ) VALUES (1, ?, 'test-hybrid-provider', 'composite', 'tracks', 'current', ?, 0, 10, 10, 2, 'hash', CURRENT_TIMESTAMP)
+    `).run(edition.id, planKey);
+    sourceMatchIds.forEach((matchId, index) => {
+      db.prepare(`
+        INSERT INTO AcquisitionPlanSources (plan_id, provider_edition_match_id, role, sort_order)
+        VALUES (?, ?, ?, ?)
+      `).run(plan.lastInsertRowid, matchId, index === 0 ? "primary" : "supplement", index);
+    });
+    db.prepare(`
+      INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, curation_version, preferred_plan_key)
+      VALUES (1, ?, 'auto', 1, ?)
+    `).run(edition.id, planKey);
+  })();
+}
+
+function storedProviderFallbacks(db: any, mbid: string): unknown[] {
+  const row = db.prepare("SELECT images FROM Albums WHERE mbid = ?").get(mbid) as { images: string | null };
+  return (row.images ? JSON.parse(row.images) : []).filter((image: any) => image?.source === "provider-fallback");
+}
+
+test("composite-source-album-of-another-release-group-cannot-own-the-cover", async () => {
+  // Imagine Dragons "Hitlist": a compilation with no provider release of its
+  // own, planned from the tracks of the studio albums. The primary source is
+  // "Evolve", whose cover used to become Hitlist's cover.
+  const db = dbModule.db;
+  const compilation = "rg-composite-hitlist";
+  const studioAlbums = ["rg-studio-evolve", "rg-studio-night-visions", "rg-studio-origins"];
+  insertTestAlbum(db, compilation, "Hitlist");
+  for (const mbid of studioAlbums) {
+    insertTestAlbum(db, mbid, mbid);
+    insertTestProviderCandidate(db, { releaseGroupMbid: mbid, providerId: `${mbid}-album-c-id`, title: mbid });
+  }
+  seedCompositePlan(db, compilation, studioAlbums.map((mbid) => providerMatchIdFor(db, mbid)));
+  // Earlier resolutions stored the donor's cover as this album's provider fallback.
+  db.prepare("UPDATE Albums SET images = ? WHERE mbid = ?").run(
+    JSON.stringify([{ coverType: "Cover", url: "https://provider.test/artwork/album-C.jpg", source: "provider-fallback" }]),
+    compilation,
+  );
+
+  assert.deepEqual(
+    mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(compilation),
+    [],
+    "Provider albums matched to other release groups are not candidates for this album",
+  );
+
+  for (const preference of ["provider", "canonical"] as const) {
+    configModule.updateConfig("metadata", { artwork_preference: preference, save_album_cover: true, album_cover_name: "cover.jpg" } as any);
+    await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: compilation });
+    assert.equal(
+      sha256(fs.readFileSync(await materializeAlbumMaster(compilation))),
+      HASH_F,
+      `Cover Art Archive front must win over the donor album's cover (${preference} preference)`,
+    );
+  }
+  assert.deepEqual(storedProviderFallbacks(db, compilation), [], "The donor cover must not stay advertised as this album's fallback");
+  configModule.updateConfig("metadata", { artwork_preference: "provider", save_album_cover: true, album_cover_name: "cover.jpg" } as any);
+});
+
+test("composite-of-singles-falls-back-to-cover-art-archive", async () => {
+  const db = dbModule.db;
+  const compilation = "rg-composite-singles";
+  const singles = ["rg-single-one", "rg-single-two"];
+  insertTestAlbum(db, compilation, "Singles Collection");
+  for (const mbid of singles) {
+    insertTestAlbum(db, mbid, mbid);
+    db.prepare("UPDATE Albums SET primary_type = 'Single' WHERE mbid = ?").run(mbid);
+    insertTestProviderCandidate(db, { releaseGroupMbid: mbid, providerId: `${mbid}-single-id`, title: mbid, version: "Single" });
+  }
+  seedCompositePlan(db, compilation, singles.map((mbid) => providerMatchIdFor(db, mbid)));
+
+  assert.deepEqual(mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(compilation), []);
+  await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: compilation });
+  assert.equal(
+    sha256(fs.readFileSync(await materializeAlbumMaster(compilation))),
+    HASH_F,
+    "A compilation of singles takes its Cover Art Archive front, not a single's cover",
+  );
+});
+
+test("composite-plan-keeps-provider-cover-of-its-own-release", async () => {
+  // Over-correction guard: a composite whose primary source IS this album's
+  // provider release (gap-filled from another album) keeps that cover.
+  const db = dbModule.db;
+  const album = "rg-composite-own-release";
+  const donor = "rg-studio-gap-donor";
+  insertTestAlbum(db, album, "Own Release");
+  insertTestProviderCandidate(db, { releaseGroupMbid: album, providerId: `${album}-album-c-id`, title: "Own Release" });
+  insertTestAlbum(db, donor, "Gap Donor");
+  insertTestProviderCandidate(db, { releaseGroupMbid: donor, providerId: `${donor}-single-id`, title: "Gap Donor" });
+  seedCompositePlan(db, album, [providerMatchIdFor(db, album), providerMatchIdFor(db, donor)]);
+
+  const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(album);
+  assert.deepEqual(candidates.map((candidate) => candidate.entityId), [`${album}-album-c-id`]);
+  await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: album });
+  assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(album))), HASH_C);
+});
+
+test("composite-of-versions-of-the-same-album-keeps-the-provider-cover", async () => {
+  // The 16-bit album gap-filled with hi-res versions of some of its tracks:
+  // every source is a provider release of THIS release group, so the provider
+  // cover belongs to the album.
+  const db = dbModule.db;
+  const album = "rg-composite-same-album-versions";
+  insertTestAlbum(db, album, "Same Album");
+  insertTestProviderCandidate(db, { releaseGroupMbid: album, providerId: `${album}-album-c-16bit`, title: "Same Album" });
+  const ownEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(`${album}-release`) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderItems (entity_type, provider, provider_id, title, version)
+    VALUES ('release', 'test-hybrid-provider', ?, 'Same Album', 'Hi-Res')
+  `).run(`${album}-album-c-hires`);
+  const hiRes = db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES ((SELECT id FROM ProviderItems WHERE provider_id = ?), ?, 'source_subset', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(`${album}-album-c-hires`, ownEdition.id);
+  seedCompositePlan(db, album, [providerMatchIdFor(db, album), Number(hiRes.lastInsertRowid)]);
+
+  const candidates = mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(album);
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.entityId),
+    [`${album}-album-c-16bit`],
+    "The whole-album match supplies the cover. A source_subset hi-res donor does not.",
+  );
+  await mediaCoverServiceModule.resolveAlbumArtwork({ albumMbid: album });
+  assert.equal(sha256(fs.readFileSync(await materializeAlbumMaster(album))), HASH_C);
+});
+
+test("a donor album matched onto this edition is not its cover", async () => {
+  // Hitlist's plan source is Tidal "Evolve", and that match was written onto
+  // the Hitlist edition itself (same release group, relation overlap). The
+  // same-group join used to treat Evolve as Hitlist's cover.
+  const db = dbModule.db;
+  const album = "rg-hitlist-evolve-on-edition";
+  insertTestAlbum(db, album, "Hitlist");
+  const releaseGroup = db.prepare("SELECT id, artist_mbid FROM Albums WHERE mbid = ?").get(album) as {
+    id: number;
+    artist_mbid: string;
+  };
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title)
+    VALUES (?, ?, ?, ?, 'Hitlist')
+  `).run(`${album}-release`, releaseGroup.id, album, releaseGroup.artist_mbid);
+  const edition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ?").get(`${album}-release`) as { id: number };
+  db.prepare(`
+    INSERT INTO ProviderItems (entity_type, provider, provider_id, title, artwork_url)
+    VALUES ('release', 'test-hybrid-provider', 'evolve-donor-id', 'Evolve', 'https://provider.test/evolve.jpg')
+  `).run();
+  const item = db.prepare("SELECT id FROM ProviderItems WHERE provider_id = 'evolve-donor-id'").get() as { id: number };
+  const match = db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'overlap', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(item.id, edition.id);
+  seedCompositePlan(db, album, [Number(match.lastInsertRowid)]);
+
+  assert.deepEqual(
+    mediaCoverServiceModule.loadAlbumProviderArtworkCandidates(album),
+    [],
+    "An overlap donor matched onto this edition is not a cover candidate",
   );
 });

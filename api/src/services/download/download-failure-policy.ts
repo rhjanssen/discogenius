@@ -1,4 +1,5 @@
 import { ProviderUnavailableError } from "./provider-unavailable-error.js";
+import { errorIndicatesProviderAuth } from "../providers/provider-auth-error.js";
 import { readIntEnv } from "../../utils/env.js";
 import { streamingProviderManager } from "../providers/index.js";
 
@@ -51,16 +52,74 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\bDRM\/SNIP\b/i,
   /\bpolicy=SNIP\b/i,
   /\bencrypted HLS\b/i,
-  // Deezer / Streamrip permanent entitlement
+  // Deezer / Streamrip permanent entitlement. ARL expiry is a provider auth
+  // failure (ProviderAuthError), not a per-album permanent result.
   /\bnot available in (?:your|this) country\b/i,
-  /\binvalid (?:arl|token)\b/i,
-  /\barl (?:expired|invalid)\b/i,
+  /\binvalid token\b/i,
   /\bwronglicense\b/i,
   /\blicense.*(?:denied|invalid)\b/i,
   /\bsubscription required\b/i,
   /\bentitlement\b/i,
   /\bgeo(?:graphically)?[- ]?restricted\b/i,
   /\bformat.*not available\b/i,
+  /\bnot available for stream\b/i,
+];
+
+/**
+ * Transport failures streamrip reports while resolving an album. They are
+ * often wrapped as "not available for stream", which is not a catalogue fact.
+ * A specific permanent cause in the same text still wins.
+ *
+ * A bare Python traceback is not transport evidence. Streamrip prints one for
+ * catalogue failures too, and treating it as transport made an unstreamable
+ * Deezer track retry instead of falling back.
+ */
+const TRANSIENT_TRANSPORT_PATTERNS: RegExp[] = [
+  /connection pool is full/i,
+  /\bpool is full\b/i,
+  /discarding connection/i,
+  /httpsconnectionpool/i,
+  /httpconnectionpool/i,
+  /max retries exceeded/i,
+  /\beconnreset\b/i,
+  /\beconnrefused\b/i,
+  /\beconnaborted\b/i,
+  /\betimedout\b/i,
+  /\btimed out\b/i,
+  // No word boundary: requests names the exception ReadTimeout / ConnectTimeout.
+  /timeout/i,
+];
+
+/**
+ * Catalogue, auth, region, and entitlement failures. Generic "not available"
+ * and a bare "unavailable" are omitted: streamrip uses that wording for a
+ * full connection pool. "No longer available" stays here.
+ */
+const SPECIFIC_PERMANENT_CAUSE: RegExp[] = [
+  /downloader provisioning is incomplete/i,
+  /\b404\b/i,
+  /\bnot[\s_-]?found\b/i,
+  /\bdoes not exist\b/i,
+  /\bforbidden\b/i,
+  /\b403\b/,
+  /\b401\b/,
+  /\bunauthorized\b/i,
+  /\bprivate video\b/i,
+  /\bmembers[- ]only\b/i,
+  /\bDRM[\s/_-]?protected\b/i,
+  /\bDRM\/SNIP\b/i,
+  /\bpolicy=SNIP\b/i,
+  /\bencrypted HLS\b/i,
+  /\bnot available in (?:your|this) country\b/i,
+  /\bgeo(?:graphically)?[- ]?restricted\b/i,
+  /\bwronglicense\b/i,
+  /\blicense.*(?:denied|invalid)\b/i,
+  /\bsubscription required\b/i,
+  /\bentitlement\b/i,
+  /\bquality not available\b/i,
+  /\bquality unavailable\b/i,
+  /\binvalid (?:track|album|video|id|arl|token)\b/i,
+  /\bno longer available\b/i,
 ];
 
 const TRANSIENT_PATTERNS: RegExp[] = [
@@ -93,7 +152,8 @@ function errorText(error: unknown): string {
 export function isDownloadCancellationError(error: unknown): boolean {
   const text = errorText(error).toLowerCase();
   return text.includes("download cancelled")
-    || text.includes("aborted")
+    // Word boundary so ECONNABORTED stays a transport failure, not a cancel.
+    || /\baborted\b/.test(text)
     || (error instanceof Error && error.name === "AbortError");
 }
 
@@ -102,10 +162,20 @@ export function isDownloadCancellationError(error: unknown): boolean {
  * Permanent failures skip same-offer retries and go straight to fallback (or fail).
  * Unknown / Traceback / exit-1 style errors default to transient.
  */
+function hasSpecificPermanentCause(text: string): boolean {
+  return SPECIFIC_PERMANENT_CAUSE.some((pattern) => pattern.test(text));
+}
+
 export function classifyDownloadFailure(error: unknown): DownloadFailureKind {
   if (error instanceof ProviderUnavailableError) return "permanent";
   const text = errorText(error);
   if (!text.trim()) {
+    return "transient";
+  }
+  if (
+    TRANSIENT_TRANSPORT_PATTERNS.some((pattern) => pattern.test(text))
+    && !hasSpecificPermanentCause(text)
+  ) {
     return "transient";
   }
   if (PERMANENT_PATTERNS.some((pattern) => pattern.test(text))) {
@@ -193,7 +263,7 @@ export async function executeWithSameOfferRetries<T>(
       return await fn();
     } catch (error) {
       lastError = error;
-      if (isDownloadCancellationError(error)) {
+      if (isDownloadCancellationError(error) || errorIndicatesProviderAuth(error)) {
         throw error;
       }
       const kind = classifyDownloadFailure(error);

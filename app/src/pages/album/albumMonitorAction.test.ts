@@ -13,8 +13,8 @@ describe("album monitor action presentation", () => {
       disabled: false,
       label: "Monitor",
     });
-    expect(action.tooltip).toContain("automatic curation");
-    expect(action.tooltip).toContain("manual changes remain available");
+    expect(action.tooltip).toContain("Chosen by you");
+    expect(action.tooltip).toContain("Back to automatic");
   });
 
   it("disables the action only while its mutation is pending", () => {

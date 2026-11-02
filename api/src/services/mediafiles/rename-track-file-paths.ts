@@ -183,7 +183,7 @@ export function isScopedSidecar(row: {
   media_id?: string | number | null;
   file_type?: string | null;
 }): boolean {
-  return row.media_id == null && (row.file_type === "nfo" || row.file_type === "cover");
+  return row.media_id == null && (row.file_type === "nfo" || row.file_type === "cover" || row.file_type === "artwork");
 }
 
 /** True when a conflicting DB row is the same artist/album-scoped sidecar artifact. */

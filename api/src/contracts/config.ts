@@ -11,6 +11,8 @@ import {
   expectString,
 } from "./runtime.js";
 
+export const COMPILATION_POLICY_CONTRACT_VALUES = ["original_discography", "fewest_albums"] as const;
+export type CompilationPolicyContract = (typeof COMPILATION_POLICY_CONTRACT_VALUES)[number];
 export const AUDIO_QUALITY_VALUES = ["low", "normal", "high", "max"] as const;
 export type AudioQualityValue = (typeof AUDIO_QUALITY_VALUES)[number];
 
@@ -25,6 +27,9 @@ export type UpcTargetValue = (typeof UPC_TARGET_VALUES)[number];
 
 export const VIDEO_FOLDER_LAYOUT_VALUES = ["separated", "inline", "inline_only"] as const;
 export type VideoFolderLayoutValue = (typeof VIDEO_FOLDER_LAYOUT_VALUES)[number];
+
+export const ALBUM_ARTIST_MODE_VALUES = ["plex_jellyfin", "picard"] as const;
+export type AlbumArtistModeValue = (typeof ALBUM_ARTIST_MODE_VALUES)[number];
 
 export const WRITE_AUDIO_TAGS_POLICY_VALUES = ["no", "new_files", "all_files", "sync"] as const;
 export type WriteAudioTagsPolicyValue = (typeof WRITE_AUDIO_TAGS_POLICY_VALUES)[number];
@@ -64,7 +69,6 @@ export interface QualityConfigContract {
   embed_cover: boolean;
   embed_lyrics: boolean;
   upgrade_existing_files: boolean;
-  downconvert_existing_files: boolean;
   convert_video_mp4?: boolean;
   extract_flac?: boolean;
 }
@@ -91,6 +95,19 @@ export interface MetadataConfigContract {
   write_audio_tags_policy?: WriteAudioTagsPolicyValue;
   embed_replaygain?: boolean;
   scrub_audio_tags?: boolean;
+  /**
+   * ALBUMARTIST spelling. `plex_jellyfin`: one primary artist, or Various Artists.
+   * `picard`: the full release credit with MusicBrainz join phrases.
+   */
+  album_artist_mode?: AlbumArtistModeValue;
+  /** Legacy. `true` migrates to album_artist_mode "picard". */
+  full_album_artist_credit?: boolean;
+  /** Write artist names from MusicBrainz locale aliases (Picard "translate artist names"). */
+  translate_artist_names?: boolean;
+  /** Locale preference for translated artist names, comma separated ("en,nl"). */
+  artist_name_locales?: string;
+  /** Keep names that are already in Latin script. */
+  translate_artist_names_skip_latin?: boolean;
 }
 
 export interface CatalogConfigContract {
@@ -147,6 +164,7 @@ export interface FilteringConfigContract {
   include_video_official_audio: boolean;
   prefer_explicit: boolean;
   enable_redundancy_filter: boolean;
+  compilation_policy: CompilationPolicyContract;
   require_provider_availability: boolean;
 }
 
@@ -215,10 +233,6 @@ export function parseQualityConfigContract(value: unknown): QualityConfigContrac
     embed_cover: expectBoolean(record.embed_cover, "quality.embed_cover"),
     embed_lyrics: expectBoolean(record.embed_lyrics, "quality.embed_lyrics"),
     upgrade_existing_files: expectBoolean(record.upgrade_existing_files, "quality.upgrade_existing_files"),
-    downconvert_existing_files: expectBoolean(
-      record.downconvert_existing_files,
-      "quality.downconvert_existing_files",
-    ),
     convert_video_mp4: expectOptionalBoolean(record.convert_video_mp4, "quality.convert_video_mp4"),
     extract_flac: expectOptionalBoolean(record.extract_flac, "quality.extract_flac"),
   };
@@ -255,6 +269,11 @@ export function parseMetadataConfigContract(value: unknown): MetadataConfigContr
     write_audio_tags_policy: expectOptionalOneOf(record.write_audio_tags_policy, WRITE_AUDIO_TAGS_POLICY_VALUES, "metadata.write_audio_tags_policy"),
     embed_replaygain: expectOptionalBoolean(record.embed_replaygain, "metadata.embed_replaygain"),
     scrub_audio_tags: expectOptionalBoolean(record.scrub_audio_tags, "metadata.scrub_audio_tags"),
+    album_artist_mode: expectOptionalOneOf(record.album_artist_mode, ALBUM_ARTIST_MODE_VALUES, "metadata.album_artist_mode"),
+    full_album_artist_credit: expectOptionalBoolean(record.full_album_artist_credit, "metadata.full_album_artist_credit"),
+    translate_artist_names: expectOptionalBoolean(record.translate_artist_names, "metadata.translate_artist_names"),
+    artist_name_locales: expectOptionalString(record.artist_name_locales, "metadata.artist_name_locales"),
+    translate_artist_names_skip_latin: expectOptionalBoolean(record.translate_artist_names_skip_latin, "metadata.translate_artist_names_skip_latin"),
   };
 }
 
@@ -328,6 +347,9 @@ export function parseFilteringConfigContract(value: unknown): FilteringConfigCon
     ),
     prefer_explicit: expectBoolean(record.prefer_explicit, "curation.prefer_explicit"),
     enable_redundancy_filter: expectBoolean(record.enable_redundancy_filter, "curation.enable_redundancy_filter"),
+    compilation_policy: record.compilation_policy === undefined
+      ? "original_discography"
+      : expectOneOf(record.compilation_policy, COMPILATION_POLICY_CONTRACT_VALUES, "curation.compilation_policy"),
     require_provider_availability: expectBoolean(record.require_provider_availability, "curation.require_provider_availability"),
   };
 }

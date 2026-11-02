@@ -20,6 +20,8 @@ Operator and contributor docs. The root [README.md](../README.md) is the getting
   TagLib vs Mutagen vs Mediabunny; what actually writes tags.
 - [HEALTH_DIAGNOSTICS.md](HEALTH_DIAGNOSTICS.md)
   `/ping` vs `/health` vs `CheckHealth`.
+- [PROVIDER_AUTH.md](PROVIDER_AUTH.md)
+  Provider login state, queue hold, and the Deezer ARL.
 - [STATISTICS_TRUTH_GATE.md](STATISTICS_TRUTH_GATE.md)
   Which tables own the numbers the UI shows.
 - [MB_LOCAL_MODE.md](MB_LOCAL_MODE.md)

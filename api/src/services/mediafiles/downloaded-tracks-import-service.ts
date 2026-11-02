@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db, withSqliteWriteGate } from "../../database.js";
+import { db, isSqliteBusyError, withSqliteWriteGate } from "../../database.js";
 import { OrganizerService, type OrganizeResult } from "./organizer.js";
 import {
     updateAlbumDownloadStatus,
@@ -23,7 +23,7 @@ import { MetadataIdentityService } from "../metadata/metadata-identity-service.j
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { ProviderTrackTagSupplementService } from "./provider-track-tag-supplement-service.js";
 import { TrackLyricsMaterializer, type TrackLyricsMaterializeResult } from "./track-lyrics-materializer.js";
-import { removeEmptyParents } from "./library-files.js";
+import { LibraryFilesService, removeEmptyParents } from "./library-files.js";
 import { Config } from "../config/config.js";
 import {
     decideImportedQuality,
@@ -34,6 +34,8 @@ import { classifyNeutralAudio } from "../providers/provider-quality.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { deriveQuality, parseAudioFile } from "./audioUtils.js";
 import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
+import { recordArtworkMaterializeFollowUp } from "../metadata/artwork-materialize-followup.js";
 
 type ImportDownloadJob = CommandModelOf<typeof CommandNames.ImportDownload>;
 
@@ -50,7 +52,7 @@ export function expectedImportedTrackCount(payload: Pick<ImportDownloadJob['payl
 }
 
 /** Full-album provenance is not exhaustive unless the backend downloads exact offers. */
-export function shouldHardFailIncompleteAlbumImport(options: {
+export function offeredImportShortfall(options: {
   type?: string;
   acquisitionMode?: string | null;
   provider?: string;
@@ -61,6 +63,125 @@ export function shouldHardFailIncompleteAlbumImport(options: {
     && downloadsSelectedOffers(options)
     && options.trackOfferCount > 0
     && options.processedCount < options.trackOfferCount;
+}
+
+/**
+ * A short hybrid or YouTube import keeps the tracks that landed. The gap is
+ * recorded per offer and only those tracks stay wanted. Failing the job would
+ * mark the album failed after the files were already organized.
+ */
+export function shouldHardFailIncompleteAlbumImport(options: {
+  type?: string;
+  acquisitionMode?: string | null;
+  provider?: string;
+  processedCount: number;
+  trackOfferCount: number;
+}): boolean {
+  void offeredImportShortfall(options);
+  return false;
+}
+
+function rememberImportTouchedFiles(commandId: number, fileIds: readonly number[]): void {
+    const ids = Array.from(new Set(
+        fileIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0),
+    ));
+    if (ids.length === 0) return;
+    withSqliteWriteGate(() => {
+        const current = CommandQueueManager.get(commandId);
+        if (!current || current.status !== "started") return;
+        const payload = (current.payload ?? {}) as Record<string, any>;
+        const handoff = payload.downloadImportHandoff && typeof payload.downloadImportHandoff === "object"
+            ? payload.downloadImportHandoff
+            : {};
+        CommandQueueManager.updateState(commandId, {
+            workerId: current.worker_id || undefined,
+            payloadPatch: {
+                downloadImportHandoff: {
+                    ...handoff,
+                    importTouchedFileIds: ids,
+                },
+            } as any,
+        });
+    }, "import:touched-files");
+}
+
+/** Durable point of no return: from here the import changes the staged files or
+ * the library. A worker killed before this mark is replayed on restart instead
+ * of failed closed. */
+function markImportLibraryMutationStarted(commandId: number): void {
+    withSqliteWriteGate(() => {
+        const current = CommandQueueManager.get(commandId);
+        if (!current || current.status !== "started") return;
+        const payload = (current.payload ?? {}) as Record<string, any>;
+        const handoff = payload.downloadImportHandoff && typeof payload.downloadImportHandoff === "object"
+            ? payload.downloadImportHandoff
+            : null;
+        if (!handoff || handoff.libraryMutationStartedAt) return;
+        CommandQueueManager.updateState(commandId, {
+            workerId: current.worker_id || undefined,
+            payloadPatch: {
+                downloadImportHandoff: { ...handoff, libraryMutationStartedAt: new Date().toISOString() },
+            } as any,
+        });
+    }, "import:mutation-start");
+}
+
+export type UnorganizedTrackGap = {
+  position: string | null;
+  title: string | null;
+  providerId: string;
+  cause: string;
+};
+
+function mergeOrganizeTrackGaps(
+  organized: readonly UnorganizedTrackGap[] | undefined,
+  missing: readonly UnorganizedTrackGap[],
+): UnorganizedTrackGap[] {
+  const byId = new Map<string, UnorganizedTrackGap>();
+  for (const gap of missing) byId.set(gap.providerId, gap);
+  for (const gap of organized || []) byId.set(gap.providerId, gap);
+  return Array.from(byId.values());
+}
+
+/** One row per offered track the organizer did not place. Cause text is recorded, not repaired. */
+export function listUnorganizedTrackGaps(
+  offers: readonly { provider: string; providerTrackId: string; title?: string | null; trackNum?: number | null; volumeNum?: number | null }[],
+  processedTrackIds: readonly string[],
+  cause = "not organized",
+): UnorganizedTrackGap[] {
+  const processed = new Set(processedTrackIds.map(String));
+  const seen = new Set<string>();
+  const gaps: UnorganizedTrackGap[] = [];
+  for (const offer of offers) {
+    const providerId = `${offer.provider}:${offer.providerTrackId}`;
+    if (processed.has(String(offer.providerTrackId)) || seen.has(providerId)) continue;
+    seen.add(providerId);
+    gaps.push({
+      position: offer.trackNum != null ? `${offer.volumeNum ?? 1}-${offer.trackNum}` : null,
+      title: offer.title ? String(offer.title) : null,
+      providerId,
+      cause,
+    });
+  }
+  return gaps;
+}
+
+/** Offered tracks the organizer did not place, labelled for logs and history. */
+export function describeUnorganizedTrackOffers(
+    offers: readonly { provider: string; providerTrackId: string; title?: string; trackNum?: number | null; volumeNum?: number | null }[],
+    processedTrackIds: readonly string[],
+): string[] {
+    const processed = new Set(processedTrackIds.map(String));
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const offer of offers) {
+        const key = `${offer.provider}:${offer.providerTrackId}`;
+        if (processed.has(String(offer.providerTrackId)) || seen.has(key)) continue;
+        seen.add(key);
+        const position = offer.trackNum != null ? `${offer.volumeNum ?? 1}-${offer.trackNum} ` : "";
+        out.push(`${position}${offer.title ? `"${offer.title}" ` : ""}(${key})`);
+    }
+    return out;
 }
 
 function importedLibraryFileIds(organizeResult: OrganizeResult): number[] {
@@ -92,20 +213,22 @@ export function assertImportedAudioTagsApplied(
  * Fetch/store via the same resolver the UI uses, then rewrite dest cover.jpg
  * from that cache so folder sidecar and embed agree.
  */
-export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[]): Promise<void> {
+export async function ensureDestAlbumArtworkForFileIds(
+    fileIds: readonly number[],
+    onFileStart?: (index: number, total: number) => void,
+): Promise<void> {
     const ids = Array.from(new Set(
         fileIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0),
     ));
     if (ids.length === 0) return;
 
-    const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(`
         SELECT canonical_release_mbid AS release_mbid, album_edition_id, library_id,
                file_path, library_root, relative_path
         FROM TrackFiles
-        WHERE id IN (${placeholders})
+        WHERE id IN ${SQL_JSON_LIST}
           AND file_type = 'track'
-    `).all(...ids) as Array<{
+    `).all(jsonList(ids)) as Array<{
         release_mbid: string | null;
         album_edition_id: number | null;
         library_id: number | null;
@@ -120,8 +243,8 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
         releaseGroupHasMultipleMonitoredEditions,
         resolveAlbumArtwork,
         resolveEditionArtwork,
-        syncCachedMediaCoverToFile,
     } = await import("../metadata/media-cover-service.js");
+    const { materializeMediaCoverToFile } = await import("../metadata/media-cover-materialization.js");
     const { resolveStoredLibraryPath } = await import("./library-paths.js");
     const { getConfigSection } = await import("../config/config.js");
     const metadataConfig = getConfigSection("metadata");
@@ -149,7 +272,14 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
 
     const resolvedCovers = new Set<string>();
     const failures: string[] = [];
+    const stepTotal = Math.max(1, editions.size + sidecars.length);
+    let step = 0;
+    const tick = (): void => {
+        step += 1;
+        onFileStart?.(step, stepTotal);
+    };
     for (const { releaseMbid, libraryId } of editions.values()) {
+        tick();
         try {
             const albumMbid = albumMbidForEdition(releaseMbid);
             if (albumMbid) {
@@ -169,8 +299,9 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
     }
 
     for (const { releaseMbid, outputPath } of sidecars) {
+        tick();
         try {
-            let result = syncCachedMediaCoverToFile({
+            let result = await materializeMediaCoverToFile({
                 entityId: releaseMbid,
                 coverEntity: "Edition",
                 coverTypes: "cover",
@@ -179,7 +310,7 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
             if (result === "missing") {
                 const albumMbid = albumMbidForEdition(releaseMbid);
                 if (albumMbid) {
-                    result = syncCachedMediaCoverToFile({
+                    result = await materializeMediaCoverToFile({
                         entityId: albumMbid,
                         coverEntity: "Album",
                         coverTypes: "cover",
@@ -187,16 +318,31 @@ export async function ensureDestAlbumArtworkForFileIds(fileIds: readonly number[
                     });
                 }
             }
+            // A locked database records its own follow-up and must not fail the import.
+            if (result === "deferred") continue;
             if (resolvedCovers.has(releaseMbid) && result === "missing") {
                 failures.push(`edition ${releaseMbid}: resolved artwork was not present in the media-cover cache`);
             }
         } catch (error) {
+            if (isSqliteBusyError(error)) {
+                recordArtworkMaterializeFollowUp({
+                    entityId: releaseMbid,
+                    coverEntity: "Edition",
+                    coverTypes: ["cover"],
+                    outputPath,
+                    reason: "database is locked",
+                });
+                continue;
+            }
             failures.push(`${outputPath}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
-    if (failures.length > 0) {
-        throw new Error(`Failed to materialize canonical album artwork. ${failures[0]}`);
+    // Artwork is decoration on imported media. The audio is already in place
+    // and tracked, so a cover problem is reported and left to the metadata
+    // backfill instead of failing (and later re-downloading) the whole album.
+    for (const failure of failures) {
+        console.warn(`[ImportDownload] Album artwork not materialized; import kept: ${failure}`);
     }
 }
 
@@ -212,7 +358,6 @@ export async function ensureAlbumCatalogGenresForFileIds(fileIds: readonly numbe
     ));
     if (ids.length === 0) return;
 
-    const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(`
         SELECT DISTINCT
           album.mbid AS mbid,
@@ -220,10 +365,10 @@ export async function ensureAlbumCatalogGenresForFileIds(fileIds: readonly numbe
           album.genres AS genres
         FROM TrackFiles file
         JOIN Albums album ON album.mbid = file.canonical_release_group_mbid
-        WHERE file.id IN (${placeholders})
+        WHERE file.id IN ${SQL_JSON_LIST}
           AND file.file_type = 'track'
           AND album.mbid IS NOT NULL
-    `).all(...ids) as Array<{ mbid: string; artistMbid: string | null; genres: string | null }>;
+    `).all(jsonList(ids)) as Array<{ mbid: string; artistMbid: string | null; genres: string | null }>;
 
     const missing = rows.filter((row) => {
         const raw = String(row.genres || "").trim();
@@ -286,6 +431,8 @@ export type ImportDownloadState = {
     trackStatus?: "queued" | "downloading" | "completed" | "error" | "skipped";
     statusMessage?: string;
     state?: "queued" | "downloading" | "completed" | "failed" | "paused" | "importPending" | "importing" | "importFailed";
+    /** Renews liveness without changing the displayed percent. Set at the start of each file. */
+    subphaseTick?: boolean;
     outcome?: "ok" | "completedWithWarning";
     warningMessage?: string;
     primaryProvider?: string;
@@ -396,7 +543,6 @@ async function prepareWorkspaceForLibraryProfile(
     `).get(libraryId) as { quality_profile_id: number } | undefined;
     if (!library) throw new Error(`Import library ${libraryId} is unavailable`);
     const profile = new QualityProfileRepository(db).get(library.quality_profile_id);
-    const conformToTarget = Config.getQualityConfig().downconvert_existing_files === true;
     const outcomes = new Map<string, PreparedImportQuality>();
 
     const files = listWorkspaceAudioFiles(downloadPath);
@@ -407,9 +553,10 @@ async function prepareWorkspaceForLibraryProfile(
         const legacyQuality = deriveQuality(path.extname(filePath), metrics);
         const normalizedQuality = isSpatialAudioQuality(legacyQuality)
             ? "spatial"
-            : classifyNeutralAudio(legacyQuality)
-                || classifyNeutralAudio(metrics.codec)
-                || (path.extname(filePath).toLowerCase() === ".flac" ? "lossless" : "lossy");
+            : classifyNeutralAudio(legacyQuality);
+        if (!metrics.codec || !normalizedQuality) {
+            throw new Error(`Cannot verify audio quality for ${path.basename(filePath)} from its stream codec/profile`);
+        }
         assessed.push({
             filePath,
             decision: decideImportedQuality(profile, {
@@ -420,7 +567,7 @@ async function prepareWorkspaceForLibraryProfile(
                 sampleRate: metrics.sampleRate,
                 bitrate: metrics.bitrate,
                 spatialFormat: normalizedQuality === "spatial" ? legacyQuality : null,
-            }, { conformToTarget }),
+            }),
         });
     }
 
@@ -605,11 +752,53 @@ export function persistPreparedImportQuality(
  * consistency check between the operation result and the exact internal
  * ProviderItems row carried by the acquisition command.
  */
+/**
+ * One provider item on two editions of the same recording is one provenance.
+ * Contexts that name different recordings stay ambiguous.
+ * The edition being imported picks which of the same-recording contexts is stamped.
+ */
+export function selectProvenanceOffer(
+    providerTrackId: string,
+    candidates: readonly DownloadTrackOffer[],
+    releaseMbid?: string | null,
+): DownloadTrackOffer {
+    if (candidates.length === 1) return candidates[0];
+    const recordingIds = candidates.map((offer) => String(offer.canonicalRecordingMbid || "").trim());
+    const sameRecording = recordingIds.every((id) => id.length > 0) && new Set(recordingIds).size === 1;
+    const refuse = (): never => {
+        throw new Error(
+            `[ImportDownload] Downloaded track ${providerTrackId} has ${candidates.length} exact offer contexts; refusing ambiguous provenance`,
+        );
+    };
+    if (!sameRecording) refuse();
+
+    const release = String(releaseMbid || "").trim();
+    if (release) {
+        const onRelease = new Set((db.prepare(`
+            SELECT track.mbid AS mbid
+            FROM Tracks track
+            JOIN AlbumEditions edition ON edition.id = track.album_edition_id
+            WHERE edition.mbid = ?
+        `).all(release) as Array<{ mbid: string | null }>)
+            .map((row) => String(row.mbid || ""))
+            .filter(Boolean));
+        const planned = candidates.filter((offer) =>
+            offer.canonicalTrackMbid && onRelease.has(offer.canonicalTrackMbid));
+        if (planned.length === 1) return planned[0];
+        if (planned.length > 1 && new Set(planned.map((offer) => offer.providerTrackItemId)).size === 1) {
+            return planned[0];
+        }
+    }
+    if (new Set(candidates.map((offer) => offer.providerTrackItemId)).size === 1) return candidates[0];
+    return refuse();
+}
+
 export function persistDownloadedProviderProvenance(
     libraryId: number | null | undefined,
     organizeResult: OrganizeResult,
     trackOffers: readonly DownloadTrackOffer[],
     acquisitionPlanId?: number | null,
+    releaseMbid?: string | null,
 ): void {
     if (trackOffers.length === 0) {
         if (acquisitionPlanId != null && organizeResult.processedTrackIds.length > 0) {
@@ -634,6 +823,11 @@ export function persistDownloadedProviderProvenance(
         SELECT id, provider_item_id
         FROM ProviderItemAudioVariants
         WHERE id = ?
+    `);
+    const hasSourceOccurrence = db.prepare(`
+        SELECT 1 FROM ProviderEditionMembers
+        WHERE provider_edition_item_id = ? AND member_item_id = ?
+        LIMIT 1
     `);
     const update = db.prepare(`
         UPDATE TrackFiles
@@ -692,12 +886,12 @@ export function persistDownloadedProviderProvenance(
                 ? byTrackId.filter((offer) => offer.provider === file.provider)
                 : byTrackId;
             const candidates = narrowed.length > 0 ? narrowed : byTrackId;
-            if (candidates.length !== 1) {
+            if (candidates.length === 0) {
                 throw new Error(
-                    `[ImportDownload] Downloaded track ${providerTrackId} has ${candidates.length} exact offer contexts; refusing ambiguous provenance`,
+                    `[ImportDownload] Downloaded track ${providerTrackId} has 0 exact offer contexts; refusing ambiguous provenance`,
                 );
             }
-            const offer = candidates[0];
+            const offer = selectProvenanceOffer(String(providerTrackId), candidates, releaseMbid);
             if (!Number.isInteger(offer.providerTrackItemId) || Number(offer.providerTrackItemId) <= 0) {
                 throw new Error(
                     `[ImportDownload] Downloaded track ${providerTrackId} has no exact provider_item_id`,
@@ -749,12 +943,24 @@ export function persistDownloadedProviderProvenance(
                     id: number;
                     provider_item_id: number;
                 } | undefined;
-                if (!variant || variant.provider_item_id !== providerItem.id) {
+                let belongsToSource = variant?.provider_item_id === providerItem.id;
+                if (variant && !belongsToSource && offer.providerEditionItemId === variant.provider_item_id) {
+                    const parent = loadProviderItem.get(variant.provider_item_id) as {
+                        id:number;provider:string;entity_type:string;provider_id:string;
+                    } | undefined;
+                    belongsToSource = parent?.provider === providerItem.provider && parent.entity_type === 'release'
+                        && parent.provider_id === offer.providerAlbumId
+                        && hasSourceOccurrence.get(parent.id,providerItem.id) != null;
+                }
+                if (!variant || !belongsToSource) {
                     throw new Error(
-                        `[ImportDownload] Audio variant ${offer.providerAudioVariantId} does not belong to provider item ${providerItem.id}`,
+                        `[ImportDownload] Audio variant ${offer.providerAudioVariantId} does not belong to provider item ${providerItem.id} or its exact source edition`,
                     );
                 }
                 sourceAudioVariantId = variant.id;
+                if (variant.provider_item_id === providerItem.id) {
+                    recordDeliveredQuality(fileId, variant.id);
+                }
             }
 
             update.run({
@@ -1145,6 +1351,7 @@ export class DownloadedTracksImportService {
             console.warn(`[ImportDownload] Download workspace missing or empty for ${type} ${providerId}, but imported library file(s) already exist. Recovering import job.`);
         } else {
             cancellationCheckpoint("before organizing downloaded files");
+            markImportLibraryMutationStarted(job.id);
             if (type !== "video" && job.payload.libraryId != null) {
                 options.updateState({
                     progress: 10,
@@ -1221,6 +1428,7 @@ export class DownloadedTracksImportService {
                 organizeResult,
                 Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
                 job.payload.acquisitionPlanId,
+                job.payload.releaseMbid,
             ), "import:provenance");
         }
         const importLibraryId = job.payload.libraryId;
@@ -1275,63 +1483,39 @@ export class DownloadedTracksImportService {
         }
 
         if ((type === "album" || type === "track") && organizeResult.processedTrackIds.length > 0) {
-            cancellationCheckpoint("before resolving metadata identity");
-            options.updateState({
-                progress: 86,
-                description: "ImportDownload: resolving catalog identity",
-                currentFileNum: organizeResult.processedTrackIds.length,
-                totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
-                statusMessage: "Resolving catalog identity",
-                state: "importing",
-            });
-
-            try {
-                if (type === "album") {
-                    cancellationCheckpoint(`before resolving album identity ${providerId}`);
-                    try {
-                        await MetadataIdentityService.resolveAlbum(providerId, { provider });
-                        const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
-                        await RefreshAlbumService.refreshMetadata(providerId, { provider: provider || undefined });
-                    } catch (err) {
-                        console.warn(`[ImportDownload] Metadata identity resolution failed for album ${providerId}:`, err);
-                    }
-                    cancellationCheckpoint(`after resolving album identity ${providerId}`);
-                } else {
-                    await MetadataIdentityService.resolveTrack(providerId, { provider });
-                    cancellationCheckpoint("after resolving track identity");
-                }
-            } catch (error) {
-                if (isImportDownloadCancelledError(error)) throw error;
-                console.warn(`[ImportDownload] Metadata identity resolution failed for ${type} ${providerId}:`, error);
-            }
-
-            options.updateState({ progress: 88, description: "ImportDownload: fetching tag supplements", statusMessage: "Fetching tag supplements", state: "importing" });
-            cancellationCheckpoint("before refreshing provider tag supplements");
-            try {
-                await ProviderTrackTagSupplementService.refresh({
-                    providerId: job.payload.provider || null,
-                    albumProviderIds: type === "album" ? [providerId] : [],
-                    trackProviderIds: type === "track" ? [providerId] : [],
-                });
-            } catch (error) {
-                // Loudness/copyright are provider supplements. Their absence
-                // must not prevent importing otherwise valid media.
-                console.warn(`[ImportDownload] Failed to refresh provider tag supplements for ${type} ${providerId}:`, error);
-            }
-            cancellationCheckpoint("after refreshing provider tag supplements");
-
+            // Catalog identity / album refresh and provider tag supplements are
+            // network work. They run outside the disk-exclusive import slot:
+            // supplements + lyrics are prefetched at download completion
+            // (prefetchImportNetworkData) and identity is resolved after the
+            // import released its acquisition plan (resolveImportedCatalogIdentity).
+            // Running identity here also always failed with
+            // AcquisitionPlanInUseError, because this import owns that plan.
             const importedFileIds = importedLibraryFileIds(organizeResult);
             if (importedFileIds.length === 0) {
                 throw new Error(
                     `[ImportDownload] Organizer reported ${organizeResult.processedTrackIds.length} processed audio item(s) without exact TrackFiles row identity`,
                 );
             }
+            rememberImportTouchedFiles(job.id, importedFileIds);
+            const reportFile = (index: number, total: number, progress: number, description: string): void => {
+                options.updateState({
+                    progress,
+                    description,
+                    statusMessage: description,
+                    currentFileNum: index,
+                    totalFiles: total,
+                    state: "importing",
+                    subphaseTick: true,
+                });
+            };
             const metadataConfig = Config.getMetadataConfig();
             const qualityConfig = Config.getQualityConfig();
             if (metadataConfig.save_album_cover || qualityConfig.embed_cover) {
                 options.updateState({ progress: 90, description: "ImportDownload: caching artwork", statusMessage: "Caching artwork", state: "importing" });
                 cancellationCheckpoint("before caching dest album artwork");
-                await ensureDestAlbumArtworkForFileIds(importedFileIds);
+                await ensureDestAlbumArtworkForFileIds(importedFileIds, (index, total) => {
+                    reportFile(index, total, 90, "ImportDownload: caching artwork");
+                });
             }
 
             let lyricResult: TrackLyricsMaterializeResult | null = null;
@@ -1339,7 +1523,12 @@ export class DownloadedTracksImportService {
             cancellationCheckpoint("before materializing lyrics");
             try {
                 lyricResult = importedFileIds.length > 0
-                    ? await TrackLyricsMaterializer.materializeForFileIds(importedFileIds)
+                    ? await TrackLyricsMaterializer.materializeForFileIds(
+                        importedFileIds,
+                        null,
+                        job.payload.prefetchedLyrics as any,
+                        (index, total) => reportFile(index, total, 92, "ImportDownload: preparing lyrics"),
+                    )
                     : await TrackLyricsMaterializer.materializeForMediaIds(
                         organizeResult.processedTrackIds,
                         provider,
@@ -1372,6 +1561,7 @@ export class DownloadedTracksImportService {
                 const retagResult = await AudioTagService.apply(importedFileIds, {
                     includeExternalLyrics: lyricResult !== null,
                     lyricsByProviderMedia: lyricResult?.lyricsByProviderMedia,
+                    onFileStart: (index, total) => reportFile(index, total, 94, "ImportDownload: applying audio tag rules"),
                 });
                 assertImportedAudioTagsApplied(retagResult, `${type} ${providerId}`);
             }
@@ -1390,11 +1580,37 @@ export class DownloadedTracksImportService {
             });
             const videoFileIds = importedLibraryFileIds(organizeResult);
             if (videoFileIds.length === 0) throw new Error("Video importer did not report exact TrackFiles identities");
-            const retagResult = await VideoTagService.apply(videoFileIds);
+            rememberImportTouchedFiles(job.id, videoFileIds);
+            const retagResult = await VideoTagService.apply(videoFileIds, {
+                onFileStart: (index, total) => options.updateState({
+                    progress: 94,
+                    description: "ImportDownload: applying video tag rules",
+                    statusMessage: "Applying video tag rules",
+                    currentFileNum: index,
+                    totalFiles: total,
+                    state: "importing",
+                    subphaseTick: true,
+                }),
+            });
             if (retagResult.errors.length > 0 || retagResult.missing > 0) {
                 throw new Error(`Video tagging failed for ${providerId}: ${retagResult.errors.map(item => item.error).join("; ") || "imported file is missing"}`);
             }
             cancellationCheckpoint("after applying video tag rules");
+        }
+
+        try {
+            const settledFileIds = importedLibraryFileIds(organizeResult);
+            if (settledFileIds.length > 0) {
+                const recordingIds = (db.prepare(`
+                    SELECT DISTINCT recording_id AS id
+                    FROM TrackFiles
+                    WHERE id IN ${SQL_JSON_LIST}
+                      AND recording_id IS NOT NULL
+                `).all(jsonList(settledFileIds)) as Array<{ id: number }>).map((row) => row.id);
+                LibraryFilesService.settleImportedRecordings(recordingIds);
+            }
+        } catch (settleError) {
+            console.warn("[ImportDownload] Unmonitored-file settlement failed:", settleError);
         }
 
         cancellationCheckpoint("before recording import history");
@@ -1431,15 +1647,24 @@ export class DownloadedTracksImportService {
             && !isTrackOffersJob
             && expectedProcessedTracks > 0
             && organizeResult.processedTrackIds.length < expectedProcessedTracks;
-        const hardIncomplete = shouldHardFailIncompleteAlbumImport({
+        const offerShortfall = offeredImportShortfall({
             type,
             acquisitionMode,
             provider,
             processedCount: organizeResult.processedTrackIds.length,
             trackOfferCount,
         });
+        const offerGaps = offerShortfall
+            ? mergeOrganizeTrackGaps(
+                organizeResult.trackGaps,
+                listUnorganizedTrackGaps(
+                    Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
+                    organizeResult.processedTrackIds,
+                ),
+            )
+            : [];
 
-        if (softIncomplete || hardIncomplete) {
+        if (softIncomplete || offerShortfall) {
             try {
                 await withSqliteWriteGate(() => recordHistoryEvent({
                     artistId: historyContext.artistId,
@@ -1452,6 +1677,11 @@ export class DownloadedTracksImportService {
                         type,
                         providerId,
                         originalJobId: originalJobId ?? null,
+                        importTrackGaps: offerGaps,
+                        unorganizedTrackOffers: isTrackOffersJob
+                            ? describeUnorganizedTrackOffers(job.payload.trackOffers ?? [], organizeResult.processedTrackIds)
+                            : undefined,
+                        totalTracksInStaging: organizeResult.totalTracksInStaging,
                         processedTrackIds: {
                             count: organizeResult.processedTrackIds.length,
                             expected: isTrackOffersJob
@@ -1465,11 +1695,14 @@ export class DownloadedTracksImportService {
             }
         }
 
-        if (hardIncomplete) {
-            const processed = organizeResult.processedTrackIds.length;
-            throw new Error(
-                `Hybrid album import incomplete for ${providerId}: organized ${processed}/${trackOfferCount} offered tracks. ` +
-                `Refusing to mark the job complete.`,
+        if (offerShortfall) {
+            const missing = describeUnorganizedTrackOffers(
+                Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : [],
+                organizeResult.processedTrackIds,
+            );
+            console.warn(
+                `[ImportDownload] Hybrid album ${providerId}: organized ${organizeResult.processedTrackIds.length}/${trackOfferCount}. `
+                + `Still wanted: ${missing.join("; ") || "none identified"}`,
             );
         }
 
@@ -1481,10 +1714,22 @@ export class DownloadedTracksImportService {
             ...payloadDownloadState,
             ...liveDownloadState,
         };
-        const warningMessage = typeof existingDownloadState.warningMessage === "string"
+        const priorWarning = typeof existingDownloadState.warningMessage === "string"
             ? existingDownloadState.warningMessage.trim()
             : "";
-        const completedWithWarning = existingDownloadState.outcome === "completedWithWarning" && Boolean(warningMessage);
+        const gapWarning = offerGaps.length > 0
+            ? `Imported ${organizeResult.processedTrackIds.length}/${trackOfferCount}. Still wanted: ${
+                offerGaps.slice(0, 5).map((gap) => {
+                    const position = gap.position ? `${gap.position} ` : "";
+                    const title = gap.title ? `"${gap.title}" ` : "";
+                    return `${position}${title}(${gap.providerId}) ${gap.cause}`;
+                }).join("; ")
+            }${offerGaps.length > 5 ? ` and ${offerGaps.length - 5} more` : ""}`
+            : "";
+        const warningMessage = [priorWarning, gapWarning].filter(Boolean).join(" ");
+        const completedWithWarning = Boolean(warningMessage) && (
+            existingDownloadState.outcome === "completedWithWarning" || offerGaps.length > 0
+        );
         options.updateState({
             progress: 100,
             description: "ImportDownload: completed",
@@ -1548,4 +1793,113 @@ export class DownloadedTracksImportService {
         }
     }
     }
+}
+
+
+/**
+ * Network work for an import, run by the download slot right after the bytes
+ * finished downloading and before the import queues for the disk-exclusive
+ * slot. Best-effort: anything missing is looked up again by the import.
+ */
+export async function prefetchImportNetworkData(payload: {
+    type: string;
+    provider?: string | null;
+    providerId: string;
+    trackOffers?: Array<{ providerTrackId?: string | null }> | null;
+    downloadPath?: string | null;
+}): Promise<{ prefetchedLyrics?: Record<string, unknown> }> {
+    const provider = String(payload.provider || "").trim();
+    if (!provider || (payload.type !== "album" && payload.type !== "track")) return {};
+    try {
+        await ProviderTrackTagSupplementService.refresh({
+            providerId: provider,
+            albumProviderIds: payload.type === "album" ? [payload.providerId] : [],
+            trackProviderIds: payload.type === "track" ? [payload.providerId] : [],
+        });
+    } catch (error) {
+        console.warn(`[ImportDownload] Prefetch of provider tag supplements failed for ${payload.type} ${payload.providerId}:`, error);
+    }
+    try {
+        let trackIds: string[];
+        if (payload.type === "track") {
+            trackIds = [payload.providerId];
+        } else if (Array.isArray(payload.trackOffers) && payload.trackOffers.length > 0) {
+            trackIds = payload.trackOffers.map((offer) => String(offer?.providerTrackId || "")).filter(Boolean);
+        } else {
+            trackIds = (db.prepare(`
+                SELECT track.provider_id AS id
+                FROM ProviderItems release
+                JOIN ProviderEditionMembers member ON member.provider_edition_item_id = release.id
+                JOIN ProviderItems track ON track.id = member.member_item_id
+                WHERE release.provider = ? AND release.entity_type = 'release' AND release.provider_id = ?
+            `).all(provider, payload.providerId) as Array<{ id: string }>).map((row) => String(row.id));
+        }
+        const { prefetchProviderLyrics } = await import("./track-lyrics-materializer.js");
+        return { prefetchedLyrics: await prefetchProviderLyrics(provider, trackIds, 4, payload.downloadPath) };
+    } catch (error) {
+        console.warn(`[ImportDownload] Lyrics prefetch failed for ${payload.type} ${payload.providerId}:`, error);
+        return {};
+    }
+}
+
+/** Catalog identity + album metadata refresh after an import completed and
+ * released its acquisition plan. Never runs inside the disk-exclusive slot. */
+export async function resolveImportedCatalogIdentity(type: string, providerId: string, provider: string | null): Promise<void> {
+    try {
+        if (type === "album") {
+            await MetadataIdentityService.resolveAlbum(providerId, { provider: provider || undefined } as any);
+            const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
+            await RefreshAlbumService.refreshMetadata(providerId, { provider: provider || undefined });
+        } else if (type === "track") {
+            await MetadataIdentityService.resolveTrack(providerId, { provider: provider || undefined } as any);
+        }
+    } catch (error) {
+        console.warn(`[ImportDownload] Post-import catalog identity refresh failed for ${type} ${providerId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+const STEREO_QUALITY_LADDER: Record<string, number> = {
+    "low": 1,
+    "lossy": 2,
+    "high": 2,
+    "lossless": 3,
+    "hires-lossless": 4,
+};
+
+function stereoLadderRank(value: string | null | undefined): number | null {
+    const normalized = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+    const key = normalized === "hires" || normalized === "hi-res-lossless" ? "hires-lossless" : normalized;
+    return STEREO_QUALITY_LADDER[key] ?? null;
+}
+
+/**
+ * Compare what the provider advertised for this exact track variant with what
+ * the provider actually delivered (source_quality: the downloaded stream as
+ * probed BEFORE any profile conversion, so our own downconvert never counts as
+ * an under-delivery). When the file is below the advertisement (TIDAL
+ * "HIRES_LOSSLESS" that streams as 16/44.1), record the delivered class on the
+ * variant and on plan tracks that use it, so the track/album badge and future
+ * plan ranking stop treating it as hi-res. provider_quality_label is left as
+ * advertised. Spatial variants are not touched.
+ */
+export function recordDeliveredQuality(fileId: number, variantId: number): void {
+    // Measured stream class, before any profile conversion. The provider's own
+    // quality_class / label are never touched here: they are source capability.
+    const row = db.prepare(`
+        SELECT
+          COALESCE(NULLIF(TRIM(file.source_quality), ''), NULLIF(TRIM(file.imported_quality), ''), NULLIF(TRIM(file.quality), '')) AS measured,
+          variant.quality_class AS advertised
+        FROM TrackFiles file
+        JOIN ProviderItemAudioVariants variant ON variant.id = ?
+        WHERE file.id = ?
+    `).get(variantId, fileId) as { measured: string | null; advertised: string | null } | undefined;
+    if (!row) return;
+    const measuredRank = stereoLadderRank(row.measured);
+    if (measuredRank == null || stereoLadderRank(row.advertised) == null) return;
+    const delivered = ({ 1: "lossy", 2: "lossy", 3: "lossless", 4: "hires-lossless" } as Record<number, string>)[measuredRank];
+    db.prepare(`
+        UPDATE ProviderItemAudioVariants
+        SET delivered_quality_class = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND delivered_quality_class IS NOT ?
+    `).run(delivered, variantId, delivered);
 }

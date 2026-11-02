@@ -1,4 +1,9 @@
+import { CONTENT_TYPES_BY_EXTENSION, decodeImage, decodeArtworkImage, extensionForImage, fetchArtworkWithFallbacks, readArtworkBuffer } from "./media-cover-image.js";
+import { commitArtworkProxies, hasCurrentArtworkProxies } from "./media-cover-proxy-storage.js";
+import { artworkFileIdentity, artworkStatMatchesIdentity } from "./artwork-mutation-journal.js";
+import { commitArtworkSidecar } from "./artwork-sidecar-commit.js";
 import { findLibraryCoverMaster, rememberLibraryCoverSidecar, linkLibraryCoverSidecar } from "./media-cover-library-storage.js";
+import { readArtworkSource, storeArtworkSource, type ArtworkSource } from "./media-cover-state.js";
 import { CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import { db, withSqliteWriteGate } from "../../database.js";
@@ -6,7 +11,6 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import * as jpeg from "jpeg-js";
-import * as pngjs from "pngjs";
 import { streamingProviderManager } from "../providers/index.js";
 import type { ProviderArtworkEntityType } from "../providers/streaming-provider.js";
 import { normalizeComparableText, stringSimilarity } from "../mediafiles/import-matching-utils.js";
@@ -58,7 +62,6 @@ const MEDIA_COVER_DEFAULT_HEIGHTS = [500, 250] as const;
 const MEDIA_COVER_VIDEO_HEIGHTS = [250] as const;
 /** Heights written as UI proxies. Embed never stores a 1200px file. */
 const MEDIA_COVER_ALL_HEIGHTS = [500, 250] as const;
-const PNG = (pngjs as unknown as { PNG: any }).PNG as any;
 const mediaCoverProxyMemoryCache = new Map<string, MediaCoverProxyEntry>();
 let lastMediaCoverCleanupAt = 0;
 
@@ -74,22 +77,6 @@ function mediaCoverRoot(): string {
 
 type MediaCoverEntity = "Artist" | "Album" | "Edition" | "Video";
 export type MediaCoverEntityKind = MediaCoverEntity;
-
-const CONTENT_TYPES_BY_EXTENSION: Record<string, string> = {
-  ".gif": "image/gif",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-};
-
-const EXTENSIONS_BY_CONTENT_TYPE: Record<string, string> = {
-  "image/gif": ".gif",
-  "image/jpeg": ".jpg",
-  "image/jpg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
-};
 
 export function normalizeMediaCoverEntityId(entityId: string | number | null | undefined): string | null {
   const raw = String(entityId ?? "").trim();
@@ -113,7 +100,7 @@ function resolveWithinMediaCoverRoot(...segments: string[]): string {
   return candidate;
 }
 
-function mediaCoverFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
+export function getMediaCoverFolder(entityId: string | number, coverEntity: MediaCoverEntity): string {
   const safeId = safeMediaCoverEntityId(entityId);
   if (coverEntity === "Album") {
     return resolveWithinMediaCoverRoot("Albums", safeId);
@@ -141,7 +128,7 @@ function mediaCoverUrlFolder(entityId: string | number, coverEntity: MediaCoverE
   return `/media-cover/${safeId}`;
 }
 
-function normalizedCoverType(coverType: string): string {
+export function normalizeMediaCoverType(coverType: string): string {
   const normalized = String(coverType || "cover").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
   return normalized || "cover";
 }
@@ -150,7 +137,7 @@ function canonicalArtworkCoverTypes(
   coverEntity: "Album" | "Artist",
   requestedCoverType: string,
 ): string[] {
-  const requested = normalizedCoverType(requestedCoverType);
+  const requested = normalizeMediaCoverType(requestedCoverType);
   if (coverEntity === "Album" && requested === "cover") {
     return ["cover", "poster"];
   }
@@ -174,11 +161,11 @@ function canonicalArtworkCoverTypes(
 function filenameForCover(coverType: string, extension: string, height?: number | null): string {
   const safeExtension = extension.startsWith(".") ? extension : `.${extension}`;
   const suffix = height ? `-${height}` : "";
-  return `${normalizedCoverType(coverType)}${suffix}${safeExtension}`;
+  return `${normalizeMediaCoverType(coverType)}${suffix}${safeExtension}`;
 }
 
-function sourceMarkerPath(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string): string {
-  return path.join(mediaCoverFolder(entityId, coverEntity), `.${normalizedCoverType(coverType)}.source.json`);
+export function getSelectedArtworkSource(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string): ArtworkSource | null {
+  return readArtworkSource({ entityId, coverEntity, coverType: normalizeMediaCoverType(coverType) }, getMediaCoverFolder(entityId, coverEntity));
 }
 
 function cachedSourceMatches(
@@ -188,108 +175,10 @@ function cachedSourceMatches(
   sourceUrl: string,
 ): boolean {
   try {
-    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(entityId, coverEntity, coverType), "utf-8"));
+    const marker = getSelectedArtworkSource(entityId, coverEntity, coverType);
     return marker?.url === sourceUrl && marker?.preference === configuredArtworkPreference();
   } catch {
     return false;
-  }
-}
-
-function clearStaleCachedCoverFiles(
-  entityId: string | number,
-  coverEntity: MediaCoverEntity,
-  coverType: string,
-  keep: Set<string>,
-): void {
-  const folder = mediaCoverFolder(entityId, coverEntity);
-  for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
-    for (const height of [null, ...MEDIA_COVER_ALL_HEIGHTS]) {
-      const candidate = path.join(folder, filenameForCover(coverType, extension, height));
-      if (keep.has(path.resolve(candidate))) continue;
-      try { fs.rmSync(candidate, { force: true }); } catch { /* absent */ }
-    }
-  }
-}
-
-function commitCachedCoverVariant(options: {
-  entityId: string | number;
-  coverEntity: MediaCoverEntity;
-  coverType: string;
-  extension: string;
-  originalBuffer: Buffer;
-  derivatives: PreparedMediaCoverDerivative[];
-}): void {
-  const writes = [
-    {
-      target: getMediaCoverPath(
-        options.entityId,
-        options.coverEntity,
-        options.coverType,
-        options.extension,
-      ),
-      buffer: options.originalBuffer,
-    },
-    ...options.derivatives.map((derivative) => ({
-      target: getMediaCoverPath(
-        options.entityId,
-        options.coverEntity,
-        options.coverType,
-        ".jpg",
-        derivative.height,
-      ),
-      buffer: derivative.buffer,
-    })),
-  ];
-  const nonce = `${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
-  const staged = writes.map((write) => ({
-    ...write,
-    temp: path.join(path.dirname(write.target), `.${path.basename(write.target)}.${nonce}.tmp`),
-  }));
-
-  try {
-    // Stage every file first. A failed write leaves the current variant intact.
-    for (const write of staged) fs.writeFileSync(write.temp, write.buffer);
-    for (const write of staged) fs.renameSync(write.temp, write.target);
-    clearStaleCachedCoverFiles(
-      options.entityId,
-      options.coverEntity,
-      options.coverType,
-      new Set(writes.map((write) => path.resolve(write.target))),
-    );
-  } finally {
-    for (const write of staged) {
-      try { fs.rmSync(write.temp, { force: true }); } catch { /* already committed */ }
-    }
-  }
-}
-
-function writeSourceMarker(
-  entityId: string | number,
-  coverEntity: MediaCoverEntity,
-  coverType: string,
-  sourceUrl: string,
-  fulfilledBy: MediaCoverSourceKind,
-  contentHash?: string | null,
-): void {
-  const markerPath = sourceMarkerPath(entityId, coverEntity, coverType);
-  const tempPath = `${markerPath}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(
-      tempPath,
-      JSON.stringify({
-        url: sourceUrl,
-        preference: configuredArtworkPreference(),
-        fulfilledBy,
-        sourceKind: fulfilledBy,
-        contentHash: contentHash ?? null,
-      }),
-      "utf-8",
-    );
-    fs.renameSync(tempPath, markerPath);
-  } catch {
-    // The image remains usable; the next request may refresh it once more.
-  } finally {
-    try { fs.rmSync(tempPath, { force: true }); } catch { /* already committed */ }
   }
 }
 
@@ -411,7 +300,7 @@ export function isArtworkPreferenceCacheCurrent(
   coverType: string,
 ): boolean {
   try {
-    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(entityId, coverEntity, coverType), "utf-8"));
+    const marker = getSelectedArtworkSource(entityId, coverEntity, coverType);
     const preference = configuredArtworkPreference();
     if (marker?.preference !== preference) return false;
 
@@ -458,7 +347,7 @@ export function isArtworkPreferenceCacheCurrent(
 }
 
 export function getMediaCoverPath(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string, extension: string, height?: number | null): string {
-  return path.join(mediaCoverFolder(entityId, coverEntity), filenameForCover(coverType, extension, height));
+  return path.join(getMediaCoverFolder(entityId, coverEntity), filenameForCover(coverType, extension, height));
 }
 
 export function getMediaCoverUrl(entityId: string | number, coverEntity: MediaCoverEntity, coverType: string, extension: string, height?: number | null): string {
@@ -505,7 +394,13 @@ export function isMediaCoverSourceCacheCurrent(
   ) {
     return false;
   }
-  return cachedSourceMatches(entityId, coverEntity, coverType, normalizedSource);
+  const source = getSelectedArtworkSource(entityId, coverEntity, coverType);
+  if (!source || !cachedSourceMatches(entityId, coverEntity, coverType, normalizedSource)) return false;
+  return hasCurrentArtworkProxies(
+    { entityId: String(entityId), coverEntity, coverType: normalizeMediaCoverType(coverType) },
+    getMediaCoverFolder(entityId, coverEntity), source,
+    coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS,
+  );
 }
 
 function existingMediaCover(entityId: string | number | null | undefined, coverEntity: MediaCoverEntity, coverType: string): { path: string; url: string } | null {
@@ -514,12 +409,12 @@ function existingMediaCover(entityId: string | number | null | undefined, coverE
     return null;
   }
 
-  // Prefer full-res origin (height null), then resized proxies (500, 250).
+  // Display only: prefer proxies; legacy origins are a temporary recovery fallback.
   // Public URL identity is always bare `{coverType}.jpg` (Lidarr-style). Height is a
   // request-layer rewrite (`cover-250.jpg`) so list and detail share one cover id.
   const heights: Array<number | null> = coverEntity === "Video"
-    ? [null, ...MEDIA_COVER_VIDEO_HEIGHTS]
-    : [null, ...MEDIA_COVER_DEFAULT_HEIGHTS];
+    ? [...MEDIA_COVER_VIDEO_HEIGHTS, null]
+    : [...MEDIA_COVER_DEFAULT_HEIGHTS, null];
   for (const height of heights) {
     for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
       const filePath = getMediaCoverPath(normalizedEntityId, coverEntity, coverType, extension, height);
@@ -545,11 +440,18 @@ function existingOriginalMediaCover(
   const normalizedEntityId = normalizeMediaCoverEntityId(entityId);
   if (!normalizedEntityId) return null;
 
+  const marker = getSelectedArtworkSource(normalizedEntityId, coverEntity, coverType);
+  try {
+    if (typeof marker?.contentHash === "string") {
+      const master = findLibraryCoverMaster({ entityId: normalizedEntityId, coverEntity, coverType: normalizeMediaCoverType(coverType) }, getMediaCoverFolder(normalizedEntityId, coverEntity), marker.contentHash);
+      if (master) return { path: master, url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, ".jpg") };
+    }
+  } catch { /* No verified library original. */ }
   for (const extension of [".jpg", ".jpeg", ".png", ".webp", ".gif"]) {
     const filePath = getMediaCoverPath(normalizedEntityId, coverEntity, coverType, extension);
     try {
       const stats = fs.statSync(filePath);
-      if (stats.isFile() && stats.size > 0) {
+      if (stats.isFile() && stats.size > 0 && (!marker?.contentHash || mediaCoverFileSha256(filePath) === marker.contentHash)) {
         return {
           path: filePath,
           url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, extension),
@@ -559,13 +461,6 @@ function existingOriginalMediaCover(
       // Try the next supported container.
     }
   }
-  try {
-    const marker = JSON.parse(fs.readFileSync(sourceMarkerPath(normalizedEntityId, coverEntity, coverType), "utf8"));
-    if (typeof marker.contentHash === "string") {
-      const master = findLibraryCoverMaster(mediaCoverFolder(normalizedEntityId, coverEntity), normalizedCoverType(coverType), marker.contentHash);
-      if (master) return { path: master, url: getMediaCoverUrl(normalizedEntityId, coverEntity, coverType, ".jpg") };
-    }
-  } catch { /* No relocated original. */ }
   return null;
 }
 
@@ -579,17 +474,20 @@ export function getCachedMediaCoverOriginalFilePath(
 }
 
 /** Link the sidecar by exact row ID so album/artist renames preserve access. */
-export function linkCachedAlbumCoverSidecar(options: {
+export function linkCachedMediaCoverSidecar(options: {
   entityId: string | number | null | undefined; coverEntity: MediaCoverEntity;
   outputPath: string; metadataFileId: number;
+  coverTypes?: string[];
 }): void {
   const entityId = normalizeMediaCoverEntityId(options.entityId);
-  if (!entityId || !["Album", "Edition"].includes(options.coverEntity)) return;
-  const folder = mediaCoverFolder(entityId, options.coverEntity);
-  if (fs.existsSync(folder)) linkLibraryCoverSidecar(folder, "cover", options.outputPath, options.metadataFileId);
+  if (!entityId) return;
+  const folder = getMediaCoverFolder(entityId, options.coverEntity);
+  for (const coverType of options.coverTypes ?? ["cover"]) {
+    linkLibraryCoverSidecar({ entityId, coverEntity: options.coverEntity, coverType: normalizeMediaCoverType(coverType) }, folder, options.outputPath, options.metadataFileId);
+  }
 }
 
-function fileSha256(filePath: string): string {
+export function mediaCoverFileSha256(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
@@ -601,25 +499,27 @@ export function mediaCoverFilesMatch(leftPath: string, rightPath: string): boole
     return left.isFile()
       && right.isFile()
       && left.size === right.size
-      && fileSha256(leftPath) === fileSha256(rightPath);
+      && mediaCoverFileSha256(leftPath) === mediaCoverFileSha256(rightPath);
   } catch {
     return false;
   }
 }
 
-export type MediaCoverSidecarSyncResult = "missing" | "unchanged" | "written";
+export type MediaCoverSidecarSyncResult = "missing" | "unchanged" | "written" | "deferred";
 
-/**
- * Materialize a library sidecar strictly from the cached full-resolution master.
- * This function never resolves a provider URL and never performs network I/O.
- */
-export function syncCachedMediaCoverToFile(options: {
+export type MediaCoverSidecarOptions = {
   entityId: string | number | null | undefined;
   coverEntity: MediaCoverEntity;
   coverTypes?: string | string[];
   outputPath: string;
   libraryRoot?: string | null;
-}): MediaCoverSidecarSyncResult {
+};
+
+/**
+ * Materialize a library sidecar strictly from the cached full-resolution master.
+ * This function never resolves a provider URL and never performs network I/O.
+ */
+export function syncCachedMediaCoverToFile(options: MediaCoverSidecarOptions): MediaCoverSidecarSyncResult {
   const coverTypes = Array.isArray(options.coverTypes)
     ? options.coverTypes
     : [options.coverTypes || (options.coverEntity === "Artist" ? "poster" : "cover")];
@@ -631,46 +531,60 @@ export function syncCachedMediaCoverToFile(options: {
     ))
     .find((candidate): candidate is string => Boolean(candidate && fs.existsSync(candidate)));
   if (!sourcePath) return "missing";
+  // This local-only helper copies bytes; conversion belongs to the async
+  // materializer. Never put PNG/WebP/GIF bytes under a JPEG sidecar filename.
+  const imageExtension = (file: string) => path.extname(file).toLowerCase().replace(/^\.jpeg$/, ".jpg");
+  if (imageExtension(sourcePath) !== imageExtension(options.outputPath)) return "missing";
+  // A hash-verified library master already at its destination needs neither
+  // another pair of full-file hashes nor a provenance write on every refresh.
+  if (path.resolve(sourcePath) === path.resolve(options.outputPath)) return "unchanged";
   const unchanged = mediaCoverFilesMatch(sourcePath, options.outputPath);
-
-  if (!unchanged) {
-    fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
-    const temporaryPath = `${options.outputPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    try {
-      // Stage alongside the destination so rename is an atomic replacement on the
-      // same filesystem. A failed copy/rename therefore leaves the prior sidecar
-      // intact instead of exposing a partial image to library consumers.
-      fs.copyFileSync(sourcePath, temporaryPath);
-      fs.renameSync(temporaryPath, options.outputPath);
-    } finally {
-      try {
-        fs.unlinkSync(temporaryPath);
-      } catch {
-        // Rename consumed the temporary file, or staging never created it.
-      }
+  const sourceWitness = artworkFileIdentity(sourcePath);
+  const destinationWitness = artworkFileIdentity(options.outputPath);
+  fs.mkdirSync(path.dirname(options.outputPath), { recursive: true });
+  const temporaryPath = `${options.outputPath}.${crypto.randomUUID()}.tmp`;
+  if (!unchanged) fs.copyFileSync(sourcePath, temporaryPath, fs.constants.COPYFILE_EXCL);
+  const entityId = normalizeMediaCoverEntityId(options.entityId)!;
+  const coverType = coverTypes.find(type => getCachedMediaCoverOriginalFilePath(entityId, options.coverEntity, type) === sourcePath)!;
+  const folder = getMediaCoverFolder(entityId, options.coverEntity);
+  const hash = mediaCoverFileSha256(sourcePath);
+  const identity = { entityId, coverEntity: options.coverEntity, coverType: normalizeMediaCoverType(coverType) };
+  const marker = getSelectedArtworkSource(entityId, options.coverEntity, coverType);
+  const replacementIdentity = unchanged ? null : artworkFileIdentity(temporaryPath);
+  const witnessesStillMatch = (): void => {
+    if (!artworkStatMatchesIdentity(sourcePath, sourceWitness)
+      || !artworkStatMatchesIdentity(options.outputPath, destinationWitness)
+      || JSON.stringify(getSelectedArtworkSource(entityId, options.coverEntity, coverType)) !== JSON.stringify(marker)) {
+      throw new Error("Artwork source or destination changed before local publication");
     }
-  }
-  if (options.coverEntity === "Album" || options.coverEntity === "Edition") {
-    const entityId = normalizeMediaCoverEntityId(options.entityId)!;
-    const coverType = coverTypes.find(type => getCachedMediaCoverOriginalFilePath(entityId, options.coverEntity, type) === sourcePath)!;
-    const folder = mediaCoverFolder(entityId, options.coverEntity);
-    const hash = fileSha256(options.outputPath);
-    let metadataFileId: number | undefined;
-    try { metadataFileId = (db.prepare("SELECT id FROM MetadataFiles WHERE file_path = ? AND file_type = 'cover'").get(options.outputPath) as { id: number } | undefined)?.id; } catch { /* Import has not registered its sidecar yet. */ }
-    rememberLibraryCoverSidecar(folder, normalizedCoverType(coverType), options.outputPath, hash, metadataFileId);
-    const markerPath = sourceMarkerPath(entityId, options.coverEntity, coverType);
-    let marker: Record<string, unknown> = {};
-    try { marker = JSON.parse(fs.readFileSync(markerPath, "utf8")); } catch { /* Legacy cache. */ }
-    marker.contentHash = hash;
-    const tempMarker = `${markerPath}.${crypto.randomUUID()}.tmp`;
-    try { fs.writeFileSync(tempMarker, JSON.stringify(marker)); fs.renameSync(tempMarker, markerPath); }
-    finally { if (fs.existsSync(tempMarker)) fs.unlinkSync(tempMarker); }
-    // Verify the sidecar before discarding the cache's full-resolution bytes.
-    // Unsupported image containers retain their original until proxies exist.
-    if (path.dirname(sourcePath) === folder && MEDIA_COVER_DEFAULT_HEIGHTS.every(height => fs.existsSync(getMediaCoverPath(entityId, options.coverEntity, coverType, ".jpg", height)))
-      && mediaCoverFilesMatch(sourcePath, options.outputPath)) fs.unlinkSync(sourcePath);
-  }
-  return unchanged ? "unchanged" : "written";
+  };
+  // Legacy originals retire through witnessed cache maintenance. Provisional
+  // import links and existing proxy filenames cannot authorize deletion.
+  return commitArtworkSidecar({
+    unchanged,
+    stagedPath: temporaryPath,
+    destination: options.outputPath,
+    scope: identity,
+    folder,
+    hash,
+    source: marker,
+    originalIdentity: destinationWitness,
+    replacementIdentity,
+    assertWitnesses: witnessesStillMatch,
+    assertSource: () => {
+      if (JSON.stringify(getSelectedArtworkSource(entityId, options.coverEntity, coverType)) !== JSON.stringify(marker)) {
+        throw new Error("Artwork source or destination changed before local publication");
+      }
+    },
+    followUp: {
+      entityId,
+      coverEntity: options.coverEntity,
+      coverTypes: [identity.coverType],
+      outputPath: options.outputPath,
+      libraryRoot: options.libraryRoot ?? null,
+      reason: "database is locked",
+    },
+  });
 }
 
 function appendMediaCoverQuery(url: string, key: string, value: string): string {
@@ -679,38 +593,6 @@ function appendMediaCoverQuery(url: string, key: string, value: string): string 
 
 function contentTypeForExtension(extension: string): string {
   return CONTENT_TYPES_BY_EXTENSION[extension.toLowerCase()] ?? "image/jpeg";
-}
-
-function extensionForImage(contentType: string | null, sourceUrl: string): string {
-  const type = String(contentType || "").split(";")[0]?.trim().toLowerCase();
-  if (type && EXTENSIONS_BY_CONTENT_TYPE[type]) {
-    return EXTENSIONS_BY_CONTENT_TYPE[type];
-  }
-
-  try {
-    const extension = path.extname(new URL(sourceUrl).pathname).toLowerCase();
-    if (CONTENT_TYPES_BY_EXTENSION[extension]) {
-      return extension === ".jpeg" ? ".jpg" : extension;
-    }
-  } catch {
-    // fall through
-  }
-
-  return ".jpg";
-}
-
-function decodeImage(buffer: Buffer, extension: string): { width: number; height: number; data: Uint8Array } | null {
-  if (extension === ".png") {
-    const decoded = PNG.sync.read(buffer);
-    return { width: decoded.width, height: decoded.height, data: decoded.data };
-  }
-
-  if (extension === ".jpg" || extension === ".jpeg") {
-    const decoded = jpeg.decode(buffer, { useTArray: true });
-    return { width: decoded.width, height: decoded.height, data: decoded.data };
-  }
-
-  return null;
 }
 
 function resizeRgbaNearest(
@@ -741,14 +623,15 @@ type PreparedMediaCoverDerivative = {
   buffer: Buffer;
 };
 
-function prepareResizedMediaCovers(
+export function prepareResizedMediaCovers(
   originalBuffer: Buffer,
   extension: string,
   heights: readonly number[] = MEDIA_COVER_DEFAULT_HEIGHTS,
+  decodedImage?: { width: number; height: number; data: Uint8Array } | null,
 ): PreparedMediaCoverDerivative[] {
   let decoded: { width: number; height: number; data: Uint8Array } | null = null;
   try {
-    decoded = decodeImage(originalBuffer, extension);
+    decoded = decodedImage ?? decodeImage(originalBuffer, extension);
   } catch (error) {
     console.warn("[MediaCoverService] Failed to decode artwork for resizing:", (error as Error).message);
     return [];
@@ -762,14 +645,17 @@ function prepareResizedMediaCovers(
   for (const targetHeight of heights) {
     try {
       const resized = resizeRgbaNearest(decoded, targetHeight);
-      const candidates = [82, 70, 60, 50].map((quality) => jpeg.encode({
+      let encoded: Uint8Array | null = null;
+      for (const quality of [82, 70, 60, 50]) {
+        const candidate = jpeg.encode({
           width: resized.width,
           height: resized.height,
           data: resized.data,
-        }, quality).data);
-      const encoded = candidates.find((candidate) => candidate.length < originalBuffer.length)
-        ?? candidates.reduce((smallest, candidate) => candidate.length < smallest.length ? candidate : smallest);
-      derivatives.push({ height: targetHeight, buffer: Buffer.from(encoded) });
+        }, quality).data;
+        if (!encoded || candidate.length < encoded.length) encoded = candidate;
+        if (candidate.length < originalBuffer.length) { encoded = candidate; break; }
+      }
+      derivatives.push({ height: targetHeight, buffer: Buffer.from(encoded!) });
     } catch (error) {
       console.warn(`[MediaCoverService] Failed to prepare ${targetHeight}px artwork:`, (error as Error).message);
     }
@@ -810,166 +696,64 @@ export function getCoverArtArchiveReleaseUrl(releaseMbid: string | null | undefi
   return mbid ? `https://coverartarchive.org/release/${mbid}/front` : null;
 }
 
-/**
- * YouTube renders `hq720.jpg` / `maxresdefault.jpg` only for some uploads; many
- * videos 404 on those and only expose the 4:3 stills. `sddefault` is present for
- * most, and `hqdefault` is generated for every video, so this ladder guarantees
- * a cover for the whole youtube-only-video class instead of a blank poster when
- * the normalized hq720 URL 404s.
- */
-function youTubeThumbnailFallbacks(url: string): string[] {
-  const match = url.match(/^https?:\/\/i\.ytimg\.com\/vi\/([^/?#]+)\/(hq720|maxresdefault)\.jpg(?:$|\?)/i);
-  if (!match) {
-    return [];
-  }
-  const videoId = match[1];
-  return [
-    ...(String(match[2]).toLowerCase() === "maxresdefault"
-      ? [`https://i.ytimg.com/vi/${videoId}/hq720.jpg`]
-      : []),
-    `https://i.ytimg.com/vi/${videoId}/sddefault.jpg`,
-    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-  ];
-}
-
-/**
- * Fetch artwork, trying provider-specific lower-res fallbacks when the primary
- * URL 404s (see youTubeThumbnailFallbacks). Returns the first OK response and
- * the URL it actually came from (so the extension is derived correctly), or null
- * when every candidate fails.
- */
-async function fetchArtworkWithFallbacks(sourceUrl: string): Promise<{ response: Response; fetchedUrl: string } | null> {
-  const candidates = [sourceUrl, ...youTubeThumbnailFallbacks(sourceUrl)];
-  for (const candidate of candidates) {
-    try {
-      const response = await fetch(candidate, {
-        redirect: "follow",
-        headers: {
-          "User-Agent": getDiscogeniusUserAgent("media cover"),
-        },
-        // Without a timeout a dead/slow image host hangs this fetch forever,
-        // freezing the RefreshArtist worker (0 CPU, never resolves) — and with
-        // maxConcurrent=1 that one hang deadlocks the whole refresh queue.
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (response.ok) {
-        return { response, fetchedUrl: candidate };
-      }
-    } catch {
-      // Try the next candidate; a transient failure on one still should not
-      // abandon a video that has a working lower-res still.
-    }
-  }
-  return null;
-}
-
 export async function ensureCachedMediaCover(options: {
   entityId: string | number | null | undefined;
   coverEntity: MediaCoverEntity;
   coverType: string;
   sourceUrl: string | null | undefined;
-  /** Which preference branch produced this URL (drives stale-fallback invalidation). */
   fulfilledBy?: MediaCoverSourceKind;
 }): Promise<string | null> {
   const sourceUrl = normalizeArtworkUrl(options.sourceUrl);
   const entityId = normalizeMediaCoverEntityId(options.entityId);
-  if (!sourceUrl || !entityId) {
-    return null;
-  }
-
-  const fulfilledBy = options.fulfilledBy
-    ?? (looksLikeProviderArtworkUrl(sourceUrl) ? "provider" : "canonical");
-
+  if (!sourceUrl || !entityId) return null;
+  const fulfilledBy = options.fulfilledBy ?? (looksLikeProviderArtworkUrl(sourceUrl) ? "provider" : "canonical");
+  const preference = configuredArtworkPreference();
+  const identity = { entityId, coverEntity: options.coverEntity, coverType: normalizeMediaCoverType(options.coverType) };
+  const folder = getMediaCoverFolder(entityId, options.coverEntity);
+  const expectedSource = getSelectedArtworkSource(entityId, options.coverEntity, options.coverType);
+  const heights = options.coverEntity === "Video" ? MEDIA_COVER_VIDEO_HEIGHTS : MEDIA_COVER_DEFAULT_HEIGHTS;
   const existing = existingMediaCover(entityId, options.coverEntity, options.coverType);
-  // Albums/artists refresh when the preference/source marker changes. Videos
-  // historically skipped markers and kept the first cached bytes forever —
-  // that froze cropped YouTube `sqp=` thumbs. Match on source when a marker
-  // exists; without one, only refresh when the new URL is a known upgrade
-  // (uncropped YT / landscape Apple mv) so we do not re-download every video
-  // cover on every request.
-  if (existing) {
-    if (cachedSourceMatches(entityId, options.coverEntity, options.coverType, sourceUrl)
-      && (!["Album", "Edition"].includes(options.coverEntity) || existingOriginalMediaCover(entityId, options.coverEntity, options.coverType))) {
-      return existing.url;
-    }
-    if (options.coverEntity === "Video") {
-      let hasMarker = false;
-      try {
-        fs.accessSync(sourceMarkerPath(entityId, options.coverEntity, options.coverType));
-        hasMarker = true;
-      } catch {
-        hasMarker = false;
-      }
-      if (!hasMarker && !isUpgradedProviderThumbnailUrl(sourceUrl)) {
-        return existing.url;
-      }
-    }
-    // Album/artist (and video upgrades / mismatched markers): fall through and refresh.
+  const matches = expectedSource?.url === sourceUrl && expectedSource.preference === preference;
+  if (matches && hasCurrentArtworkProxies(identity, folder, expectedSource, heights)) {
+    return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, ".jpg");
   }
-
-  try {
-    const fetched = await fetchArtworkWithFallbacks(sourceUrl);
-
-    if (!fetched) {
-      // Keep the previous cache file as a last-resort display fallback, but do
-      // not mark it as though it came from the source that just failed. The
-      // resolver must be able to continue to its next candidate (for example
-      // CAA after a dead metadata URL), and a later request should retry this
-      // source rather than treating stale artwork as current.
-      return null;
-    }
-
-    const { response, fetchedUrl } = fetched;
-    const contentType = response.headers.get("content-type");
-    const extension = extensionForImage(contentType, fetchedUrl);
-    const folder = mediaCoverFolder(entityId, options.coverEntity);
-    fs.mkdirSync(folder, { recursive: true });
-
-    const originalBuffer = Buffer.from(await response.arrayBuffer());
-
-    if (options.coverEntity === "Video") {
-      // Full-aspect origin for detail/embed; a single 250px proxy for cards/lists.
-      // Video thumbs are typically ~720p already, so a 500px derivative is wasteful.
-      const derivatives = prepareResizedMediaCovers(originalBuffer, extension, MEDIA_COVER_VIDEO_HEIGHTS);
-      commitCachedCoverVariant({
-        entityId,
-        coverEntity: options.coverEntity,
-        coverType: options.coverType,
-        extension,
-        originalBuffer,
-        derivatives,
-      });
-      const contentHash = crypto.createHash("sha256").update(originalBuffer).digest("hex");
-      writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy, contentHash);
-      return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
-    }
-
-    // Full-resolution album/artist origin for detail/embed (Lidarr-style) + 500/250 proxies.
-    // Unsupported-but-valid source containers (currently WebP/GIF) still keep
-    // their master even when our pure-JS resizer cannot derive JPEG proxies.
-    const derivatives = prepareResizedMediaCovers(originalBuffer, extension);
-    const decoderSupportsContainer = [".jpg", ".jpeg", ".png"].includes(extension);
-    if (decoderSupportsContainer && derivatives.length === 0) {
-      return existing?.url ?? null;
-    }
-
-    commitCachedCoverVariant({
-      entityId,
-      coverEntity: options.coverEntity,
-      coverType: options.coverType,
-      extension,
-      originalBuffer,
-      derivatives,
+  const publish = async (bytes: Buffer, extension: string, hash: string, sourceKind: MediaCoverSourceKind) => {
+    const decoded = await decodeArtworkImage(bytes, extension);
+    const derivatives = prepareResizedMediaCovers(bytes, extension, heights, decoded);
+    if (derivatives.length !== heights.length) return false;
+    return commitArtworkProxies({ identity, folder, derivatives, expectedSource,
+      source: { url: sourceUrl, preference, fulfilledBy: sourceKind, contentHash: hash },
+      preferenceIsCurrent: () => configuredArtworkPreference() === preference,
     });
-    const contentHash = crypto.createHash("sha256").update(originalBuffer).digest("hex");
-    writeSourceMarker(entityId, options.coverEntity, options.coverType, sourceUrl, fulfilledBy, contentHash);
-    return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, extension);
+  };
+  try {
+    // Prefer the exact selected library master when display files have vanished.
+    // This rebuilds only proxies, without creating another original or fetching.
+    if (matches && expectedSource.contentHash) {
+      const master = findLibraryCoverMaster(identity, folder, expectedSource.contentHash);
+      if (master) {
+        const bytes = fs.readFileSync(master);
+        const hash = crypto.createHash("sha256").update(bytes).digest("hex");
+        if (hash === expectedSource.contentHash && await publish(bytes, path.extname(master), hash, expectedSource.fulfilledBy ?? fulfilledBy)) {
+          return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, ".jpg");
+        }
+        return null;
+      }
+    }
+    const fetched = await fetchArtworkWithFallbacks(sourceUrl);
+    if (!fetched) return null;
+    const extension = extensionForImage(fetched.response.headers.get("content-type"), fetched.fetchedUrl);
+    const bytes = await readArtworkBuffer(fetched.response);
+    const hash = crypto.createHash("sha256").update(bytes).digest("hex");
+    if (!await publish(bytes, extension, hash, fulfilledBy)) return null;
+    return getMediaCoverUrl(entityId, options.coverEntity, options.coverType, ".jpg");
   } catch (error) {
     console.warn("[MediaCoverService] Failed to cache artwork:", (error as Error).message);
-    return null;
+    // A bad source cannot claim the previous display bytes. Its marker stays
+    // unchanged, so the resolver can choose a fallback or retry later.
+    return existing?.url ?? null;
   }
 }
-
 export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
   const text = String(value || "").trim();
   if (!text.startsWith("/media-cover/")) {
@@ -1014,66 +798,33 @@ export function getMediaCoverFilePathFromUrl(value: unknown): string | null {
     : null;
 }
 
-/**
- * Remote origin URL that populated a MediaCover cache entry (from `.cover.source.json`).
- * Kept for diagnostics/source revision checks; sidecar writers copy the cached
- * full-resolution master and never fetch this URL.
- */
-export function getCachedMediaCoverSourceUrlFromLocalUrl(value: unknown): string | null {
+/** Resolve the canonical scope encoded by a local display URL. The filename
+ * identifies a role, never a promise that the file is a full-resolution master. */
+export function mediaCoverIdentityFromLocalUrl(value: unknown): {
+  entityId: string; coverEntity: MediaCoverEntity; coverTypes: string;
+} | null {
   const text = String(value || "").trim();
-  if (!text.startsWith("/media-cover/")) {
-    return null;
-  }
-
-  const pathname = text.split(/[?#]/, 1)[0];
+  if (!text.startsWith("/media-cover/")) return null;
   let parts: string[];
-  try {
-    parts = pathname.split("/").map((part) => decodeURIComponent(part));
-  } catch {
-    return null;
-  }
-  if (parts.length < 4) {
-    return null;
-  }
+  try { parts = text.split(/[?#]/, 1)[0].split("/").map(decodeURIComponent); }
+  catch { return null; }
+  const entities: Record<string, MediaCoverEntity | undefined> = { Albums: "Album", AlbumEditions: "Edition", Videos: "Video" };
+  const coverEntity = entities[parts[2]] ?? "Artist";
+  const scoped = coverEntity !== "Artist";
+  if (parts.length !== (scoped ? 5 : 4)) return null;
+  const entityId = normalizeMediaCoverEntityId(parts[scoped ? 3 : 2]);
+  const filename = parts[scoped ? 4 : 3];
+  if (!entityId || !/^[a-z0-9_-]+\.(jpg|jpeg|png|webp|gif)$/i.test(filename)) return null;
+  const coverTypes = filename.replace(/\.[^.]+$/, "").replace(/-\d+$/, "").toLowerCase();
+  return coverTypes ? { entityId, coverEntity, coverTypes } : null;
+}
 
-  let folder: string;
-  let filename: string;
-  if (parts[2] === "Albums" && parts.length >= 5) {
-    const albumId = normalizeMediaCoverEntityId(parts[3]);
-    if (!albumId) return null;
-    folder = resolveWithinMediaCoverRoot("Albums", albumId);
-    filename = parts[4];
-  } else if (parts[2] === "AlbumEditions" && parts.length >= 5) {
-    const editionId = normalizeMediaCoverEntityId(parts[3]);
-    if (!editionId) return null;
-    folder = resolveWithinMediaCoverRoot("AlbumEditions", editionId);
-    filename = parts[4];
-  } else if (parts[2] === "Videos" && parts.length >= 5) {
-    const videoId = normalizeMediaCoverEntityId(parts[3]);
-    if (!videoId) return null;
-    folder = resolveWithinMediaCoverRoot("Videos", videoId);
-    filename = parts[4];
-  } else {
-    const artistId = normalizeMediaCoverEntityId(parts[2]);
-    if (!artistId) return null;
-    folder = resolveWithinMediaCoverRoot(artistId);
-    filename = parts[3];
-  }
-
-  const coverType = String(filename || "")
-    .replace(/\.[^.]+$/, "")
-    .replace(/-\d+$/, "")
-    .toLowerCase();
-  if (!coverType) {
-    return null;
-  }
-
-  try {
-    const marker = JSON.parse(fs.readFileSync(path.join(folder, `.${coverType}.source.json`), "utf-8"));
-    return normalizeArtworkUrl(marker?.url) || null;
-  } catch {
-    return null;
-  }
+/** Durable selected origin, independent of disposable display files. */
+export function getCachedMediaCoverSourceUrlFromLocalUrl(value: unknown): string | null {
+  const identity = mediaCoverIdentityFromLocalUrl(value);
+  if (!identity) return null;
+  try { return normalizeArtworkUrl(getSelectedArtworkSource(identity.entityId, identity.coverEntity, identity.coverTypes)?.url); }
+  catch { return null; }
 }
 
 export function resolveMediaCoverFilePath(folder: string, filename: string): string | null {
@@ -1269,7 +1020,7 @@ function artistArtworkCoverTypes(value: string | string[] | undefined): string[]
   const requested = preferredTypes(value, [...ARTIST_PROFILE_COVER_TYPES]);
   const expanded: string[] = [];
   for (const coverType of requested) {
-    const normalized = normalizedCoverType(coverType);
+    const normalized = normalizeMediaCoverType(coverType);
     const aliases = normalized === "poster" || normalized === "headshot"
       ? canonicalArtworkCoverTypes("Artist", normalized)
       : (
@@ -1413,9 +1164,7 @@ export function isMediaCoverRevisionCacheCurrent(
     return false;
   }
   try {
-    const marker = JSON.parse(
-      fs.readFileSync(sourceMarkerPath(normalizedEntityId, coverEntity, coverType), "utf-8"),
-    );
+    const marker = getSelectedArtworkSource(normalizedEntityId, coverEntity, coverType);
     return artworkSourceRevision(marker?.url) === revision;
   } catch {
     return false;
@@ -2004,6 +1753,36 @@ async function persistResolvedFallbackArtwork(
   }
 }
 
+async function discardProviderFallbackArtwork(
+  table: "Albums",
+  mbid: string | null | undefined,
+  coverType: string,
+): Promise<void> {
+  const canonicalMbid = String(mbid || "").trim();
+  if (!canonicalMbid) return;
+  try {
+    await withSqliteWriteGate(() => {
+      const row = db.prepare(`SELECT images FROM ${table} WHERE mbid = ?`).get(canonicalMbid) as {
+        images?: string | null;
+      } | undefined;
+      const parsed = row?.images ? JSON.parse(row.images) : [];
+      const existing = Array.isArray(parsed) ? parsed : [];
+      const replacedTypes = new Set(canonicalArtworkCoverTypes("Album", coverType));
+      const retained = existing.filter((image) => (
+        !image
+        || typeof image !== "object"
+        || !isProviderFallbackImage(image)
+        || !replacedTypes.has(imageCoverType(image))
+      ));
+      if (retained.length === existing.length) return;
+      db.prepare(`UPDATE ${table} SET images = ?, updated_at = CURRENT_TIMESTAMP WHERE mbid = ?`)
+        .run(JSON.stringify(retained), canonicalMbid);
+    }, "media-cover:fallback");
+  } catch (error) {
+    console.warn(`[MediaCoverService] Failed to discard fallback artwork for ${table}:${canonicalMbid}:`, error);
+  }
+}
+
 export async function resolveProviderArtworkUrl(
   candidates: ProviderArtworkCandidate[],
   entityType: ProviderArtworkEntityType,
@@ -2103,21 +1882,12 @@ export async function resolveAlbumArtwork(options: {
     supplemental = false,
   ): Promise<void> => {
     if (releaseGroupId == null) return;
-    const cached = existingMediaCover(options.albumMbid, "Album", "Cover");
-    if (!cached) return;
-    let contentHash: string;
-    try {
-      contentHash = crypto.createHash("sha256").update(fs.readFileSync(cached.path)).digest("hex");
-    } catch {
-      return;
-    }
-    await withSqliteWriteGate(() => selectionRepository.select({
-      releaseGroupId,
-      sourceKind,
-      contentHash,
-      sourceIdentity: sourceUrl,
-      supplemental,
-    }), "media-cover:selection");
+    await withSqliteWriteGate(() => {
+      const source=getSelectedArtworkSource(options.albumMbid!,"Album","cover");
+      // Selection is the original's provenance, never the display proxy hash.
+      if (!source?.contentHash || source.url!==sourceUrl || source.preference!==configuredArtworkPreference()) return;
+      selectionRepository.select({releaseGroupId,sourceKind,contentHash:source.contentHash,sourceIdentity:sourceUrl,supplemental});
+    }, "media-cover:selection");
   };
 
   const cacheSource = async (
@@ -2156,31 +1926,45 @@ export async function resolveAlbumArtwork(options: {
     return null;
   };
 
+  const providerCandidates = [
+    ...(options.providerCandidates || []),
+    ...loadAlbumProviderArtworkCandidates(options.albumMbid),
+  ];
+  // Only a provider release matched to an edition of THIS album may supply its
+  // cover. With none (a composite of other albums or of singles) the stored
+  // provider fallback is not this album's artwork either, so it ranks after
+  // the canonical cover instead of in front of it.
+  const primaryCandidates = providerCandidates.filter((candidate) => !candidate.supplemental);
+
   const resolveProvider = async (): Promise<string | null> => {
-    const providerCandidates = [
-      ...(options.providerCandidates || []),
-      ...loadAlbumProviderArtworkCandidates(options.albumMbid),
-    ];
-    const primaryCandidates = providerCandidates.filter((candidate) => !candidate.supplemental);
-    // A composite built from singles has no matching album cover. Do not
-    // promote a single/EP companion image onto the album.
-    if (primaryCandidates.length === 0) {
-      return cacheSource(storedProviderFallbackUrl, "provider", true);
-    }
-    const candidates = primaryCandidates;
-    const supplemental = false;
+    if (primaryCandidates.length === 0) return null;
     const providerUrl = await resolveProviderArtworkUrl(
-      candidates,
+      primaryCandidates,
       "album",
       // Fetch the origin image as the cached source; local derivatives serve UI.
       options.size ?? "origin",
     );
     if (providerUrl) {
       await persistResolvedFallbackArtwork("Albums", options.albumMbid, "Cover", providerUrl);
-      const cached = await cacheSource(providerUrl, "provider", supplemental);
+      const cached = await cacheSource(providerUrl, "provider");
       if (cached) return cached;
     }
-    return cacheSource(storedProviderFallbackUrl, "provider", supplemental);
+    return cacheSource(storedProviderFallbackUrl, "provider");
+  };
+
+  const resolveUnverifiedProviderFallback = async (): Promise<string | null> => {
+    if (primaryCandidates.length > 0) return null;
+    return cacheSource(storedProviderFallbackUrl, "provider", true);
+  };
+
+  const resolveCanonicalOwner = async (): Promise<string | null> => {
+    const canonical = await resolveCanonical();
+    // A provider fallback stored while no release of this album backed it
+    // would keep advertising that other album's cover to readers.
+    if (canonical && primaryCandidates.length === 0 && storedProviderFallbackUrl) {
+      await discardProviderFallbackArtwork("Albums", options.albumMbid, "Cover");
+    }
+    return canonical;
   };
 
   const manualResolved = await resolveManual();
@@ -2188,8 +1972,8 @@ export async function resolveAlbumArtwork(options: {
     return manualResolved;
   }
   const resolved = configuredArtworkPreference() === "provider"
-    ? await resolveProvider() || await resolveCanonical()
-    : await resolveCanonical() || await resolveProvider();
+    ? await resolveProvider() || await resolveCanonicalOwner() || await resolveUnverifiedProviderFallback()
+    : await resolveCanonicalOwner() || await resolveProvider() || await resolveUnverifiedProviderFallback();
   return resolved || existingAlbumMediaCoverUrl(options.albumMbid);
 }
 
@@ -2384,9 +2168,9 @@ export function discardEditionCoverIfDuplicateOfAlbum(
   const editionPath = getCachedMediaCoverOriginalFilePath(editionMbid, "Edition", "cover");
   const albumPath = getCachedMediaCoverOriginalFilePath(groupMbid, "Album", "cover");
   if (!editionPath || !albumPath) return;
-  if (fileSha256(editionPath) !== fileSha256(albumPath)) return;
+  if (mediaCoverFileSha256(editionPath) !== mediaCoverFileSha256(albumPath)) return;
   try {
-    fs.rmSync(mediaCoverFolder(editionMbid, "Edition"), { recursive: true, force: true });
+    fs.rmSync(getMediaCoverFolder(editionMbid, "Edition"), { recursive: true, force: true });
   } catch {
     // absent
   }
@@ -2620,11 +2404,22 @@ export function loadAlbumProviderArtworkCandidates(
         ON source.plan_id = plan.id
       JOIN ProviderEditionMatches release_match
         ON release_match.id = source.provider_edition_match_id
+      -- A composite plan borrows tracks from other provider albums (a
+      -- greatest-hits built from the studio albums). Those source albums are
+      -- matched to THEIR OWN editions; their cover belongs to another album.
+      -- Only a source matched to an edition of this album is this album.
+      JOIN AlbumEditions matched_release
+        ON matched_release.id = release_match.edition_id
+       AND matched_release.release_group_id = release_group.id
       JOIN ProviderItems provider_item
         ON provider_item.id = release_match.provider_edition_item_id
       WHERE release_group.mbid = ?
         AND plan.state = 'current'
         AND release_match.match_state = 'accepted'
+        AND (
+          plan.composition = 'single_source'
+          OR release_match.relation IN ('exact', 'source_superset')
+        )
       ORDER BY
         library_release.representative DESC,
         CASE WHEN EXISTS (
@@ -2659,6 +2454,7 @@ export function loadAlbumProviderArtworkCandidates(
         ON library_release.edition_id = release.id
       WHERE release_group.mbid = ?
         AND release_match.match_state = 'accepted'
+        AND release_match.relation IN ('exact', 'source_superset')
       ORDER BY
         CASE WHEN release_match.decision_source = 'manual' THEN 0 ELSE 1 END,
         COALESCE(library_release.representative, 0) DESC,

@@ -1,4 +1,6 @@
 import { CommandTrigger } from "../../services/commands/command-trigger.js";
+import { CommandQueueManager } from "../../services/commands/command-queue-manager.js";
+import { CommandNames } from "../../services/commands/command-names.js";
 import { Router } from "express";
 import { clearConfigCache, getConfigSection, updateConfig, Config } from "../../services/config/config.js";
 import { streamingProviderManager } from "../../services/providers/index.js";
@@ -32,6 +34,7 @@ import type { PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
 
 import {
+  queueCheckUpgradesPass,
   queueConfigPrune,
   queueCurationPass,
   queueMetadataRefreshPass,
@@ -58,6 +61,51 @@ function configMutationHttpStatus(error: unknown): number {
 }
 
 const router = Router();
+
+router.post("/artwork-cache/cleanup", async (req,res) => {
+  try {
+    if (req.body !== undefined && Object.keys(getObjectBody(req.body)).length) {
+      res.status(400).json({detail:"Artwork cleanup does not accept client checkpoints"});return;
+    }
+    const commandId=await runConfigUserWrite(()=>CommandQueueManager.push(CommandNames.ConfigPrune,
+      {cleanupArtworkCache:true},"artwork-cache-cleanup",0,CommandTrigger.Manual));
+    res.status(202).json({commandId});
+  } catch (error: unknown) {
+    res.status(configMutationHttpStatus(error)).json({detail:error instanceof Error ? error.message : String(error)});
+  }
+});
+
+/**
+ * Re-resolve album artwork for the given artists and replace their cover
+ * sidecars and embedded covers through the normal artwork reconciliation,
+ * without revisiting the rest of the library.
+ */
+router.post("/artwork/reapply", async (req, res) => {
+  try {
+    const body = getObjectBody(req.body);
+    const rawArtistIds = body.artistIds;
+    if (
+      !Array.isArray(rawArtistIds)
+      || rawArtistIds.length === 0
+      || rawArtistIds.length > 5000
+      || rawArtistIds.some((id) => typeof id !== "string" || !id.trim())
+    ) {
+      res.status(400).json({ detail: "artistIds must contain 1 to 5000 non-empty identifiers" });
+      return;
+    }
+    const artistIds = [...new Set(rawArtistIds.map((id) => String(id).trim()))].sort();
+    const commandId = await runConfigUserWrite(() => CommandQueueManager.push(
+      CommandNames.ConfigPrune,
+      { refreshArtworkPreference: true, artistIds },
+      `artwork-reapply:${artistIds.join(",").slice(0, 200)}:${artistIds.length}`,
+      0,
+      CommandTrigger.Manual,
+    ));
+    res.status(202).json({ commandId, artists: artistIds.length });
+  } catch (error: unknown) {
+    res.status(configMutationHttpStatus(error)).json({ detail: error instanceof Error ? error.message : String(error) });
+  }
+});
 
 async function syncDownloadBackends(): Promise<void> {
   await streamingProviderManager.syncProviderSettings();
@@ -125,7 +173,8 @@ router.get("/quality", (_, res) => {
 
 router.post("/quality", async (req, res) => {
   try {
-    const updates = parseQualityConfigUpdate(getObjectBody(req.body), getConfigSection("quality"));
+    const previous = getConfigSection("quality");
+    const updates = parseQualityConfigUpdate(getObjectBody(req.body), previous);
     await runConfigUserWrite(() => {
       updateConfig("quality", updates);
       // Stereo library profile follows audio_quality (max/high/normal/low).
@@ -133,12 +182,12 @@ router.post("/quality", async (req, res) => {
     });
     await syncDownloadBackends();
 
-    // Trigger upgrade check asynchronously if enabled
+    // Changing a quality target is applied to existing files through the
+    // queued CheckUpgrades command (upgrade below target, conform above it),
+    // never as inline work on the request.
     const finalConfig = getConfigSection("quality");
-    if (finalConfig.upgrade_existing_files || finalConfig.downconvert_existing_files) {
-      UpgraderService.checkUpgrades().catch(err => {
-        console.error("❌ [UPGRADER] Error checking upgrades:", err);
-      });
+    if (finalConfig.audio_quality !== previous.audio_quality || finalConfig.video_quality !== previous.video_quality) {
+      queueCheckUpgradesPass({ trigger: CommandTrigger.Manual, mode: "settings" });
     }
 
     res.json({ success: true });

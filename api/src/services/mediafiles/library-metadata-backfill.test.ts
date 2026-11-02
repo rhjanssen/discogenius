@@ -5,6 +5,8 @@ import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedTestLibrary } from "../../test-support/library-fixtures.js";
 import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
+import { execFileSync } from "node:child_process";
+import * as jpeg from "jpeg-js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-metadata-backfill-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.metadata-backfill.test.db");
@@ -833,9 +835,64 @@ test("a stale tracked lyric row does not block adjacent-sidecar recovery", async
         WHERE canonical_recording_mbid = ?
         ORDER BY id
     `).all("recording-mbid-300") as Array<{ file_path: string }>;
-    assert.deepEqual(rows, [{ file_path: recoveredPath }]);
+    // Recovery claims the adjacent physical lyric without treating the old
+    // identity as permission to delete another path. Missing-row pruning is a
+    // separate, root-availability-checked maintenance phase.
+    assert.deepEqual(rows, [{ file_path: stalePath }, { file_path: recoveredPath }]);
+    await libraryFilesModule.LibraryFilesService.pruneStaleTrackedAssets();
+    assert.deepEqual(dbModule.db.prepare(`SELECT file_path FROM LyricFiles
+        WHERE canonical_recording_mbid = ? ORDER BY id`).all("recording-mbid-300"),[{file_path:recoveredPath}]);
+    assert.equal(fs.readFileSync(recoveredPath,"utf8"),"[00:01.00]Recovered lyric");
     assert.equal(fs.existsSync(stalePath), false);
 });
 
 
 
+
+test("explicit artwork preference job replaces existing full-resolution sidecar and embedded FLAC art while scans preserve it", async () => {
+    seedCanonicalLibraryFiles();
+    configModule.updateConfig("metadata", {
+        artwork_preference: "canonical", save_album_cover: true, save_artist_picture: false,
+        save_video_thumbnail: false, embed_video_thumbnail: false, save_nfo: false, save_lyrics: false,
+    });
+    configModule.updateConfig("quality", { embed_cover: true });
+    const track = dbModule.db.prepare("SELECT id,file_path FROM TrackFiles WHERE file_type='track' LIMIT 1").get() as { id: number; file_path: string };
+    const cover = path.join(path.dirname(track.file_path), "cover.jpg");
+    const old = Buffer.from(jpeg.encode({width:200,height:200,data:Buffer.alloc(200*200*4,80)},90).data);
+    const selected = Buffer.from(jpeg.encode({width:800,height:600,data:Buffer.alloc(800*600*4,180)},95).data);
+    fs.writeFileSync(cover,old);
+    const { resolveFfmpegBinary } = await import("./audioUtils.js");
+    const ffmpeg = resolveFfmpegBinary();
+    execFileSync(ffmpeg,["-v","error","-y","-f","lavfi","-i","sine=frequency=440:duration=1","-c:a","flac",track.file_path],{windowsHide:true,timeout:30000});
+    const pcm = () => execFileSync(ffmpeg,["-v","error","-i",track.file_path,"-map","0:a:0","-f","hash","-hash","SHA256","-"],{windowsHide:true,timeout:30000}).toString();
+    const before = pcm();
+    dbModule.db.prepare("UPDATE Albums SET images=? WHERE mbid='release-group-mbid-200'").run(JSON.stringify([{coverType:"Cover",url:"https://fixture.example/selected-cover.jpg"}]));
+    await diskScanModule.DiskScanService.fillMissingMetadataFiles("artist-mbid-100");
+    const owner = dbModule.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(cover);
+    assert.deepEqual(fs.readFileSync(cover),old);
+    dbModule.db.exec(`INSERT INTO ArtistMetadata(mbid,name) VALUES('unmanaged-art','Catalog Only');
+        INSERT INTO Albums(mbid,artist_mbid,title,images) VALUES('unmanaged-album','unmanaged-art','Catalog Only Album','[{"coverType":"Cover","url":"https://fixture.example/unmanaged.jpg"}]');`);
+    const requests: string[] = [];
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async input => {
+        requests.push(String(input));
+        return new Response(selected,{headers:{"content-type":"image/jpeg"}});
+    };
+    try {
+        const { runConfigPruneMaintenance } = await import("../commands/scheduler-maintenance-handlers.js");
+        await runConfigPruneMaintenance({id:1,name:"ConfigPrune",payload:{refreshArtworkPreference:true},status:"started",progress:0} as any,{updateCommandDescription:()=>{}});
+        assert.equal(requests.some(url => url.includes("unmanaged.jpg")),false,"library artwork changes must not fetch the unrelated catalog");
+        assert.deepEqual(fs.readFileSync(cover),selected,"selected source must replace an existing cover, not only fill missing files");
+        assert.deepEqual(dbModule.db.prepare("SELECT id FROM MetadataFiles WHERE file_path=?").get(cover),owner);
+        const { parseFile } = await import("music-metadata");
+        const metadata = await parseFile(track.file_path);
+        assert.deepEqual(Buffer.from(metadata.common.picture?.[0]?.data ?? []),selected,"embedded artwork must follow the full-resolution sidecar");
+        assert.equal(pcm(),before,"artwork replacement must preserve decoded audio");
+        const image = jpeg.decode(fs.readFileSync(cover));
+        assert.equal(image.width,800); assert.equal(image.height,600);
+        const settledAudio = fs.readFileSync(track.file_path);
+        await runConfigPruneMaintenance({id:1,name:"ConfigPrune",payload:{refreshArtworkPreference:true},status:"started",progress:0} as any,{updateCommandDescription:()=>{}});
+        assert.deepEqual(fs.readFileSync(cover),selected);
+        assert.deepEqual(fs.readFileSync(track.file_path),settledAudio,"unchanged repeat must not rewrite the audio container");
+    } finally { globalThis.fetch = previousFetch; }
+});

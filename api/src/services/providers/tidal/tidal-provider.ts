@@ -28,6 +28,8 @@ import { syncTiddlSettings } from "./tiddl.js";
 import { downloadBackendRegistry } from "../../download/download-backend.js";
 import { TiddlBackend } from "./tiddl-backend.js";
 import { syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
+import { ProviderAuthError } from "../provider-auth-error.js";
+import { providerNeedsReauth } from "../provider-auth-state.js";
 
 export type TidalAlbumDownloadTrackInfo = {
   title: string;
@@ -383,8 +385,12 @@ export class TidalProvider implements StreamingProvider {
         provider: data?.lyricsProvider || this.name,
         raw: data,
       };
-    } catch {
-      return null;
+    } catch (error) {
+      // "No lyrics" is an answer: 404, or a 401 refusing the lyrics endpoint
+      // itself. Anything else (session, network) is thrown so callers do not
+      // remember a transient failure as absence.
+      if (tidal.tidalErrorIsDefinitiveAbsence(error)) return null;
+      throw error;
     }
   }
 
@@ -448,7 +454,7 @@ export class TidalProvider implements StreamingProvider {
         tokenExpired = hoursUntilExpiry < 0;
 
         if (tokenExpired) {
-          await tidal.refreshTidalToken(true);
+          await tidal.refreshTidalToken();
           token = tidal.loadToken();
 
           if (token?.expires_at && token.access_token) {
@@ -496,6 +502,7 @@ export class TidalProvider implements StreamingProvider {
           : "Connect your TIDAL account to access remote catalog features.",
       };
     } catch (error: any) {
+      const needsReauth = error instanceof ProviderAuthError || providerNeedsReauth("tidal");
       return {
         connected: false,
         tokenExpired: true,
@@ -505,7 +512,7 @@ export class TidalProvider implements StreamingProvider {
         canAccessLocalLibrary: true,
         remoteCatalogAvailable: false,
         canAuthenticate: true,
-        message: "Unable to verify TIDAL authentication status.",
+        message: needsReauth ? "Tidal opnieuw inloggen" : "Unable to verify TIDAL authentication status.",
       };
     }
   }

@@ -5,6 +5,7 @@ import { looksLikeMusicBrainzMbid } from "../services/metadata/provider-track-re
 import { streamingProviderManager } from "../services/providers/index.js";
 import { getProviderDiagnostics } from "../services/providers/provider-diagnostics.js";
 import { providerSupportsAppAuthentication } from "../services/providers/provider-auth-support.js";
+import { listProviderAuthPublic } from "../services/providers/provider-auth-state.js";
 import type { ProviderImportSelection, StreamingProvider } from "../services/providers/streaming-provider.js";
 import { markAcquisitionPlanningStale } from "../services/music/acquisition-planning-control.js";
 
@@ -136,6 +137,14 @@ router.put("/priority", (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
+  }
+});
+
+router.get("/auth-state", (_req, res) => {
+  try {
+    res.json({ providers: listProviderAuthPublic() });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message || "Unable to read provider auth" });
   }
 });
 

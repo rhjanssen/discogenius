@@ -1,4 +1,5 @@
 import { streamingProviderManager } from "./index.js";
+import { ProviderAuthError } from "./provider-auth-error.js";
 
 // Check often enough to refresh before the downloader's own OAuth window.
 export const TOKEN_CHECK_INTERVAL = 5 * 60 * 1000;
@@ -50,6 +51,10 @@ async function checkAndRefreshToken() {
     try {
         await Promise.all(providers.map((provider) => provider.refreshProviderToken?.()));
     } catch (error) {
+        if (error instanceof ProviderAuthError) {
+            console.warn(`[TOKEN] ${error.provider} needs re-login`);
+            return;
+        }
         console.error('[TOKEN] Failed to refresh token:', error);
     }
 }

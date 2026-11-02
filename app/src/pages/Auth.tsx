@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, type StreamingProviderStatus } from "@/services/api";
 import {
@@ -524,6 +524,9 @@ const Auth = () => {
   const isMountedRef = useRef(true);
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const requestedProvider = searchParams.get("provider");
+  const providerDeepLinkApplied = useRef(false);
   const authNavigationState = location.state as {
     mode?: "add-provider";
     from?: { pathname?: string; search?: string; hash?: string };
@@ -559,6 +562,7 @@ const Auth = () => {
   const refreshProviderAuthStatusCache = useCallback((status: AuthStatusContract) => {
     queryClient.setQueryData(["providerAuthStatus"], status);
     void queryClient.invalidateQueries({ queryKey: ["providerAuthStatus"] });
+    void queryClient.invalidateQueries({ queryKey: ["provider-auth-health"] });
   }, [queryClient]);
 
   const loadStreamingProviders = useCallback(async () => {
@@ -1009,14 +1013,42 @@ const Auth = () => {
 
   const selectedProvider = streamingProviders.find((provider) => provider.id === manualProvider) ?? null;
 
-  const openCredentialProvider = (provider: StreamingProviderStatus) => {
+  const openCredentialProvider = useCallback((provider: StreamingProviderStatus) => {
     setCredentialError(null);
     setAuthNotice(null);
     setCredentialValues(Object.fromEntries(
       (provider.manifest?.auth.credentialFields ?? []).map((field) => [field.key, ""]),
     ));
     setManualProvider(provider.id);
-  };
+  }, []);
+
+  // Banner links land here. Deezer opens the ARL field. Tidal only focuses
+  // the connect button: selectProvider would start device login immediately.
+  useEffect(() => {
+    if (providerDeepLinkApplied.current || providersLoading) return;
+    if (requestedProvider === "deezer") {
+      const provider = streamingProviders.find((item) => item.id === "deezer");
+      if (!provider) return;
+      providerDeepLinkApplied.current = true;
+      openCredentialProvider(provider);
+      return;
+    }
+    if (requestedProvider === "tidal") {
+      const button = document.getElementById("provider-connect-tidal");
+      if (!button) return;
+      providerDeepLinkApplied.current = true;
+      button.scrollIntoView({ block: "center" });
+      button.focus();
+    }
+  }, [openCredentialProvider, providersLoading, requestedProvider, streamingProviders]);
+
+  useEffect(() => {
+    if (manualProvider !== "deezer") return;
+    const field = document.getElementById("deezer-arl");
+    if (!(field instanceof HTMLElement)) return;
+    field.scrollIntoView({ block: "center" });
+    field.focus();
+  }, [manualProvider]);
 
   const saveGenericProviderCredentials = async () => {
     if (!selectedProvider || selectedProvider.id === "apple-music") return;
@@ -1462,6 +1494,7 @@ const Auth = () => {
                         >
                           {field.multiline ? (
                             <Textarea
+                              id={selectedProvider.id === "deezer" && field.key === "arl" ? "deezer-arl" : undefined}
                               className={field.secret ? styles.maskedTextarea : undefined}
                               value={credentialValues[field.key] ?? ""}
                               resize="vertical"
@@ -1473,6 +1506,7 @@ const Auth = () => {
                             />
                           ) : (
                             <Input
+                              id={selectedProvider.id === "deezer" && field.key === "arl" ? "deezer-arl" : undefined}
                               type={field.secret ? "password" : "text"}
                               value={credentialValues[field.key] ?? ""}
                               autoComplete={field.secret ? "off" : undefined}
@@ -1544,6 +1578,7 @@ const Auth = () => {
                         ) : streamingProviders.map((provider) => (
                           <Button
                             key={provider.id}
+                            id={`provider-connect-${provider.id}`}
                             appearance="outline"
                             disabled={!provider.management.canAuthenticate}
                             onClick={() => selectProvider(provider)}

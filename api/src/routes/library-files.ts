@@ -1,3 +1,5 @@
+import { withSqliteWriteGate } from "../database.js";
+import { queueDownloadMissingPass } from "../services/commands/scheduler.js";
 import { CommandPriority, CommandTrigger } from "../services/commands/command-trigger.js";
 import { Router } from "express";
 import fs from "fs";
@@ -13,7 +15,8 @@ import {CommandQueueManager} from "../services/commands/command-queue-manager.js
 import { RenameTrackFileService } from "../services/mediafiles/rename-track-file-service.js";
 import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTranscode } from "../services/mediafiles/audioUtils.js";
 import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
-import { isRequestValidationError, parseBoundedQueryInteger } from "../utils/request-validation.js";
+import { isRequestValidationError, parseBoundedQueryInteger, RequestValidationError, getObjectBody, getRequiredInteger, getOptionalBoolean, rejectUnknownKeys } from "../utils/request-validation.js";
+import { previewLibraryCleanup } from "../services/mediafiles/library-cleanup-plan.js";
 import { parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
 
 import { parseFileSelectionIds } from "../services/mediafiles/file-selection.js";
@@ -52,6 +55,44 @@ router.get("/", (req, res) => {
   }
 });
 
+router.get("/cleanup/preview", (req,res) => {
+  try {
+    if (req.query.inventoryCommandId === undefined) throw new RequestValidationError("inventoryCommandId is required");
+    const exactInteger=(value:unknown,fallback:number):number=>{
+      if (value === undefined) return fallback;
+      if (typeof value !== "string" || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value)<1) {
+        throw new RequestValidationError("Cleanup selectors must be positive integers");
+      }
+      return Number(value);
+    };
+    const inventoryId=exactInteger(req.query.inventoryCommandId,0),limit=exactInteger(req.query.limit,50);
+    if (limit>100) throw new RequestValidationError("Cleanup preview limit must be at most 100");
+    if (req.query.afterPath !== undefined && (typeof req.query.afterPath !== "string" || req.query.afterPath.length>4096)) {
+      throw new RequestValidationError("Invalid cleanup cursor");
+    }
+    res.json(previewLibraryCleanup(inventoryId,{limit,afterPath:req.query.afterPath as string | undefined}));
+  } catch(error) {
+    res.status(isRequestValidationError(error) ? 400 : 409).json({detail:error instanceof Error ? error.message : String(error)});
+  }
+});
+
+router.post("/cleanup/apply",async(req,res)=>{
+  try {
+    const body=getObjectBody(req.body);rejectUnknownKeys(body,["inventoryCommandId","pruneEmptyFolders"]);
+    const inventoryCommandId=getRequiredInteger(body,"inventoryCommandId");
+    if (inventoryCommandId<1) throw new RequestValidationError("inventoryCommandId must be positive");
+    const pruneEmptyFolders=getOptionalBoolean(body,"pruneEmptyFolders") ?? false;
+    previewLibraryCleanup(inventoryCommandId,{limit:1});
+    const commandId=await withDbWrite(()=>{
+      previewLibraryCleanup(inventoryCommandId,{limit:1});
+      return CommandQueueManager.push(CommandNames.CleanupLibrary,{inventoryCommandId,pruneEmptyFolders});
+    });
+    res.status(202).json({commandId});
+  } catch(error) {
+    res.status(isRequestValidationError(error) ? 400 : 409).json({detail:error instanceof Error ? error.message : String(error)});
+  }
+});
+
 router.get("/rename/preview", (req, res) => {
   try {
     const artistId = req.query.artistId as string | undefined;
@@ -65,6 +106,52 @@ router.get("/rename/preview", (req, res) => {
 
     const items = RenameTrackFileService.getRenamePreviews({ artistId, albumId, editionId, releaseMbid, libraryRoot, fileTypes, limit, offset });
     res.json({ items, limit, offset });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.get("/rename/dry-run", (req, res) => {
+  try {
+    const artistId = req.query.artistId as string | undefined;
+    const albumId = req.query.albumId as string | undefined;
+    const editionId = req.query.editionId as string | undefined;
+    const releaseMbid = req.query.releaseMbid as string | undefined;
+    const libraryRoot = req.query.libraryRoot as string | undefined;
+    const fileTypes = parseFileTypes(req.query.fileTypes);
+    const report = RenameTrackFileService.getRenameDryRun({
+      artistId, albumId, editionId, releaseMbid, libraryRoot, fileTypes,
+    });
+    res.json(report);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+/**
+ * Resolve duplicate track files for one artist or album (one file per track per
+ * library): unlinked copies are deleted, manual imports go to unmapped files,
+ * ambiguous pairs are deleted and their artist's missing tracks are re-queued.
+ * Scope is required so this never runs library-wide by accident.
+ */
+router.post("/rename/resolve-duplicates", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const artistId = typeof body.artistId === "string" ? body.artistId : undefined;
+    const albumId = typeof body.albumId === "string" ? body.albumId : undefined;
+    const editionId = typeof body.editionId === "string" ? body.editionId : undefined;
+    if (!artistId && !albumId && !editionId) {
+      return res.status(400).json({ detail: "artistId, albumId or editionId is required" });
+    }
+    // Deletes, unmaps and the re-download command all write: one gate, like commands.
+    const { result, queued } = await withSqliteWriteGate(() => {
+      const resolved = RenameTrackFileService.resolveDuplicateTrackFiles({ artistId, albumId, editionId });
+      const commandId = resolved.redownloadArtistIds.length > 0
+        ? queueDownloadMissingPass({ trigger: CommandTrigger.Manual, artistIds: resolved.redownloadArtistIds })
+        : null;
+      return { result: resolved, queued: commandId };
+    }, "rename:resolve-duplicates");
+    res.json({ ...result, queued });
   } catch (error: any) {
     res.status(500).json({ detail: error.message });
   }

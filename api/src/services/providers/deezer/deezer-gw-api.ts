@@ -1,4 +1,4 @@
-import { loadDeezerCredentials } from "./deezer-auth.js";
+import { adoptDeezerSetCookie, loadDeezerCredentials } from "./deezer-auth.js";
 
 const GW_LIGHT_URL = "https://www.deezer.com/ajax/gw-light.php";
 
@@ -13,6 +13,10 @@ export type DeezerGwFetchLike = (
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
+  headers?: {
+    get?(name: string): string | null;
+    getSetCookie?(): string[];
+  };
 }>;
 
 export class DeezerGwApiError extends Error {
@@ -34,6 +38,29 @@ export interface DeezerGwSession {
   apiToken: string;
   userId: number;
   language: string;
+  accountName: string;
+  plan: string;
+  country: string;
+}
+
+function setCookieHeader(response: { headers?: { get?(name: string): string | null; getSetCookie?(): string[] } }): string | null {
+  const headers = response.headers;
+  if (!headers) return null;
+  try {
+    const many = headers.getSetCookie?.();
+    if (many && many.length > 0) return many.join("\n");
+    return headers.get?.("set-cookie") ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function noteRotatedArl(response: { headers?: { get?(name: string): string | null; getSetCookie?(): string[] } }): void {
+  try {
+    adoptDeezerSetCookie(setCookieHeader(response));
+  } catch {
+    console.error("[DEEZER] Failed to store a rotated ARL cookie.");
+  }
 }
 
 /**
@@ -82,6 +109,7 @@ async function gwRequest(
     },
     body: JSON.stringify(payload),
   });
+  noteRotatedArl(response);
   const body = await response.json() as {
     error?: unknown;
     results?: Record<string, unknown>;
@@ -108,6 +136,7 @@ export async function createDeezerGwSession(
   const ping = await resolveFetch(fetchImpl)(`${GW_LIGHT_URL}?method=deezer.ping&api_version=1.0&api_token`, {
     headers: { Accept: "application/json" },
   });
+  noteRotatedArl(ping);
   const pingBody = await ping.json() as { results?: { SESSION?: string } };
   const sid = String(pingBody.results?.SESSION || "").trim();
   if (!sid) {
@@ -122,6 +151,9 @@ export async function createDeezerGwSession(
   if (!userId) {
     throw new DeezerGwApiError(401, "Deezer ARL is invalid or expired.");
   }
+  const accountName = String(user?.BLOG_NAME || user?.USER_NAME || "").trim() || "Deezer";
+  const plan = String(user?.OFFER_NAME || "").trim() || "onbekend";
+  const country = String(user?.COUNTRY || globalSettings?.country || "").trim() || "onbekend";
 
   return {
     arl: trimmed,
@@ -129,6 +161,9 @@ export async function createDeezerGwSession(
     apiToken: String(userData.checkForm || ""),
     userId,
     language: String(globalSettings?.language || "en"),
+    accountName,
+    plan,
+    country,
   };
 }
 

@@ -12,6 +12,7 @@ import { withMediaFileLock } from './media-file-lock.js';
 import { mediaRewritePath, rewriteMediaCopy, runMediaRewrite } from './media-file-rewrite.js';
 import { generateFingerprint } from './fingerprint.js';
 import { resolveAcoustIdClientId } from '../config/provider-client-config.js';
+import { observedFactsFromFile } from '../providers/audio-facts.js';
 import {
     clearMediaTagsWithTagLib,
     readMediaCoverWithTagLib,
@@ -27,6 +28,9 @@ export const AUDIO_COVER_EMBED_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".m
 const MUTAGEN_MP4_EXTENSIONS = new Set([".m4a", ".m4b", ".m4p", ".mp4", ".m4v"]);
 const OGG_COVER_EXTENSIONS = new Set([".ogg", ".oga", ".opus"]);
 const XIPH_EXTENSIONS = new Set(['.flac', '.ogg', '.oga', '.opus']);
+// TagLib cannot write these, and ffmpeg would store one joined string.
+// Leave the file unchanged and report the failure instead of half-tagging.
+const UNTAGGABLE_AUDIO_EXTENSIONS = new Set([".wma", ".ape", ".mp2", ".alac"]);
 const SPATIAL_AUDIO_EXTENSIONS = new Set([".ec3", ".ac4"]);
 const SPATIAL_AUDIO_CODEC_PREFIXES = ["eac3", "ec3", "ac4"];
 const FFMPEG_AUDIO_CONTAINER_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".ec3", ".ac4"]);
@@ -55,7 +59,7 @@ function resolveFfmpegBinary(): string {
     return override;
 }
 
-export { resolveFfmpegBinary };
+export { resolveFfmpegBinary, resolveFfprobeBinary };
 
 function resolveFfprobeBinary(): string {
     const override = process.env.FFMPEG_PATH;
@@ -161,6 +165,8 @@ export interface AudioMetrics {
     bitDepth?: number;
     /** Audio stream codec (AAC, Opus, FLAC, …). */
     codec?: string;
+    /** Codec profile declared by the probed audio stream, never provider metadata. */
+    codecProfile?: string;
     /**
      * Video stream codec when the file has a video track (h264, hevc, av1, …).
      * Kept separate from `codec` so audio tooltips/matching stay accurate.
@@ -182,6 +188,7 @@ export function shouldProbeAudioMetrics(
     const sampleRate = Number(metrics.sampleRate || 0);
     const channels = metrics.channels;
 
+    if (observedFactsFromFile({ codec: metrics.codec }).codec == null) return true;
     if (FFMPEG_AUDIO_CONTAINER_EXTENSIONS.has(extension)) {
         return true;
     }
@@ -209,6 +216,8 @@ export function mergeProbedAudioMetrics(metrics: AudioMetrics, probe: Partial<Au
         ...metrics,
         ...probe,
         codec: probe.codec || metrics.codec,
+        // A successful fresh stream probe replaces any older profile evidence.
+        codecProfile: probe.codec ? probe.codecProfile : metrics.codecProfile,
         sampleRate: probe.sampleRate || metrics.sampleRate,
         bitDepth: probe.bitDepth || metrics.bitDepth,
         bitrate: probe.bitrate || metrics.bitrate,
@@ -226,7 +235,7 @@ export async function probeAudioStreamMetrics(filePath: string): Promise<Partial
             [
                 '-v', 'error',
                 '-select_streams', 'a:0',
-                '-show_entries', 'stream=codec_name,sample_rate,channels,bits_per_sample,bits_per_raw_sample,bit_rate,duration',
+                '-show_entries', 'stream=codec_name,profile,sample_rate,channels,bits_per_sample,bits_per_raw_sample,bit_rate,duration:format=duration',
                 '-of', 'json',
                 filePath,
             ],
@@ -244,11 +253,13 @@ export async function probeAudioStreamMetrics(filePath: string): Promise<Partial
                     const sampleBitDepth = Number(stream?.bits_per_sample || 0);
                     resolve({
                         codec: stream?.codec_name || undefined,
+                        codecProfile: typeof stream?.profile === "string" ? stream.profile : undefined,
                         sampleRate: stream?.sample_rate == null ? undefined : Number(stream.sample_rate),
                         channels: stream?.channels == null ? undefined : Number(stream.channels),
                         bitDepth: rawBitDepth > 0 ? rawBitDepth : sampleBitDepth > 0 ? sampleBitDepth : undefined,
                         bitrate: stream?.bit_rate == null ? undefined : Number(stream.bit_rate),
-                        duration: stream?.duration == null ? undefined : Number(stream.duration),
+                        duration: Number(stream?.duration) > 0 ? Number(stream.duration)
+                            : Number(data?.format?.duration) > 0 ? Number(data.format.duration) : undefined,
                     });
                 } catch {
                     resolve({});
@@ -338,7 +349,8 @@ export async function parseAudioFile(filePath: string): Promise<AudioMetrics> {
         };
     } catch (error) {
         console.warn(`Failed to parse metadata for ${filePath}`, error);
-        return {};
+        // Raw Dolby streams can be unsupported by the tag parser yet probeable.
+        return probeAudioStreamMetrics(filePath);
     }
 }
 
@@ -347,13 +359,14 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
     const { sampleRate, bitDepth, bitrate, codec } = metrics;
     const codecName = codec?.toLowerCase() || '';
 
-    // provider spatial formats currently arrive as Dolby container codecs.
-    if (isSpatialAudioCodec(codecName)) {
-        return 'DOLBY_ATMOS';
-    }
+    const measured = observedFactsFromFile({ codec, codec_profile: metrics.codecProfile, channel_count: metrics.channels });
+    if (measured.immersiveFormat === 'dolby-atmos') return 'DOLBY_ATMOS';
+    // Ordinary surround cannot satisfy either the stereo or Atmos library.
+    if (metrics.channels != null && metrics.channels > 2) return 'UNKNOWN';
+    if (codecName && measured.codec == null) return 'UNKNOWN';
 
     // Lossless formats
-    if (['flac', 'wav', 'alac', 'aif', 'aiff'].includes(extension) || (extension === 'm4a' && codecName === 'alac')) {
+    if (measured.lossless === true || (!codecName && ['flac', 'wav', 'alac', 'aif', 'aiff'].includes(extension))) {
         if ((sampleRate && sampleRate > 48000) || (bitDepth && bitDepth > 16)) {
             return 'HIRES_LOSSLESS';
         }
@@ -361,8 +374,8 @@ export function deriveQuality(ext: string, metrics: AudioMetrics): string {
     }
 
     // Compressed formats
-    if (['mp3', 'aac', 'ogg', 'opus', 'omm', 'wma', 'mp2'].includes(extension) || (extension === 'm4a' && codecName !== 'alac')) {
-        const opus = codecName.includes('opus') || extension === 'opus';
+    if (measured.lossless === false || (!codecName && ['mp3', 'aac', 'ogg', 'opus', 'omm', 'wma', 'mp2', 'm4a'].includes(extension))) {
+        const opus = measured.codec === 'opus' || (!codecName && extension === 'opus');
         const lowBitrate = opus ? 128000 : 192000;
         if (bitrate && bitrate < lowBitrate) {
             return 'LOW';
@@ -480,25 +493,68 @@ export function buildMetadataWriteArgs(
     ];
 }
 
-export async function writeMetadata(filePath: string, tags: Record<string, string>, removeKeys: string[] = []): Promise<boolean> {
-    return withMediaFileLock(filePath, () => writeMetadataUnlocked(filePath, tags, removeKeys));
+type MetadataWriteOutcome = { success: boolean; error?: string };
+
+function describeMetadataWriteError(error: unknown): string {
+    const err = error as { code?: string; stderr?: unknown; message?: string };
+    const stderr = Buffer.isBuffer(err?.stderr) ? err.stderr.toString("utf8") : String(err?.stderr || "");
+    const detail = stderr.trim() || (error instanceof Error ? error.message : String(error));
+    const code = err?.code && !detail.startsWith(`${err.code}:`) && !detail.startsWith(err.code) ? `${err.code}: ` : "";
+    return `${code}${detail}`.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
-async function writeMetadataUnlocked(filePath: string, tags: Record<string, string>, removeKeys: string[]): Promise<boolean> {
+export async function writeMetadata(filePath: string, tags: Record<string, string>, removeKeys: string[] = []): Promise<boolean> {
+    const wrote = await withMediaFileLock(filePath, () => writeMetadataUnlocked(filePath, tags, removeKeys));
+    return wrote.success;
+}
+
+/** Tags plus front cover in one TagLib rewrite. Returns coverEmbedded=false when
+ * the cover still needs the separate embed path (non-TagLib backends). */
+export async function writeMetadataWithCover(
+    filePath: string, tags: Record<string, string>, removeKeys: string[], coverPath: string | null,
+): Promise<{ success: boolean; coverEmbedded: boolean; error?: string }> {
+    return withMediaFileLock(filePath, async () => {
+        if (coverPath && fs.existsSync(coverPath)) {
+            const combined = await writeMediaTagsWithTagLib(filePath, tags, removeKeys, coverPath);
+            if (combined.success) return { success: true, coverEmbedded: combined.coverEmbedded === true };
+            if (combined.handled && combined.error
+                && !MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+                && !XIPH_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+                return { success: false, coverEmbedded: false, error: combined.error };
+            }
+        }
+        const wrote = await writeMetadataUnlocked(filePath, tags, removeKeys);
+        return { success: wrote.success, coverEmbedded: false, error: wrote.error };
+    });
+}
+
+async function writeMetadataUnlocked(filePath: string, tags: Record<string, string>, removeKeys: string[]): Promise<MetadataWriteOutcome> {
+    const extension = path.extname(filePath).toLowerCase();
+    if (UNTAGGABLE_AUDIO_EXTENSIONS.has(extension)) {
+        return { success: false, error: `Discogenius cannot write Picard multi-value tags for ${extension} files` };
+    }
     const tagLibResult = await writeMediaTagsWithTagLib(filePath, tags, removeKeys);
     if (tagLibResult.success) {
-        return true;
+        return { success: true };
     }
+    const tagLibError = tagLibResult.error || "TagLib write failed";
     if (tagLibResult.handled) {
-        console.warn(`[MediaTags] TagLib write failed for ${filePath}: ${tagLibResult.error || "unknown error"}`);
+        console.warn(`[MediaTags] TagLib write failed for ${filePath}: ${tagLibError}`);
         // FFmpeg cannot reproduce every native ID3/Xiph field, including UFID.
         // Keep the original intact when the validated writer rejects a change.
         if (!MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())
-            && !XIPH_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return false;
+            && !XIPH_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+            return { success: false, error: tagLibError };
+        }
     }
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())
         || XIPH_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
-        return writeMp4MetadataWithMutagen(filePath, tags, removeKeys);
+        const mutagen = await writeMp4MetadataWithMutagen(filePath, tags, removeKeys);
+        if (mutagen.success) return { success: true };
+        // Keep the TagLib cause. The fallback's own error used to replace it,
+        // which hid why the primary writer failed.
+        if (!tagLibResult.handled) return { success: false, error: mutagen.error || tagLibError };
+        return { success: false, error: `${tagLibError}; Mutagen fallback: ${mutagen.error || "failed"}` };
     }
     const tempPath = mediaRewritePath(filePath);
     const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);
@@ -506,10 +562,11 @@ async function writeMetadataUnlocked(filePath: string, tags: Record<string, stri
 
     try {
         await runMediaRewrite({ originalPath: filePath, temporaryPath: tempPath, command: resolveFfmpegBinary(), args });
-        return true;
+        return { success: true };
     } catch (error) {
-        console.error(`Media rewrite failed for ${filePath}:`, error);
-        return false;
+        const reason = describeMetadataWriteError(error);
+        console.error(`Media rewrite failed for ${filePath}:`, reason);
+        return { success: false, error: tagLibResult.handled ? `${reason}; ${tagLibError}` : reason };
     }
 }
 
@@ -522,6 +579,7 @@ export async function removeAllTags(filePath: string): Promise<boolean> {
 }
 
 async function removeAllTagsUnlocked(filePath: string): Promise<boolean> {
+    if (UNTAGGABLE_AUDIO_EXTENSIONS.has(path.extname(filePath).toLowerCase())) return false;
     const tagLibResult = await clearMediaTagsWithTagLib(filePath);
     if (tagLibResult.success) {
         return true;
@@ -530,7 +588,7 @@ async function removeAllTagsUnlocked(filePath: string): Promise<boolean> {
         console.warn(`[MediaTags] TagLib clear failed for ${filePath}; using compatibility backend: ${tagLibResult.error || "unknown error"}`);
     }
     if (MUTAGEN_MP4_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
-        return runMutagenBridge(['clear', filePath], filePath);
+        return (await runMutagenBridge(['clear', filePath], filePath)).ok;
     }
     const tempPath = mediaRewritePath(filePath);
     const attachedPictures = await getAttachedPictureVideoStreamIndexes(filePath);
@@ -611,29 +669,33 @@ function resolveMutagenBridge(): { python: string; script: string } | null {
     return { python, script };
 }
 
-async function runMutagenBridge(args: string[], targetPath: string): Promise<boolean> {
+async function runMutagenBridge(args: string[], targetPath: string): Promise<{ ok: boolean; error?: string }> {
     const bridge = resolveMutagenBridge();
-    if (!bridge) return false;
+    if (!bridge) return { ok: false, error: "Mutagen bridge is not available" };
     if (args[1] !== targetPath) throw new Error('Mutagen target must be the media argument');
+    let failure: string | undefined;
     try {
-    return await rewriteMediaCopy(targetPath, workingPath => new Promise<boolean>((resolve) => {
-        execFile(
-            bridge.python,
-            [bridge.script, args[0]!, workingPath, ...args.slice(2)],
-            { windowsHide: true, maxBuffer: 4 * 1024 * 1024, timeout: 30_000, killSignal: 'SIGKILL' },
-            (error, _stdout, stderr) => {
-                if (error) {
-                    console.warn(`[MediaTags] Mutagen update failed for ${targetPath}: ${String(stderr || error.message).trim()}`);
-                    resolve(false);
-                    return;
-                }
-                resolve(true);
-            },
-        );
-    }));
+        const ok = await rewriteMediaCopy(targetPath, workingPath => new Promise<boolean>((resolve) => {
+            execFile(
+                bridge.python,
+                [bridge.script, args[0]!, workingPath, ...args.slice(2)],
+                { windowsHide: true, maxBuffer: 4 * 1024 * 1024, timeout: 30_000, killSignal: 'SIGKILL' },
+                (error, _stdout, stderr) => {
+                    if (error) {
+                        failure = String(stderr || error.message).trim() || "Mutagen update failed";
+                        console.warn(`[MediaTags] Mutagen update failed for ${targetPath}: ${failure}`);
+                        resolve(false);
+                        return;
+                    }
+                    resolve(true);
+                },
+            );
+        }));
+        return ok ? { ok: true } : { ok: false, error: failure || "Mutagen update failed" };
     } catch (error) {
-        console.warn(`[MediaTags] Mutagen replacement failed for ${targetPath}: ${String(error)}`);
-        return false;
+        const reason = describeMetadataWriteError(error);
+        console.warn(`[MediaTags] Mutagen replacement failed for ${targetPath}: ${reason}`);
+        return { ok: false, error: reason };
     }
 }
 
@@ -641,12 +703,13 @@ async function writeMp4MetadataWithMutagen(
     filePath: string,
     tags: Record<string, string>,
     removeKeys: string[],
-): Promise<boolean> {
+): Promise<MetadataWriteOutcome> {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'discogenius-mp4-tags-'));
     const payloadPath = path.join(tempDir, 'tags.json');
     try {
         fs.writeFileSync(payloadPath, JSON.stringify({ tags, removeKeys }), 'utf-8');
-        return await runMutagenBridge(['metadata', filePath, payloadPath], filePath);
+        const wrote = await runMutagenBridge(['metadata', filePath, payloadPath], filePath);
+        return { success: wrote.ok, error: wrote.error };
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -737,7 +800,7 @@ async function embedPreparedAudioCover(filePath: string, coverPath: string): Pro
             : tagLibResult.error || "unknown error";
         console.warn(`[MediaTags] TagLib cover write failed for ${filePath}; using compatibility backend: ${reason}`);
     }
-    if (!await runMutagenBridge(['cover', filePath, coverPath], filePath)) return false;
+    if (!(await runMutagenBridge(['cover', filePath, coverPath], filePath)).ok) return false;
     return (await compareEmbeddedAudioCover(filePath, coverPath)).matches;
 }
 

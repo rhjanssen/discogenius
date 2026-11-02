@@ -261,15 +261,24 @@ export const TRACK_MATCH_THRESHOLD = 0.55;
  * materialised and nothing asked the question again.
  *
  * Bump this in the same commit as any change to describeTrackMatch or the title
- * helpers it depends on. Matching then replays over stored rows for anything
- * still carrying an older verdict — no provider traffic, just the decision.
+ * helpers it depends on. A local replay then rewrites stored rows — no provider
+ * traffic, just the decision. Until that replay, readers still use the stored
+ * automatic match. The version is not a candidate veto.
  *
  * 2: dash-suffixed version qualifiers ("… - ARTE Live at …") are read as
  *    qualifiers, and a gross duration mismatch vetoes the title-only fallback.
  * 3: live at/from/in collapse to one venue token; a Recording's other edition
  *    titles are tried as names of the same performance (Bad Blood X disc 2).
+ * 4: one provider item listed in several slots of a release that describe
+ *    different content (YouTube Music's music-video stand-ins) is accepted for
+ *    none of them; see provider-release-ingestion-service.
+ * 5: one provider item that is a viable match for more than one canonical track
+ *    is accepted for none of them, even when every slot shares a title and a
+ *    runtime inside the 10s grace (multi-disc "Intro", deluxe twins). A
+ *    duplicate listing of a single track still matches. See
+ *    provider-release-ingestion-service.
  */
-export const PROVIDER_TRACK_MATCHER_VERSION = 3;
+export const PROVIDER_TRACK_MATCHER_VERSION = 5;
 
 function normalizeIsrc(value: string | null | undefined): string {
     return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");

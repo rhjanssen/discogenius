@@ -1,4 +1,5 @@
 import { CommandPriority, CommandTrigger } from "./command-trigger.js";
+import { commandDiskScope } from "./command-registry.js";
 import { CommandManager } from "./command.js";
 import { db, withDbWrite } from "../../database.js";
 import { recordRootScanCompletion } from "./root-scan-schedule.js";
@@ -57,6 +58,13 @@ export {
 } from "./command-ordering.js";
 
 import { appEvents, AppEvent, CommandEventPayload } from "./app-events.js";
+import {
+    FILE_CHECKPOINT_COMMAND_STALL_LIMIT,
+    FILE_CHECKPOINT_COMMAND_STALL_REASON,
+    FILE_CHECKPOINT_RESUME_PHASE,
+    fileCheckpointCommandStallError,
+    nextFileCheckpointResumeCount,
+} from "./command-liveness-policy.js";
 
 const QUEUE_RANK_STEP = 1024;
 const QUEUE_REBALANCE_WINDOW = 64;
@@ -904,7 +912,7 @@ ${orderBy}
                 UPDATE commands
                 SET
                     status = 'started',
-                    started_at = CASE WHEN progress_phase = 'checkpoint ready'
+                    started_at = CASE WHEN progress_phase IN ('checkpoint ready', '${FILE_CHECKPOINT_RESUME_PHASE}')
                         THEN COALESCE(started_at, ?) ELSE ? END,
                     completed_at = NULL,
                     updated_at = ?,
@@ -913,8 +921,8 @@ ${orderBy}
                     heartbeat_at = ?,
                     last_progress_at = ?,
                     progress_phase = 'starting',
-                    progress_current = progress,
-                    progress_total = 100,
+                    progress_current = CASE WHEN progress_phase = '${FILE_CHECKPOINT_RESUME_PHASE}' THEN progress_current ELSE progress END,
+                    progress_total = CASE WHEN progress_phase = '${FILE_CHECKPOINT_RESUME_PHASE}' THEN COALESCE(progress_total, 100) ELSE 100 END,
                     lease_expires_at = ?,
                     blocked_reason = NULL,
                     retry_after = NULL,
@@ -993,7 +1001,8 @@ ${orderBy}
 
     /** Release resources only after a handler has finished its current work
      * unit. Ownership fencing prevents a retired worker from requeueing work. */
-    static continueOwnedCommand(id: number, workerId: string, payloadPatch: Partial<CommandBodyCommon>): boolean {
+    static continueOwnedCommand(id: number, workerId: string, payloadPatch: Partial<CommandBodyCommon>,
+        options: { blockedReason?: string; retryDelayMs?: number } = {}): boolean {
         return db.transaction(() => {
             if (!this.isExecutionOwner(id, workerId)) return false;
             this.updateState(id, { payloadPatch, workerId });
@@ -1009,12 +1018,15 @@ ${orderBy}
             const result = db.prepare(`
                 UPDATE commands SET status = 'queued', worker_id = NULL,
                     heartbeat_at = NULL, lease_expires_at = NULL,
-                    attempt = MAX(attempt - 1, 0), blocked_reason = NULL,
-                    progress_phase = 'checkpoint ready', retry_after = NULL,
+                    attempt = MAX(attempt - 1, 0), blocked_reason = ?,
+                    progress_phase = ?, retry_after = ?,
                     queue_order = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status = 'started' AND worker_id = ?
-            `).run((tail.rank ?? 0) + QUEUE_RANK_STEP, id, workerId);
+            `).run(options.blockedReason ?? null,
+                options.blockedReason ? "waiting for download or import" : "checkpoint ready",
+                options.retryDelayMs ? leaseExpiry(new Date(), options.retryDelayMs) : null,
+                (tail.rank ?? 0) + QUEUE_RANK_STEP, id, workerId);
             if (result.changes !== 1) return false;
             clearCommandOverlay(id);
             clearCommandUpdateThrottle(id);
@@ -1039,7 +1051,14 @@ ${orderBy}
             // slot ahead of a file operation explicitly requested in the UI.
             // Only yield to eligible work, so delayed retries or commands still
             // blocked by exclusivity cannot strand an import handoff.
-            const diskTypes = NON_DOWNLOAD_COMMAND_NAMES.filter(name => CommandManager.getDefinition(name).requiresDiskAccess);
+            // Folder-scoped retag and rename lock one album. They must not
+            // make an import wait behind a queued library retag. Only a global
+            // disk command (move artist, cleanup) still gets this yield.
+            const diskTypes = NON_DOWNLOAD_COMMAND_NAMES.filter(name => commandDiskScope(CommandManager.getDefinition(name)) === "global");
+            if (diskTypes.length === 0) {
+                return db.prepare(`UPDATE commands SET progress_phase = 'importing', blocked_reason = NULL
+                    WHERE id = ? AND status = 'started' AND worker_id = ?`).run(id, workerId).changes === 1;
+            }
             const waiting = db.prepare(`
                 SELECT * FROM commands WHERE status = 'queued'
                   AND name IN (${diskTypes.map(() => '?').join(',')})
@@ -1094,14 +1113,16 @@ ${orderBy}
         scheduleCommandOverlay(id, overlay);
     }
 
-    static updateState(id: number, options: {
+    static updateState<K extends CommandName = CommandName>(id: number, options: {
         progress?: number | null;
-        payloadPatch?: Partial<CommandBodyCommon>;
+        payloadPatch?: Partial<CommandBodyMap[K]>;
         workerId?: string;
         progressPhase?: string | null;
         progressCurrent?: number | null;
         progressTotal?: number | null;
         blockedReason?: string | null;
+        /** A long synchronous step cannot run the lease timer. A sub-phase tick renews it. */
+        renewHeartbeat?: boolean;
     }) {
         const current = this.get(id);
         if (!current) return null;
@@ -1154,6 +1175,9 @@ ${orderBy}
         if (options.blockedReason !== undefined) {
             updates.push("blocked_reason = ?");
             params.push(options.blockedReason);
+        }
+        if (options.renewHeartbeat) {
+            updates.push("heartbeat_at = CURRENT_TIMESTAMP");
         }
         if (advancesProgress) {
             updates.push("last_progress_at = CURRENT_TIMESTAMP");
@@ -1505,15 +1529,158 @@ ${orderBy}
     }
 
     /**
+     * Put a checkpointed file command back on the queue without spending the
+     * infrastructure attempt budget and without zeroing its progress.
+     * `prepare` reclaims in-flight file rows in this same transaction.
+     * A null prepare result means the command is not checkpoint-resumable.
+     */
+    static requeueFromCheckpoint(options: {
+        id: number;
+        workerId: string;
+        reason: string;
+        now?: Date;
+        prepare: () => {
+            progress: number;
+            progressCurrent: number;
+            progressTotal: number;
+            description: string;
+            settled: number;
+            total: number;
+            skippedFiles: number;
+        } | null;
+    }): CommandLeaseRecoveryResult | { outcome: "not-checkpoint"; attempt: number; retryAfter: null } {
+        const now = options.now ?? new Date();
+        const nowTimestamp = leaseTimestamp(now);
+        const resume = db.transaction((): CommandLeaseRecoveryResult | { outcome: "not-checkpoint"; attempt: number; retryAfter: null } => {
+            const current = db.prepare(`
+                SELECT attempt, payload
+                FROM commands
+                WHERE id = ? AND status = 'started' AND worker_id = ?
+            `).get(options.id, options.workerId) as { attempt: number; payload: string } | undefined;
+            if (!current) return { outcome: "not-owner", attempt: 0, retryAfter: null };
+            const display = options.prepare();
+            if (!display) return { outcome: "not-checkpoint", attempt: Number(current.attempt) || 0, retryAfter: null };
+            const parsed = safeParsePayload(current.payload, options.id);
+            const count = nextFileCheckpointResumeCount(parsed.restartResume, display.settled);
+            const payload = {
+                ...parsed,
+                description: display.description,
+                restartResume: {
+                    version: 1 as const,
+                    reason: options.reason,
+                    settled: display.settled,
+                    total: display.total,
+                    skippedFiles: display.skippedFiles,
+                    count,
+                },
+            };
+            if (count >= FILE_CHECKPOINT_COMMAND_STALL_LIMIT) {
+                const stalled = db.prepare(`
+                    UPDATE commands
+                    SET
+                        status = 'failed',
+                        error = ?,
+                        completed_at = ?,
+                        updated_at = ?,
+                        progress_phase = 'failed',
+                        blocked_reason = ?,
+                        lease_expires_at = NULL,
+                        retry_after = NULL,
+                        last_retry_reason = ?,
+                        payload = ?
+                    WHERE id = ? AND status = 'started' AND worker_id = ?
+                `).run(
+                    fileCheckpointCommandStallError(count),
+                    nowTimestamp,
+                    nowTimestamp,
+                    FILE_CHECKPOINT_COMMAND_STALL_REASON,
+                    options.reason,
+                    JSON.stringify(payload),
+                    options.id,
+                    options.workerId,
+                );
+                if (stalled.changes === 0) return { outcome: "not-owner", attempt: Number(current.attempt) || 0, retryAfter: null };
+                return { outcome: "failed", attempt: Number(current.attempt) || 0, retryAfter: null };
+            }
+            const result = db.prepare(`
+                UPDATE commands
+                SET
+                    status = 'queued',
+                    completed_at = NULL,
+                    updated_at = ?,
+                    progress = ?,
+                    progress_phase = ?,
+                    progress_current = ?,
+                    progress_total = ?,
+                    worker_id = NULL,
+                    heartbeat_at = NULL,
+                    lease_expires_at = NULL,
+                    blocked_reason = ?,
+                    retry_after = NULL,
+                    last_retry_reason = ?,
+                    error = NULL,
+                    payload = ?
+                WHERE id = ? AND status = 'started' AND worker_id = ?
+            `).run(
+                nowTimestamp,
+                display.progress,
+                FILE_CHECKPOINT_RESUME_PHASE,
+                display.progressCurrent,
+                display.progressTotal,
+                FILE_CHECKPOINT_RESUME_PHASE,
+                options.reason,
+                JSON.stringify(payload),
+                options.id,
+                options.workerId,
+            );
+            if (result.changes === 0) return { outcome: "not-owner", attempt: Number(current.attempt) || 0, retryAfter: null };
+            return { outcome: "requeued", attempt: Number(current.attempt) || 0, retryAfter: null };
+        });
+        const outcome = resume();
+        if (outcome.outcome === "requeued" || outcome.outcome === "failed") {
+            clearCommandOverlay(options.id);
+            clearCommandUpdateThrottle(options.id);
+            const job = this.get(options.id);
+            if (job) {
+                appEvents.emit(AppEvent.COMMAND_UPDATED, {
+                    id: options.id,
+                    type: job.name,
+                    status: job.status,
+                    progress: job.progress,
+                    payload: job.payload,
+                    error: job.error,
+                } as CommandEventPayload);
+                if (outcome.outcome === "requeued") {
+                    console.log(`[CommandQueue] Resumed command #${options.id} (${job.name}) from its file checkpoint: ${job.payload?.description ?? options.reason}`);
+                } else {
+                    console.warn(`[CommandQueue] Failed command #${options.id} (${job.name}) after ${FILE_CHECKPOINT_COMMAND_STALL_LIMIT} restarts with no checkpoint progress`);
+                }
+            }
+        }
+        return outcome;
+    }
+
+    /**
      * Deterministically recover attempts left `started` by a process restart.
      * There are no live workers at executor startup, so a NULL legacy owner is
      * also safe to recover. Attempt and reason evidence remain persisted.
+     * Checkpointed file commands are requeued from their plan instead of
+     * poison-failed when `prepareCheckpoint` returns a display.
      */
     static recoverInterruptedJobsByTypes(options: {
         types: readonly CommandName[];
         reason: string;
         maxAttempts: number;
         resolveMaxAttempts?: (name: CommandName) => number;
+        prepareCheckpoint?: (row: { id: number; name: CommandName }) => {
+            progress: number;
+            progressCurrent: number;
+            progressTotal: number;
+            description: string;
+            settled: number;
+            total: number;
+            skippedFiles: number;
+        } | null;
         retryDelayMs?: number;
         now?: Date;
     }): { requeued: number; failed: number } {
@@ -1542,14 +1709,25 @@ ${orderBy}
                     WHERE id = ? AND status = 'started' AND worker_id IS NULL
                 `).run(restartOwner, row.id);
             }
-            const result = this.recoverOwnedCommand({
-                id: row.id,
-                workerId: restartOwner,
-                reason: options.reason,
-                maxAttempts: options.resolveMaxAttempts?.(row.name) ?? options.maxAttempts,
-                retryDelayMs: options.retryDelayMs ?? 0,
-                now: options.now,
-            });
+            const resumed = options.prepareCheckpoint
+                ? this.requeueFromCheckpoint({
+                    id: row.id,
+                    workerId: restartOwner,
+                    reason: options.reason,
+                    now: options.now,
+                    prepare: () => options.prepareCheckpoint!(row),
+                })
+                : null;
+            const result = resumed && resumed.outcome !== "not-checkpoint"
+                ? resumed
+                : this.recoverOwnedCommand({
+                    id: row.id,
+                    workerId: restartOwner,
+                    reason: options.reason,
+                    maxAttempts: options.resolveMaxAttempts?.(row.name) ?? options.maxAttempts,
+                    retryDelayMs: options.retryDelayMs ?? 0,
+                    now: options.now,
+                });
             if (result.outcome === "requeued") requeued += 1;
             if (result.outcome === "failed") failed += 1;
         }
