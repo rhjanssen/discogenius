@@ -1,4 +1,0 @@
-{
-  "install": "[ ! -d '/agent/repos/discogenius' ] || cd '/agent/repos/discogenius' || exit $?\nyarn install && bash scripts/fetch-refs.sh\n",
-  "start": "[ ! -d '/agent/repos/discogenius' ] || cd '/agent/repos/discogenius' || exit $?\nunset PORT\nmkdir -p library/stereo-music library/spatial-music library/music-videos downloads\nexport MUSIC_PATH=\"$PWD/library/stereo-music\"\nexport SPATIAL_PATH=\"$PWD/library/spatial-music\"\nexport VIDEO_PATH=\"$PWD/library/music-videos\"\nexport DOWNLOAD_PATH=\"$PWD/downloads\"\nif curl -sf --max-time 2 http://127.0.0.1:3737/ping >/dev/null \\\n  && curl -sf --max-time 2 -o /dev/null http://127.0.0.1:8080/; then\n  exit 0\nfi\nexec yarn dev"
-}
