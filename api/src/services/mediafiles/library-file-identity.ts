@@ -1,5 +1,6 @@
 import { db } from "../../database.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
 export type library_slot = "stereo" | "spatial" | "video";
 
@@ -187,12 +188,11 @@ function selectionKey(releaseGroupMbid: string, libraryClass: "stereo" | "spatia
 function loadArtists(prepared: PreparedIdentityInput[]): Map<string, ArtistRow> {
   const byId = new Map<string, ArtistRow>();
   for (const ids of chunks(uniqueTexts(prepared.map((entry) => entry.artistId)))) {
-    const marks = ids.map(() => "?").join(",");
     const rows = db.prepare(`
       SELECT CAST(id AS TEXT) AS id, mbid
       FROM ArtistMetadata
-      WHERE id IN (${marks})
-    `).all(...ids) as ArtistRow[];
+      WHERE id IN ${SQL_JSON_LIST}
+    `).all(jsonList(ids)) as ArtistRow[];
     for (const row of rows) byId.set(String(row.id), row);
   }
   return byId;
@@ -222,14 +222,13 @@ function loadProviderItems(prepared: PreparedIdentityInput[]): Map<string, Provi
   const byEntityAndId = new Map<string, ProviderItemRow[]>();
   for (const [entityType, requestedIds] of requestedProviderItemIds(prepared)) {
     for (const ids of chunks(Array.from(requestedIds))) {
-      const marks = ids.map(() => "?").join(",");
       const rows = db.prepare(`
         SELECT id, provider, entity_type, provider_id
         FROM ProviderItems
         WHERE entity_type = ?
-          AND provider_id IN (${marks})
+          AND provider_id IN ${SQL_JSON_LIST}
         ORDER BY updated_at DESC, provider ASC, id DESC
-      `).all(entityType, ...ids) as ProviderItemRow[];
+      `).all(entityType, jsonList(ids)) as ProviderItemRow[];
       for (const row of rows) {
         const key = providerItemKey(row.entity_type, row.provider_id);
         const candidates = byEntityAndId.get(key) ?? [];
@@ -818,7 +817,18 @@ export function resolveLibraryFileIdentities(
     ]),
   );
   const selections = loadLibrarySelections(releaseGroupMbids);
-  const uniqueMonitoredReleases = loadUniqueMonitoredReleaseByRecording(releaseGroupMbids);
+  // A stored file already names its release. Rename planning resolves every
+  // row that way, and the unique-release query joins every track of those
+  // albums. Skip it when the stored release will win for the whole batch.
+  const storedReleaseWins = evidence.every((entry) => {
+    if (entry.prepared.input.editionContext !== "stored-file") return false;
+    const stored = nullableText(entry.prepared.input.canonicalReleaseMbid)
+      ?? entry.inputTrack?.releaseMbid;
+    return Boolean(stored);
+  });
+  const uniqueMonitoredReleases = storedReleaseWins
+    ? new Map<string, string>()
+    : loadUniqueMonitoredReleaseByRecording(releaseGroupMbids);
   for (const entry of evidence) {
       const libraryClass = entry.prepared.preferredSlot === "spatial" ? "spatial" : "stereo";
       const selection = entry.releaseGroupMbid
@@ -860,8 +870,17 @@ export function resolveLibraryFileIdentities(
       const storedRelease = entry.prepared.input.editionContext === "stored-file"
         ? nullableText(entry.prepared.input.canonicalReleaseMbid) ?? entry.inputTrack?.releaseMbid
         : null;
+      const monitoredProviderRelease = [mediaMatch?.releaseMbid, albumMatch?.releaseMbid]
+        .find((releaseMbid) => Boolean(
+          releaseMbid
+          && selectedForResolvedGroup?.monitoredReleaseMbids.includes(releaseMbid),
+        )) ?? null;
+      // A monitored provider edition is the resource the file came from. It
+      // outranks a different monitored sibling, including one chosen because it
+      // has an extra track.
       entry.releaseMbid =
         storedRelease
+        ?? monitoredProviderRelease
         ?? (explicitReleaseIsMonitored ? explicitRelease?.mbid : null)
         ?? uniqueMonitoredRelease
         ?? selectedForResolvedGroup?.releaseMbid

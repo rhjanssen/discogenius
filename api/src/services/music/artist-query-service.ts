@@ -24,6 +24,7 @@ import {
     videoCoverLocalUrl,
 } from "../metadata/media-cover-service.js";
 import { getConfigSection } from "../config/config.js";
+import { resolveArtistDisplayName } from "../metadata/artist-locale-names.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import {
     ARTIST_WANTED_RELEASE_GROUPS_SQL,
@@ -710,6 +711,7 @@ export class ArtistQueryService {
                 return {
                     ...artist,
                     id: artistId,
+                    name: resolveArtistDisplayName(artist.mbid, artist.name ?? "Unknown Artist", artist.sort_name ?? null),
                     picture: resolvedArtistPicture,
                     cover_image_url: artistArtworkUrl(artist.mbid, artist.cover_image_url),
                     effective_monitor: Number(artist.effective_monitor || 0),
@@ -758,7 +760,7 @@ export class ArtistQueryService {
 
         return {
             id: String(artist.id),
-            name: artist.name ?? "Unknown Artist",
+            name: resolveArtistDisplayName(artist.mbid, artist.name ?? "Unknown Artist"),
             picture: artistArtworkUrl(artist.mbid, artist.picture),
             cover_image_url: artistFanartUrl(artist.mbid, artist.cover_image_url),
             last_scanned: artist.last_scanned == null ? null : String(artist.last_scanned),
@@ -787,7 +789,7 @@ export class ArtistQueryService {
         const includeSpatial = getConfigSection("filtering").include_spatial === true;
         return rows.map((row) => mapReleaseGroupCard(row, {
             artistId: String(artist.id),
-            artistName: String(artist.name || "Unknown Artist"),
+            artistName: resolveArtistDisplayName(artist.mbid, String(artist.name || "Unknown Artist")),
             includeSpatial,
             downloadStats: downloadStats.get(String(row.mbid)),
         }));
@@ -1374,7 +1376,7 @@ export class ArtistQueryService {
         const includeSpatial = getConfigSection("filtering").include_spatial === true;
         const releaseGroupCards = musicBrainzReleaseGroups.map((row) => mapReleaseGroupCardForArtistPage(row, {
             artistId: String(artist.id),
-            artistName: String(artist.name || "Unknown Artist"),
+            artistName: resolveArtistDisplayName(artist.mbid, String(artist.name || "Unknown Artist")),
             includeSpatial,
             downloadStats: releaseGroupDownloadStats.get(String(row.mbid)),
         }));

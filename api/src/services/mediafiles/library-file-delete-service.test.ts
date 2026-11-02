@@ -332,6 +332,50 @@ test("deleting an artist's files is scoped to one library", () => {
   assert.equal(fs.existsSync(mp3.filePath), false);
 });
 
+test("deleting one track file by id keeps the other file of the same track", () => {
+  seedArtist();
+  seedAlbum("rg-by-id");
+  const trackId = seedTrack("track-by-id", "rg-by-id");
+  const libraryId = fixtures.seedTestLibrary(dbModule.db, { name: "Lossless", rootPath: musicRoot });
+
+  const keep = seedTrackFile({
+    libraryId,
+    relativePath: path.join("Artist", "Album", "01 Keep.flac"),
+    releaseGroupMbid: "rg-by-id",
+    trackMbid: "track-by-id",
+    trackId,
+  });
+  const drop = seedTrackFile({
+    libraryId,
+    relativePath: path.join("Artist", "Other", "06 Drop.flac"),
+    releaseGroupMbid: "rg-by-id",
+    trackMbid: "track-by-id",
+    trackId,
+  });
+
+  const result = deleteModule.deleteLibraryFilesByIds([drop.id], { allLibraries: true });
+
+  assert.equal(result.deleted, 1);
+  assert.equal(result.errors, 0);
+  assert.equal(fs.existsSync(drop.filePath), false);
+  assert.equal(fs.existsSync(keep.filePath), true);
+  assert.equal(
+    (dbModule.db.prepare("SELECT COUNT(*) AS c FROM TrackFiles WHERE id = ?").get(keep.id) as { c: number }).c,
+    1,
+  );
+  assert.equal(
+    (dbModule.db.prepare("SELECT COUNT(*) AS c FROM TrackFiles WHERE id = ?").get(drop.id) as { c: number }).c,
+    0,
+  );
+});
+
+test("an unknown track file id deletes nothing", () => {
+  const result = deleteModule.deleteLibraryFilesByIds([999999], { allLibraries: true });
+  assert.equal(result.deleted, 0);
+  assert.equal(result.missing, 0);
+  assert.equal(result.errors, 0);
+});
+
 test("deleting a track's files is scoped to one library", () => {
   seedArtist();
   seedAlbum("rg-track");

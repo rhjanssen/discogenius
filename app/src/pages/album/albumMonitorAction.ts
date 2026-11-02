@@ -24,7 +24,7 @@ export function getAlbumMonitorActionPresentation({
     disabled: isPending,
     label,
     tooltip: isLocked
-      ? `${action}. Lock only prevents automatic curation changes; manual changes remain available.`
+      ? `${action}. Chosen by you. Back to automatic lets monitoring choose again.`
       : action,
   };
 }

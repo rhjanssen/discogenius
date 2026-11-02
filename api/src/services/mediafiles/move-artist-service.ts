@@ -229,11 +229,7 @@ export class MoveArtistService {
         movedRoots.push({ sourceDir, destinationDir, rootPath: libraryRoot.path });
 
         const cleanupStart = path.dirname(sourceDir);
-        const beforeCleanup = cleanupStart;
-        removeEmptyParents(cleanupStart, libraryRoot.path);
-        if (!fs.existsSync(beforeCleanup)) {
-          cleanedDirectories += 1;
-        }
+        cleanedDirectories += removeEmptyParents(cleanupStart, libraryRoot.path);
       }
 
       const rebased = LibraryFilesService.rebaseArtistPathsAfterMove({

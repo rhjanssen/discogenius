@@ -29,7 +29,8 @@ import {
     bundleIcon,
 } from "@fluentui/react-icons";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { ErrorState } from "@/components/ui/ContentState";
@@ -39,7 +40,7 @@ import { providerMarkFor } from "@/components/ui/providerMarks";
 import { AppTooltip } from "@/components/ui/AppTooltip";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { useToast } from "@/hooks/useToast";
-import { api, type StreamingProviderStatus } from "@/services/api";
+import { api, type ProviderAuthHealth, type StreamingProviderStatus } from "@/services/api";
 import { dispatchActivityRefresh } from "@/utils/appEvents";
 import { videoCapabilityLabel, videoTierFromMaxHeight } from "@/utils/qualityTier";
 import {
@@ -64,6 +65,27 @@ export interface ProvidersSettingsSectionProps {
 }
 
 const MEDIA = { mobile: "@media (max-width: 720px)" };
+
+function DeezerArlStatus({
+    row,
+    className,
+}: {
+    row: ProviderAuthHealth | undefined;
+    className: string;
+}) {
+    const href = row?.href || "/auth?provider=deezer#deezer-arl";
+    const linkLabel = row?.settingsLabel || "Naar Deezer-ARL";
+    const age = row?.credentialAgeDays;
+    return (
+        <Caption1 className={className}>
+            {row?.accountLabel ? `${row.accountLabel}. ` : null}
+            {age != null ? `ARL saved ${age} days ago. ` : null}
+            {row?.ageWarning ? `${row.ageWarning} ` : null}
+            {row?.status === "needs_reauth" && row.banner ? `${row.banner}. ` : null}
+            <Link to={href}>{linkLabel}</Link>
+        </Caption1>
+    );
+}
 
 const useStyles = makeStyles({
     section: {
@@ -222,6 +244,11 @@ export const ProvidersSettingsSection = ({
     const styles = useStyles();
     const navigate = useNavigate();
     const { toast } = useToast();
+    const { data: providerAuth } = useQuery({
+        queryKey: ["provider-auth-health"],
+        queryFn: () => api.getProviderAuthHealth(),
+        refetchInterval: 60_000,
+    });
     const [importProviderId, setImportProviderId] = useState<string | null>(null);
     const [draggingProviderId, setDraggingProviderId] = useState<string | null>(null);
     const [savingProviderOrder, setSavingProviderOrder] = useState(false);
@@ -376,6 +403,12 @@ export const ProvidersSettingsSection = ({
                         <Caption1 className={styles.mutedText}>
                             {index === 0 && reorderable ? "First priority" : "Connected"}
                         </Caption1>
+                        {provider.id === "deezer" ? (
+                            <DeezerArlStatus
+                                className={styles.mutedText}
+                                row={providerAuth?.providers.find((item) => item.provider === "deezer")}
+                            />
+                        ) : null}
                     </div>
                 </div>
 

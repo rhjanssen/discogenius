@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { albumDecisionView } from "../music/library-user-decisions.js";
 import type { AlbumContract } from "../../contracts/catalog.js";
 import type { AlbumPageContract } from "../../contracts/pages.js";
 import type { AlbumTrackContract, AlbumVersionContract } from "../../contracts/media.js";
@@ -20,6 +21,7 @@ import { AlbumTrackListNavigationService } from "../music/album-track-list-navig
 import { libraryArtistMonitoredSelectSql } from "../music/managed-artists.js";
 import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
 import { getReleaseGroupDownloadStatsMap } from "../download/download-state.js";
+import { PROVIDER_REPRESENTS_EDITION_SQL } from "../music/provider-represents-edition.js";
 
 function localArtistArtworkUrl(artistMbid: string | null | undefined, ...values: unknown[]): string | null {
     return mapArtistArtworkToLocalUrl({
@@ -38,13 +40,23 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
             WHERE allowed.value = 'spatial'
           ) THEN 'spatial' ELSE 'stereo' END AS library_class,
           release.mbid AS release_mbid,
-          COALESCE(provider_release.provider, plan.provider) AS provider,
-          provider_release.provider_id AS provider_id,
-          provider_release.provider_url AS provider_url,
-          COALESCE(
+          CASE WHEN matched_release.release_group_id = selected_group.id
+            AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+            THEN COALESCE(provider_release.provider, plan.provider)
+            ELSE plan.provider END AS provider,
+          CASE WHEN matched_release.release_group_id = selected_group.id
+            AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+            THEN provider_release.provider_id END AS provider_id,
+          CASE WHEN matched_release.release_group_id = selected_group.id
+            AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+            THEN provider_release.provider_url END AS provider_url,
+          -- A composite donor matched onto this edition is still not this album.
+          CASE WHEN matched_release.release_group_id = selected_group.id
+            AND ${PROVIDER_REPRESENTS_EDITION_SQL}
+            THEN COALESCE(
             provider_release.cover_id,
             provider_release.artwork_url
-          ) AS provider_cover,
+          ) END AS provider_cover,
           CASE
             WHEN release_match.match_state = 'accepted' THEN 'verified'
             ELSE release_match.match_state
@@ -102,6 +114,8 @@ function queryReleaseGroup(releaseGroupMbid: string): any | null {
         LEFT JOIN ProviderEditionMatches release_match
           ON release_match.id = plan_source.provider_edition_match_id
          AND release_match.match_state = 'accepted'
+        LEFT JOIN AlbumEditions matched_release
+          ON matched_release.id = release_match.edition_id
         LEFT JOIN ProviderItems provider_release
           ON provider_release.id = release_match.provider_edition_item_id
         WHERE selected_group.mbid = ?
@@ -585,6 +599,9 @@ export function normalizeMusicBrainzReleaseGroupAlbum(
 }
 
 function applyAlbumDownloadStats(album: AlbumContract): AlbumContract {
+    const decision = albumDecisionView(db, album.id);
+    album.decision_label = decision.label;
+    album.decision_action = decision.action;
     const stats = getReleaseGroupDownloadStatsMap([album.id]).get(album.id);
     if (!stats) {
         return album;

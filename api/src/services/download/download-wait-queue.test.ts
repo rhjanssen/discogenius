@@ -190,7 +190,7 @@ test("reorder moves a waiting item to the top like qBittorrent", () => {
 
 test("failed claimed wait rows stay off the live queue page", () => {
   enqueueTrack("fail-1", "Failed Album");
-  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.ok(claimed);
   queueModule.CommandQueueManager.fail(claimed.commandId, "provider error");
   enqueueTrack("wait-1", "Waiting Album");
@@ -227,7 +227,7 @@ test("Download* commands without a wait row stay off the live queue", () => {
 test("claim creates a Download* command and leaves other wait rows unclaimed", () => {
   enqueueTrack("c-1", "First");
   enqueueTrack("c-2", "Second");
-  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.ok(claimed);
   assert.ok(claimed.commandId > 0);
 
@@ -240,6 +240,74 @@ test("claim creates a Download* command and leaves other wait rows unclaimed", (
   assert.equal(live.total, 2);
   assert.equal(live.items[1]?.title, "Second");
   assert.equal(live.items[1]?.status, "queued");
+});
+
+test("claim preserves an unresolved acquisition request instead of silently removing it", () => {
+  const queued = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "lost-plan", mediaKind: "album", commandName: queueModule.CommandNames.DownloadAlbum,
+    planId: 999999, provider: "tidal", albumId: "group", payload: { albumId: "group" },
+  });
+  const before = waitQueueModule.DownloadWaitQueue.get(queued.id);
+  assert.equal(waitQueueModule.DownloadWaitQueue.claim(queued.id), null);
+  const retained = waitQueueModule.DownloadWaitQueue.get(queued.id)!;
+  assert.equal(retained.plan_id, before!.plan_id);
+  assert.deepEqual(retained.payload, { ...before!.payload, acquisitionWaitReason: "request_identity_conflict" });
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();
+  const item = queryModule.DownloadQueueQueryService.getQueue({ limit: 10, offset: 0 }).items.find(item => item.id === queued.id);
+  assert.equal(item?.status, "queued");
+  assert.equal(item?.error, null);
+  assert.equal(item?.statusMessage, "Request identity needs attention");
+  dbModule.db.prepare("UPDATE DownloadQueue SET updated_at='2020-01-01' WHERE id=?").run(queued.id);
+  assert.equal(waitQueueModule.DownloadWaitQueue.claim(queued.id), null);
+  assert.equal(waitQueueModule.DownloadWaitQueue.get(queued.id)?.updated_at, "2020-01-01", "unchanged reason must not cause repeated writes");
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS n FROM commands").get() as { n: number }).n, 0);
+});
+
+test("bounded admission reaches runnable work beyond two blocked pages without deleting intent", () => {
+  for (let i = 0; i < 81; i++) {
+    waitQueueModule.DownloadWaitQueue.enqueue({
+      refKey: `blocked-${i}`, mediaKind: "album", commandName: queueModule.CommandNames.DownloadAlbum,
+      planId: 999999, provider: "tidal", payload: { libraryId: 4, releaseMbid: "missing" }, notify: false,
+    });
+  }
+  const ready = enqueueTrack("ready-after-blocked", "Pompeii");
+  const first = waitQueueModule.DownloadWaitQueue.claimNextPage();
+  assert.equal(first.claimed, null);
+  assert.ok(first.nextCursor);
+  const second = waitQueueModule.DownloadWaitQueue.claimNextPage(new Set(), first.nextCursor);
+  assert.equal(second.claimed, null);
+  assert.ok(second.nextCursor);
+  const third = waitQueueModule.DownloadWaitQueue.claimNextPage(new Set(), second.nextCursor);
+  assert.equal(third.claimed?.wait.id, ready.id);
+  assert.equal(third.nextCursor, null);
+  assert.equal(waitQueueModule.DownloadWaitQueue.countUnclaimed(), 81);
+});
+
+test("bounded admission skips busy providers and finishes an all-blocked pass", () => {
+  for (let i = 0; i < 40; i++) enqueueTrack(`busy-${i}`, `Busy ${i}`);
+  const busy = new Set(["tidal"]);
+  const first = waitQueueModule.DownloadWaitQueue.claimNextPage(busy);
+  assert.equal(first.claimed, null);
+  assert.ok(first.nextCursor);
+  const end = waitQueueModule.DownloadWaitQueue.claimNextPage(busy, first.nextCursor);
+  assert.deepEqual(end, { claimed: null, nextCursor: null });
+  const recovered = waitQueueModule.DownloadWaitQueue.claimNextPage();
+  assert.equal(recovered.claimed?.wait.provider_id, "busy-0");
+  assert.equal(waitQueueModule.DownloadWaitQueue.countUnclaimed(), 39);
+});
+
+test("admission cursor traverses equal ranks by exact row identity using the unclaimed index", () => {
+  for (let i = 0; i < 41; i++) enqueueTrack(`equal-${i}`, `Equal ${i}`);
+  dbModule.db.prepare("UPDATE DownloadQueue SET queue_order=0").run();
+  const first = waitQueueModule.DownloadWaitQueue.claimNextPage(new Set(["tidal"]));
+  assert.ok(first.nextCursor);
+  const last = waitQueueModule.DownloadWaitQueue.claimNextPage(new Set(), first.nextCursor);
+  assert.equal(last.claimed?.wait.provider_id, "equal-40");
+  const details = dbModule.db.prepare(`EXPLAIN QUERY PLAN SELECT * FROM DownloadQueue INDEXED BY idx_download_queue_unclaimed_order
+    WHERE command_id IS NULL AND (queue_order,id)>(?,?) ORDER BY queue_order,id LIMIT 40`)
+    .all(0, first.nextCursor.id) as Array<{ detail: string }>;
+  assert.ok(details.some(row => row.detail.includes("idx_download_queue_unclaimed_order")));
+  assert.equal(details.some(row => row.detail.includes("TEMP B-TREE")), false);
 });
 
 test("removing a wait row does not require a command", () => {
@@ -300,7 +368,7 @@ test("releaseUnstartedClaims returns a claimed-but-never-started wait row to the
 
 test("dropUnclaimedDownloadCommands removes queued Download* with no wait claim", () => {
   enqueueTrack("claimed-ref", "Claimed");
-  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.ok(claimed);
 
   const strayId = queueModule.CommandQueueManager.push(
@@ -335,7 +403,7 @@ test("history retry by command id re-enqueues a wait row after finishClaimed", a
 
 test("recoverOrphanClaims drops wait rows whose command already failed", () => {
   enqueueTrack("fail-orphan", "Stuck Album");
-  const claimed = waitQueueModule.DownloadWaitQueue.claimNext();
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.ok(claimed);
   queueModule.CommandQueueManager.fail(claimed.commandId, "import failed");
   assert.equal(waitQueueModule.DownloadWaitQueue.count(), 1);
@@ -368,4 +436,47 @@ test("history retry cannot target an unrelated queue row with the same numeric I
   assert.equal(waitQueueModule.DownloadWaitQueue.get(claimed.commandId)?.provider_id, "unrelated");
   assert.equal(waitQueueModule.DownloadWaitQueue.get(claimed.commandId)?.command_id, null);
   assert.equal(result.body.sourceJobId, claimed.commandId);
+});
+
+
+test("unclaimed waiting projection cannot advertise a previous attempt as downloading",()=>{
+  const result=enqueueTrack("stale-progress","Saved attempt");
+  const downloadState={state:"downloading",statusMessage:"Downloading track 6/15",currentTrack:"Old active track",currentProviderTrackId:"six",trackStatus:"downloading",trackProgress:42,speed:"1 MB/s",eta:"30s",currentFileNum:6,totalFiles:15,progress:40,
+    tracks:[{providerTrackId:"one",title:"Saved track",status:"completed"},{providerTrackId:"six",title:"Old active track",status:"downloading"}]};
+  dbModule.db.prepare("UPDATE DownloadQueue SET payload=? WHERE id=?").run(JSON.stringify({provider:"tidal",providerId:"stale-progress",downloadState}),result.id);
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();
+  const item=queryModule.DownloadQueueQueryService.getQueue({limit:10,offset:0}).items[0];
+  assert.equal(item.status,"queued");assert.equal(item.state,"queued");assert.equal(item.statusMessage,undefined);
+  assert.equal(item.currentTrack,undefined);assert.equal(item.currentProviderTrackId,undefined);assert.equal(item.trackStatus,null);
+  assert.equal(item.speed,undefined);assert.equal(item.eta,undefined);
+  assert.equal(item.tracks?.[0]?.status,"completed");assert.equal(item.tracks?.[1]?.status,"queued");
+  const stored=JSON.parse((dbModule.db.prepare("SELECT payload FROM DownloadQueue WHERE id=?").get(result.id) as {payload:string}).payload);
+  assert.deepEqual(stored.downloadState,downloadState,"projection must not erase durable recovery evidence");
+});
+
+
+test("a claimed started attempt still projects its current live track and message",()=>{
+  const wait=enqueueTrack("live-progress","Live attempt");const claim=waitQueueModule.DownloadWaitQueue.claim(wait.id);assert.ok(claim);
+  const row=dbModule.db.prepare("SELECT payload FROM commands WHERE id=?").get(claim.commandId) as {payload:string};
+  const payload={...JSON.parse(row.payload),downloadState:{state:"downloading",statusMessage:"Downloading current track",currentTrack:"Live track",currentProviderTrackId:"live-progress",trackStatus:"downloading",speed:"1 MB/s"}};
+  dbModule.db.prepare("UPDATE commands SET status='started',payload=? WHERE id=?").run(JSON.stringify(payload),claim.commandId);
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();const item=queryModule.DownloadQueueQueryService.getQueue({limit:10,offset:0}).items[0];
+  assert.equal(item.status,"started");assert.equal(item.state,"downloading");assert.equal(item.statusMessage,"Downloading current track");assert.equal(item.currentTrack,"Live track");assert.equal(item.speed,"1 MB/s");
+});
+
+test("prune clears only waiting rows and keeps claimed downloads", () => {
+  const insert = dbModule.db.prepare(`
+    INSERT INTO DownloadQueue (ref_key, media_kind, command_name, provider, provider_id, slot, payload, queue_order, command_id)
+    VALUES (?, ?, 'DownloadAlbum', 'tidal', ?, 'stereo', '{}', ?, ?)
+  `);
+  insert.run("a1", "album", "p1", 1, null);
+  insert.run("a2", "album", "p2", 2, 999);
+  insert.run("t1", "track", "p3", 3, null);
+  const q = waitQueueModule.DownloadWaitQueue;
+  assert.equal(q.pruneUnclaimed({ mediaKind: "album", dryRun: true }), 1);
+  assert.equal(q.count(), 3);
+  assert.equal(q.pruneUnclaimed({ mediaKind: "album" }), 1);
+  assert.equal(q.pruneUnclaimed(), 1);
+  assert.equal(q.count(), 1);
+  assert.equal(q.get(q.getIdByCommandId(999)!)!.command_id, 999);
 });

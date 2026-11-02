@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { createRelationshipCreditSchema } from "./relationship-credits.js";
 
 export function createCatalogForeignKeyIndexes(db: Database.Database): void {
   db.exec("CREATE INDEX idx_albums_artist_metadata_id ON Albums(artist_metadata_id)");
@@ -221,6 +222,11 @@ export function createCatalogSchema(db: Database.Database): void {
       -- media[] disc structure (used by NFO writing + edition selection), plus
       -- oldids. country already lives as a JSON-array TEXT column above.
       label TEXT,
+      -- Picard release fields. JSON string array, same shape as label.
+      catalog_numbers TEXT,
+      asin TEXT,
+      script TEXT,
+      language TEXT,
       media TEXT,
       old_foreign_ids TEXT,
       -- No monitored here. LibraryEditions row existence is the monitoring statement.
@@ -318,6 +324,10 @@ export function createCatalogSchema(db: Database.Database): void {
       -- monitored by one Video Library and not another. LibraryVideos row
       -- existence is the monitoring statement.
       isrcs TEXT,
+      -- Set when a mirror refresh has replaced this recording's relationship
+      -- credits, including a refresh that found none. Null means a retag must
+      -- leave composer/performer tags alone.
+      relationship_credits_at TEXT,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(artist_metadata_id) REFERENCES ArtistMetadata(id) ON DELETE SET NULL,
       FOREIGN KEY(artist_mbid) REFERENCES ArtistMetadata(mbid) ON DELETE SET NULL,
@@ -464,6 +474,7 @@ export function createCatalogSchema(db: Database.Database): void {
       channel_layout TEXT,
       spatial_format TEXT,
       provider_quality_label TEXT,
+      delivered_quality_class TEXT,
       availability TEXT NOT NULL DEFAULT 'unknown',
       availability_reason TEXT,
       verified_at DATETIME,
@@ -747,6 +758,7 @@ export function createCatalogSchema(db: Database.Database): void {
   db.exec("CREATE INDEX idx_recordings_video_popularity ON Recordings(COALESCE(popularity, 0) DESC, id) WHERE is_video = 1");
   db.exec("CREATE INDEX idx_recordings_video_title ON Recordings(title, id) WHERE is_video = 1");
   db.exec("CREATE INDEX idx_recordings_video_updated ON Recordings((updated_at IS NULL), updated_at DESC, id) WHERE is_video = 1");
+  createRelationshipCreditSchema(db);
   // ArtistMetadata.mbid/foreign_artist_id are UNIQUE (autoindexed). Name lookups
   // and sort-name browsing need an explicit covering index for artist search UI.
   db.exec("CREATE INDEX idx_artist_metadata_name ON ArtistMetadata(name COLLATE NOCASE)");

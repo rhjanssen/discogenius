@@ -519,6 +519,63 @@ test("syncArtist skips rewriting an unchanged artist (diff-reconcile)", async ()
   assert.equal(artist.name, "SENTINEL", "unchanged artist should be skipped, not rewritten");
 });
 
+test("refresh with ASIN removed clears it, and a payload that omits ASIN keeps it", async () => {
+  const { db } = dbModule;
+  resetCatalog();
+  const withAsin = {
+    ...DOOM_DAYS_PAYLOAD,
+    title: "Doom Days (asin)",
+    Releases: [{
+      ...DOOM_DAYS_PAYLOAD.Releases[0],
+      CatalogNumbers: ["ABC-1"],
+      Asin: "B000123456",
+      Script: "Latn",
+      Language: "eng",
+    }],
+  };
+  fetchReturning(withAsin);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const read = () => db.prepare(`
+    SELECT catalog_numbers, asin, script, language FROM AlbumEditions WHERE mbid = 'rel-1'
+  `).get() as { catalog_numbers: string | null; asin: string | null; script: string | null; language: string | null };
+  assert.deepEqual(read(), {
+    catalog_numbers: JSON.stringify(["ABC-1"]),
+    asin: "B000123456",
+    script: "Latn",
+    language: "eng",
+  });
+
+  fetchReturning({
+    ...withAsin,
+    title: "Doom Days (asin cleared)",
+    Releases: [{
+      ...withAsin.Releases[0],
+      CatalogNumbers: [],
+      Asin: null,
+      Script: null,
+      Language: null,
+    }],
+  });
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(read(), { catalog_numbers: null, asin: null, script: null, language: null });
+
+  fetchReturning(withAsin);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const { CatalogNumbers: _catalog, Asin: _asin, Script: _script, Language: _language, ...withoutFields } = withAsin.Releases[0];
+  fetchReturning({
+    ...DOOM_DAYS_PAYLOAD,
+    title: "Doom Days (ws without asin)",
+    Releases: [withoutFields],
+  });
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(read(), {
+    catalog_numbers: JSON.stringify(["ABC-1"]),
+    asin: "B000123456",
+    script: "Latn",
+    language: "eng",
+  });
+});
+
 test("syncReleaseGroup populates curated release columns from the payload", async () => {
   const { db } = dbModule;
   resetCatalog();
@@ -652,6 +709,119 @@ function twoTrackPayload() {
   }] };
 }
 
+test('catalog refresh applies authoritative recording redirects without changing owned file identity', async () => {
+  resetCatalog(); const { db } = dbModule; const payload = twoTrackPayload();
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip', 'artist-mbid');
+  const fileId = addOwnedTrack('trk-1');
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  const before = db.prepare('SELECT id,track_id,file_path FROM TrackFiles WHERE id=?').get(fileId);
+  try {
+    Object.assign(payload.Releases[0].Tracks[0], { RecordingId: 'redirect-target', OldRecordingIds: [original] });
+    fetchReturning(payload);
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip', 'artist-mbid');
+    assert.deepEqual(db.prepare('SELECT id,track_id,file_path FROM TrackFiles WHERE id=?').get(fileId), before);
+    assert.equal(db.prepare('SELECT id FROM Recordings WHERE mbid=?').get(original), undefined);
+    assert.equal((db.prepare('SELECT recording_mbid FROM Tracks WHERE mbid=?').get('trk-1') as {recording_mbid:string}).recording_mbid, 'redirect-target');
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    const changes = db.prepare('SELECT total_changes() AS n').get();
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip', 'artist-mbid');
+    assert.deepEqual(db.prepare('SELECT total_changes() AS n').get(), changes);
+  } finally { db.prepare('DELETE FROM TrackFiles WHERE id=?').run(fileId); }
+});
+
+for (const recordingRedirect of [false,true]) test(`catalog occurrence replacement retains owned media with ${recordingRedirect ? 'redirected' : 'unchanged'} recording identity`, async () => {
+  resetCatalog(); const {db}=dbModule; const payload=twoTrackPayload(); fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip','artist-mbid');
+  const fileId=addOwnedTrack('trk-1');
+  const before=db.prepare('SELECT id,track_id,file_path FROM TrackFiles WHERE id=?').get(fileId);
+  const original=payload.Releases[0].Tracks[0].RecordingId;
+  Object.assign(payload.Releases[0].Tracks[0],{Id:'trk-replaced',TrackPosition:7,
+    ...(recordingRedirect ? {RecordingId:'rec-replaced',OldRecordingIds:[original]} : {})});
+  try {
+    fetchReturning(payload); await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip','artist-mbid');
+    assert.deepEqual(db.prepare('SELECT id,track_id,file_path FROM TrackFiles WHERE id=?').get(fileId),before);
+    const owner=db.prepare('SELECT mbid,recording_mbid,position FROM Tracks WHERE id=(SELECT track_id FROM TrackFiles WHERE id=?)').get(fileId);
+    assert.deepEqual(owner,{mbid:'trk-replaced',recording_mbid:recordingRedirect?'rec-replaced':original,position:7});
+    assert.equal(db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get(),undefined);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+    const changes=db.prepare('SELECT total_changes() AS n').get();
+    await servarrMetadataModule.servarrMetadata.syncReleaseGroup('rg-skip','artist-mbid');
+    assert.deepEqual(db.prepare('SELECT total_changes() AS n').get(),changes);
+  } finally {db.prepare('DELETE FROM TrackFiles WHERE id=?').run(fileId);}
+});
+
+function redirectFixture() {
+  const { db } = dbModule;
+  const payload = twoTrackPayload();
+  fetchReturning(payload);
+  return { db, payload };
+}
+
+test("a preserved identity conflict leaves the release group incomplete instead of failing the refresh", async () => {
+  resetCatalog();
+  const { db, payload } = redirectFixture();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  db.prepare(
+    "INSERT INTO Recordings (mbid, title, artist_mbid, is_video) VALUES ('redirect-target', 'Redirect target', 'artist-mbid', 1)",
+  ).run();
+  const before = db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get();
+  Object.assign(payload.Releases[0].Tracks[0], { RecordingId: "redirect-target", OldRecordingIds: [original] });
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get(), before);
+  assert.ok(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original));
+  assert.equal((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+});
+
+test("catalog refresh relocates video artwork on a recording redirect and commits the rest of the edition", async () => {
+  resetCatalog();
+  const { db, payload } = redirectFixture();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  const source = db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original) as { id: number };
+  db.prepare("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url) VALUES('Video',?,'cover','https://example.test/radiohead.jpg')").run(String(source.id));
+  db.prepare("INSERT INTO ArtworkLibraryLinks(cover_entity,entity_id,cover_type,file_path,content_hash) VALUES('Video',?,'cover','/library/radiohead-cover.jpg','hash-live')").run(String(source.id));
+  Object.assign(payload.Releases[0].Tracks[0], { RecordingId: "redirect-target", OldRecordingIds: [original] });
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const target = db.prepare("SELECT id FROM Recordings WHERE mbid = 'redirect-target'").get() as { id: number };
+  assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original), undefined);
+  assert.deepEqual(db.prepare("SELECT entity_id,source_url FROM ArtworkSources WHERE cover_entity='Video'").get(), {
+    entity_id: String(target.id),
+    source_url: "https://example.test/radiohead.jpg",
+  });
+  assert.deepEqual(db.prepare("SELECT entity_id,file_path FROM ArtworkLibraryLinks WHERE cover_entity='Video'").get(), {
+    entity_id: String(target.id),
+    file_path: "/library/radiohead-cover.jpg",
+  });
+  assert.equal((db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid='trk-2'").get() as { recording_mbid: string }).recording_mbid, "rec-2");
+  assert.notEqual((db.prepare("SELECT content_hash FROM Albums WHERE mbid='rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+});
+
+test("differing derived recording credits do not block a MusicBrainz recording merge", async () => {
+  resetCatalog();
+  const { db, payload } = redirectFixture();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  const artistId = (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id;
+  const source = db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original) as { id: number };
+  const targetId = Number(db.prepare(
+    "INSERT INTO Recordings (mbid, title, artist_mbid) VALUES ('redirect-target', 'Redirect target', 'artist-mbid')",
+  ).run().lastInsertRowid);
+  db.prepare("DELETE FROM RecordingArtistCredits WHERE recording_id = ?").run(source.id);
+  db.prepare("INSERT INTO RecordingArtistCredits (recording_id, artist_id, ordinal, credited_name) VALUES (?, ?, 0, 'Source credit')").run(source.id, artistId);
+  db.prepare("INSERT INTO RecordingArtistCredits (recording_id, artist_id, ordinal, credited_name) VALUES (?, ?, 0, 'Other credit')").run(targetId, artistId);
+  Object.assign(payload.Releases[0].Tracks[0], { RecordingId: "redirect-target", OldRecordingIds: [original] });
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.deepEqual(db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid = 'trk-1'").get(), { recording_mbid: "redirect-target" });
+  assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original), undefined);
+  assert.notEqual((db.prepare("SELECT content_hash FROM Albums WHERE mbid = 'rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+  assert.deepEqual(db.prepare("SELECT credited_name FROM RecordingArtistCredits WHERE recording_id = ?").all(targetId), [{ credited_name: "Other credit" }]);
+});
+
 function addOwnedTrack(trackMbid: string): number {
   const { db } = dbModule;
   return Number(db.prepare(`INSERT INTO TrackFiles(artist_metadata_id, track_id, canonical_track_mbid, file_path, relative_path, filename, extension, library_root, file_type)
@@ -731,6 +901,29 @@ for (const reverse of [false, true]) test(`catalog cross-edition exchanges prese
     await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
     assert.deepEqual(db.prepare("SELECT total_changes() AS n").get(), changes);
   } finally { db.prepare("DELETE FROM TrackFiles WHERE file_path='/library/owned.flac'").run(); }
+});
+
+test("catalog refresh detaches an inline LibraryVideos placement from an obsolete track and commits the edition", async () => {
+  resetCatalog();
+  const { db } = dbModule;
+  const payload = twoTrackPayload();
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const track = db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get() as { id: number };
+  const videoId = Number(db.prepare("INSERT INTO Recordings(mbid,title,is_video,artist_mbid) VALUES('video-rec','Video',1,'artist-mbid')").run().lastInsertRowid);
+  const videoLibrary = db.prepare("SELECT id FROM Libraries WHERE name='Video'").get() as { id: number } | undefined;
+  const audioLibrary = db.prepare("SELECT id FROM Libraries ORDER BY id LIMIT 1").get() as { id: number };
+  db.prepare(`INSERT INTO LibraryVideos(library_id,video_recording_id,selection_mode,placement_mode,placement_library_id,inline_track_id,inline_slot,placement_selection_mode)
+    VALUES(?,?, 'manual','inline',?,?,'video','manual')`).run(videoLibrary?.id ?? audioLibrary.id, videoId, audioLibrary.id, track.id);
+  const corrected = { ...payload, Releases: [{ ...payload.Releases[0], TrackCount: 1, Tracks: [{ ...payload.Releases[0].Tracks[1], TrackPosition: 1 }] }] };
+  fetchReturning(corrected);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.equal(db.prepare("SELECT id FROM Tracks WHERE mbid='trk-1'").get(), undefined);
+  assert.deepEqual(db.prepare("SELECT video_recording_id,placement_mode,inline_track_id FROM LibraryVideos").get(), {
+    video_recording_id: videoId, placement_mode: "separated", inline_track_id: null,
+  });
+  assert.equal((db.prepare("SELECT position FROM Tracks WHERE mbid='trk-2'").get() as { position: number }).position, 1);
+  assert.notEqual((db.prepare("SELECT content_hash FROM Albums WHERE mbid='rg-skip'").get() as { content_hash: string | null }).content_hash, null);
 });
 
 for (const owned of [false, true]) test(`catalog position replacement ${owned ? "rejects owned obsolete identities" : "removes only unreferenced obsolete catalog rows"}`, async () => {

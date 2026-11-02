@@ -3,12 +3,15 @@
 Discogenius has two deliberately different health paths.
 
 Docker `HEALTHCHECK` and Compose `depends_on: service_healthy` use `/ping`
-(plain `pong`). That probe only asks whether the HTTP server is up. Diagnostic
-status lives on `/health` so a failed deep check or last week's import cannot
-mark the container unhealthy and block the Apple Music wrapper.
+(plain `pong`). That probe only asks whether the HTTP server is up.
 
-The HTTP `/health`, `/api/health`, and authenticated `/api/v1/system/status`
-paths are lightweight snapshots. They inspect writable paths, configured-volume
+`GET /health` is liveness: HTTP 200 and JSON `status: "ok"`, plus a
+`providerAuth` array. A provider that needs a new login does not change that
+status and does not return 503. A reverse proxy that probes `/health` must
+not restart the process for it.
+
+`GET /api/health` and authenticated `GET /api/v1/system/status` are the
+lightweight snapshots. They inspect writable paths, configured-volume
 free space, schema/WAL state, command leases and backlog age, scheduler
 queueing, recent/stale imports, persisted projection markers, queue pause, and
 locally available downloader capabilities. Executable discovery is cached for
@@ -38,6 +41,11 @@ snapshot. This is intentional: a liveness request must not generate external
 traffic. TIDAL/tiddl authentication is inspected from local credential state.
 Other provider and catalog connectivity still needs explicit integration
 checks; the HTTP probe does not claim those services are reachable.
+
+Provider login is a separate check, `providers.auth`. It reads the
+`ProviderAuthState` table and does not call Deezer or Tidal. `needs_reauth`
+is a warning, so the snapshot rolls up to `degraded` (HTTP 200 on
+`/api/health`). It is never `unhealthy`. See [PROVIDER_AUTH.md](PROVIDER_AUTH.md).
 
 Library lists page from membership tables, so empty Album/Track projection
 markers are informational rather than a health warning.

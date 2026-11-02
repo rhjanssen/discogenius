@@ -16,6 +16,7 @@
  *   Apple standard    — exact match to standard, and a SUBSET match to deluxe
  */
 import assert from "node:assert/strict";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import test, { after } from "node:test";
 import {
   closeActiveSchemaDb,
@@ -30,6 +31,7 @@ const { ProviderReleaseIngestionService } = await import("../providers/provider-
 const { AcquisitionPlanningService } = await import("./acquisition-planning-service.js");
 const { AlbumCommandService } = await import("./album-command-service.js");
 const { DownloadMissingService } = await import("./download-missing-service.js");
+const { DownloadWaitQueue } = await import("../download/download-wait-queue.js");
 const { LibraryCurationService } = await import("./library-curation-service.js");
 const { LibraryReleaseSelectionService } = await import("./library-release-selection-service.js");
 
@@ -107,7 +109,7 @@ function ingestProviderEdition(input: {
       availability: "available",
     },
     canonicalReleaseId: input.canonicalReleaseId,
-    matcherVersion: 1,
+    matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
     releaseAudioVariants: [{
       variantKey: input.quality,
       qualityClass: input.quality,
@@ -412,8 +414,8 @@ test("a normal plan click monitors that edition alone and runs that exact plan",
   assert.equal(
     (db.prepare("SELECT locked FROM LibraryAlbums WHERE library_id = ? AND release_group_id = 1")
       .get(LIBRARY_ID) as { locked: number }).locked,
-    0,
-    "an ordinary selection must not press Lock",
+    1,
+    "choosing an edition is a user decision",
   );
 });
 
@@ -501,6 +503,9 @@ test("Download Missing queues every monitored edition", async () => {
     mode: "additive",
   });
 
+  // Queue rows carry their own library+edition identity and outlive the
+  // reseeded plans, so start from an empty queue.
+  db.prepare("DELETE FROM DownloadQueue").run();
   const result = await DownloadMissingService.queueMonitoredItems();
   assert.equal(result.albums, 2);
   assert.deepEqual(
@@ -513,6 +518,59 @@ test("Download Missing queues every monitored edition", async () => {
     [{ edition_id: STANDARD_EDITION_ID }, { edition_id: DELUXE_EDITION_ID }],
     "scheduled acquisition must not collapse an album to its Primary edition",
   );
+});
+
+test("re-running Download Missing after a re-plan keeps one queue row per edition", async () => {
+  seedCatalog();
+  ingestProviders();
+  planEverything();
+  const service = new LibraryReleaseSelectionService(db);
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: DELUXE_EDITION_ID,
+  });
+  service.selectRelease({
+    releaseGroupMbid: ALBUM_MBID, libraryId: LIBRARY_ID, editionId: STANDARD_EDITION_ID,
+    mode: "additive",
+  });
+  db.prepare("DELETE FROM DownloadQueue").run();
+  await DownloadMissingService.queueMonitoredItems();
+  const before = db.prepare(`SELECT id, plan_id FROM DownloadQueue ORDER BY id`).all() as Array<{ id: number; plan_id: number }>;
+  assert.equal(before.length, 2);
+
+  // A refresh/curation pass re-plans every edition (new planner version),
+  // which replaces each edition's plan row with a new plan id.
+  const planning = new AcquisitionPlanningService(db);
+  for (const editionId of [STANDARD_EDITION_ID, DELUXE_EDITION_ID]) {
+    planning.compute({ libraryId: LIBRARY_ID, editionId, providerPriority: ["tidal", "apple-music"], plannerVersion: 2 });
+  }
+  const currentPlanIds = (db.prepare(`SELECT id FROM SelectedAcquisitionPlans WHERE library_id = ? ORDER BY id`).all(LIBRARY_ID) as Array<{ id: number }>).map((r) => r.id);
+  await DownloadMissingService.queueMonitoredItems();
+  await DownloadMissingService.queueMonitoredItems();
+
+  const rows = db.prepare(`
+    SELECT wait.id, wait.provider, plan.edition_id
+    FROM DownloadQueue wait JOIN AcquisitionPlans plan ON plan.id = wait.plan_id
+    ORDER BY plan.edition_id
+  `).all() as Array<{ id: number; provider: string; edition_id: number }>;
+  assert.equal(rows.length, 2, "a replacement plan must not append a second row for the same edition");
+  assert.deepEqual(rows.map((row) => row.id).sort(), before.map((row) => row.id).sort(),
+    "the replacement plan takes over the existing row and its queue position");
+  assert.deepEqual(
+    (db.prepare(`SELECT plan_id FROM DownloadQueue ORDER BY plan_id`).all() as Array<{ plan_id: number }>).map((r) => r.plan_id),
+    currentPlanIds,
+    "waiting rows follow the current plan",
+  );
+
+  // Legacy duplicates (rows queued before this fix) collapse to one per edition.
+  const oldDeluxe = before.find((row) => !rows.some((r) => r.id === row.id)) ?? before[0];
+  db.prepare(`
+    INSERT INTO DownloadQueue (ref_key, media_kind, command_name, plan_id, provider, provider_id, slot, payload, queue_order)
+    SELECT 'legacy-dup', media_kind, command_name, plan_id, provider, provider_id, slot, payload, queue_order + 1000
+    FROM DownloadQueue WHERE id = ?
+  `).run(oldDeluxe.id);
+  assert.equal(DownloadWaitQueue.dedupeUnclaimedAlbums({ dryRun: true }), 1);
+  assert.equal(DownloadWaitQueue.dedupeUnclaimedAlbums(), 1);
+  assert.equal((db.prepare(`SELECT COUNT(*) AS n FROM DownloadQueue`).get() as { n: number }).n, 2);
 });
 
 test("switching a plan beneath one of several editions leaves the others alone", () => {

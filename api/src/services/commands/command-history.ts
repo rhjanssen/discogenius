@@ -484,8 +484,11 @@ export const buildDescription = (job: CommandModel, context?: DescriptionLookupC
         return workflowLabel || "Rescan folders";
     }
 
-    if (jobType === "ConfigPrune") {
-        return "Library cleanup";
+    if (job.name === "ConfigPrune") {
+        if (job.payload.cleanupArtworkCache === true) return "Cleaning artwork cache";
+        return job.payload.refreshArtworkPreference === true
+            ? "Updating library artwork and embedded covers"
+            : "Applying library metadata settings";
     }
 
     if (jobType === "MoveArtist") {
@@ -622,6 +625,10 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
             reason: job.payload.reason,
             files: Array.isArray(job.payload.files) ? job.payload.files : undefined,
             originalJobId: job.payload.originalJobId,
+            refreshArtworkPreference: job.name === "ConfigPrune"
+                ? job.payload.refreshArtworkPreference === true
+                : undefined,
+            cleanupArtworkCache: job.name === "ConfigPrune" ? job.payload.cleanupArtworkCache === true : undefined,
             outcome,
             warningMessage,
             downloadState: downloadState
@@ -651,6 +658,11 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
         startTime: parseSqliteDate(job.started_at) ?? parseSqliteDate(job.created_at) ?? Date.now(),
         endTime: parseSqliteDate(job.completed_at),
         status: job.status,
+        statusMessage: job.progress_phase === "resumed after restart"
+            ? "Resumed after restart"
+            : job.status === "queued" && job.progress_phase === "waiting for download or import"
+                ? "Waiting for download or import to finish"
+                : undefined,
         error: job.error,
         trigger: job.trigger ?? CommandTrigger.Unspecified,
         queuePosition: options.queuePosition,

@@ -23,6 +23,8 @@ export interface LocalFileQualityProps {
    * Populated from TrackFiles.video_codec when the library API returns it.
    */
   video_codec?: string | null;
+  /** Provider-advertised tier when the delivered file measured below it. */
+  advertised_quality?: string | null;
 }
 
 const VIDEO_CODEC_KEYS = new Set([
@@ -138,6 +140,12 @@ export function localVideoResolutionDescription(quality: string | null | undefin
  * - `Ultra HD · 2160p · AV1 · Opus · 768 kbps`
  */
 export function localFileQualityTooltip(file: LocalFileQualityProps | null | undefined): string {
+  const measured = describeLocalFileQuality(file);
+  const advertised = String(file?.advertised_quality || "").trim();
+  return advertised ? `${measured} · Provider advertised ${advertised}, delivered lower` : measured;
+}
+
+function describeLocalFileQuality(file: LocalFileQualityProps | null | undefined): string {
   const quality = String(file?.quality || "").trim();
   const normalized = normalizeQualityTag(quality);
   const codec = formatCodecLabel(file?.codec);

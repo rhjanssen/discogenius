@@ -1,5 +1,6 @@
 import path from "path";
 import { db } from "../../database.js";
+import { resolveArtistMetadataId } from "../music/managed-artists.js";
 import {
     normalizeComparableText,
     sameRecordingTitle,
@@ -364,7 +365,8 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
     // edition title, AND release-group title. Edition names ("Bad Blood X")
     // often disagree with the group ("Bad Blood"); preferring the group used
     // to skip the provider album the file is actually tagged with.
-    for (const albumTitleCandidate of albumTitleCandidates(filePath, tags)) {
+    const titleCandidates = albumTitleCandidates(filePath, tags);
+    if (titleCandidates.length > 0) {
         const albumRows = db.prepare(`
             SELECT
               CAST(release_item.provider_id AS TEXT) AS provider_album_id,
@@ -378,22 +380,20 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
             LEFT JOIN AlbumEditions canonical_release ON canonical_release.id = release_match.edition_id
             LEFT JOIN Albums release_group ON release_group.id = canonical_release.release_group_id
             WHERE release_item.entity_type = 'release'
-              AND (
-                release_item.id IN (
+              AND release_item.id IN (
                   SELECT credit.item_id
                   FROM ProviderItemCredits credit
                   JOIN ProviderArtistMatches artist_match
                     ON artist_match.provider_artist_item_id = credit.artist_item_id
                    AND artist_match.match_state = 'accepted'
-                  JOIN ArtistMetadata artist_meta ON artist_meta.id = artist_match.artist_id
-                  JOIN ArtistMetadata managed_artist ON managed_artist.mbid = artist_meta.mbid
-                  WHERE managed_artist.id = @artistId
-                )
-                OR canonical_release.artist_mbid IN (
-                  SELECT managed_artist.mbid
-                  FROM ArtistMetadata managed_artist
-                  WHERE managed_artist.id = @artistId
-                )
+                  WHERE artist_match.artist_id = @artistId
+                  UNION
+                  SELECT release_match.provider_edition_item_id
+                  FROM ProviderEditionMatches release_match
+                  JOIN AlbumEditions edition ON edition.id = release_match.edition_id
+                  JOIN ArtistMetadata artist ON artist.mbid = edition.artist_mbid
+                  WHERE release_match.match_state = 'accepted'
+                    AND artist.id = @artistId
               )
         `).all({ artistId }) as Array<{
             provider_album_id: string;
@@ -405,9 +405,10 @@ function folderAlbumIds(filePath: string, artistId: string, tags?: ParsedAudioTa
         for (const row of albumRows) {
             if (!row.provider_album_id) continue;
             if (
-                albumTitleMatches(albumTitleCandidate, row.provider_title)
-                || albumTitleMatches(albumTitleCandidate, row.edition_title)
-                || albumTitleMatches(albumTitleCandidate, row.release_group_title)
+                titleCandidates.some((candidate) =>
+                    albumTitleMatches(candidate, row.provider_title)
+                    || albumTitleMatches(candidate, row.edition_title)
+                    || albumTitleMatches(candidate, row.release_group_title))
             ) {
                 albumIds.add(String(row.provider_album_id));
             }
@@ -495,9 +496,9 @@ function existingTrackFileForOffer(
     provider: string,
     providerId: string,
     librarySlot: string,
-): { file_path: string } | undefined {
+): { file_path: string; canonical_release_mbid: string | null } | undefined {
     return db.prepare(`
-        SELECT file_path
+        SELECT file_path, canonical_release_mbid
         FROM TrackFiles
         WHERE artist_metadata_id = ?
           AND provider = ?
@@ -507,7 +508,10 @@ function existingTrackFileForOffer(
           AND library_slot = ?
         ORDER BY verified_at DESC, id DESC
         LIMIT 1
-    `).get(artistId, provider, providerId, librarySlot) as { file_path: string } | undefined;
+    `).get(artistId, provider, providerId, librarySlot) as {
+        file_path: string;
+        canonical_release_mbid: string | null;
+    } | undefined;
 }
 
 function offersByRecordingMbid(artistId: string, recordingMbid: string, preferredSlot: string): ProviderOfferRow[] {
@@ -965,13 +969,24 @@ export function matchAudioFileByMetadata(
     libraryRoot: LibraryRootKey,
     tags: ParsedAudioTags,
 ): MetadataMatchResult | null {
+    // Folder scans carry MBIDs; SQL ownership predicates carry ArtistMetadata.id.
+    // Resolve once before any sibling, provider or canonical ownership lookup.
+    const artistMetadataId = resolveArtistMetadataId(artistId);
+    if (artistMetadataId == null) return null;
+    artistId = String(artistMetadataId);
     const preferredSlot = librarySlotForRoot(libraryRoot);
 
     // Prefer same-folder title+duration siblings first. Wild World Complete vs
     // standard share a recording MBID but different provider album ids; linking
     // the leftover 201 file to Complete Edition would create a second TrackFile.
+    // An embedded release-track id that names a different track is that track,
+    // not a leftover of the one sibling with a similar title and length.
     const folderDuplicate = findSameFolderDuplicate(filePath, artistId, tags);
-    if (folderDuplicate) {
+    const embeddedTrackId = tags.musicbrainzTrackId?.trim() || null;
+    if (
+        folderDuplicate
+        && (!embeddedTrackId || embeddedTrackId === folderDuplicate.canonicalTrackMbid)
+    ) {
         return {
             albumId: folderDuplicate.albumId,
             mediaId: folderDuplicate.providerId,
@@ -998,13 +1013,51 @@ export function matchAudioFileByMetadata(
     // means a later provider-offer hit still carries canonical MBIDs (the file
     // often has none yet — Apple rips in a Discogenius folder).
     const catalogMatch = matchCatalogTrackByTags(filePath, artistId, tags, preferredSlot);
-    if (catalogMatch?.duplicateOfExisting) {
+    // A copy that names its own release is not a leftover of another edition
+    // that already has this recording.
+    const otherEditionDuplicate = Boolean(
+        catalogMatch?.duplicateOfExisting
+        && releaseMbid
+        && catalogMatch?.canonicalReleaseMbid
+        && catalogMatch.canonicalReleaseMbid !== releaseMbid
+    );
+    if (catalogMatch?.duplicateOfExisting && !otherEditionDuplicate) {
         return catalogMatch;
     }
-    const siblingPinned = folderCanonicalReleaseMbids(filePath, artistId).size > 0;
-    if (siblingPinned && !catalogMatch) {
-        // Known album folder, title not on that edition. Stay Unmapped rather
-        // than attaching a different album via ISRC (e.g. the standalone single).
+    const siblingReleases = folderCanonicalReleaseMbids(filePath, artistId);
+    if (siblingReleases.size > 0 && !catalogMatch) {
+        // Title matching missed. An embedded release-track id that belongs to
+        // this folder's edition is still that track. Anything else stays
+        // unmapped rather than attaching a different album via ISRC.
+        const embedded = resolveCatalogTrackFromEmbeddedMbids(tags, preferredSlot);
+        if (embedded && siblingReleases.has(embedded.releaseMbid)) {
+            const existing = embedded.recordingMbid
+                ? existingTrackFileForCanonical(
+                    artistId,
+                    embedded.recordingMbid,
+                    preferredSlot,
+                    embedded.releaseMbid,
+                )
+                : undefined;
+            const resolvedExisting = existing?.file_path || null;
+            const duplicateOfExisting = Boolean(
+                resolvedExisting && path.resolve(resolvedExisting) !== path.resolve(filePath),
+            );
+            return {
+                albumId: embedded.releaseGroupMbid,
+                mediaId: "",
+                provider: "",
+                fileType: "track",
+                quality: importedQualityForTrackedFile(filePath),
+                librarySlot: preferredSlot,
+                duplicateOfExisting,
+                existingFilePath: duplicateOfExisting ? resolvedExisting : null,
+                canonicalTrackMbid: embedded.trackMbid,
+                canonicalRecordingMbid: embedded.recordingMbid,
+                canonicalReleaseMbid: embedded.releaseMbid,
+                canonicalReleaseGroupMbid: embedded.releaseGroupMbid,
+            };
+        }
         return null;
     }
 
@@ -1112,7 +1165,7 @@ export function matchAudioFileByMetadata(
         // file directly (Lidarr-style). The TrackFile carries no provider
         // identity, only canonical MBIDs, which is enough to count as downloaded
         // and to render on the album page.
-        if (catalogMatch) return catalogMatch;
+        if (catalogMatch && !otherEditionDuplicate) return catalogMatch;
         if (catalogLink) {
             return {
                 albumId: catalogLink.releaseGroupMbid,
@@ -1134,8 +1187,15 @@ export function matchAudioFileByMetadata(
     const librarySlot = preferredSlot;
     const existing = existingTrackFileForOffer(artistId, best.provider, String(best.provider_id), librarySlot);
     const resolvedExisting = existing?.file_path || null;
+    const fileReleaseMbid = releaseMbid || catalogLink?.releaseMbid || catalogMatch?.canonicalReleaseMbid || null;
+    // The same provider recording on another edition is a second track. Only a
+    // file already attached to this release is a leftover copy.
+    const sameRelease = !fileReleaseMbid
+        || !existing?.canonical_release_mbid
+        || existing.canonical_release_mbid === fileReleaseMbid;
     const duplicateOfExisting = Boolean(
         resolvedExisting
+        && sameRelease
         && path.resolve(resolvedExisting) !== path.resolve(filePath)
     );
 
@@ -1166,6 +1226,11 @@ export function matchVideoFileByMetadata(
     libraryRoot: LibraryRootKey,
     tags: ParsedAudioTags,
 ): MetadataMatchResult | null {
+    // Folder scans carry MBIDs; SQL ownership predicates carry ArtistMetadata.id.
+    // Resolve once before any sibling, provider or canonical ownership lookup.
+    const artistMetadataId = resolveArtistMetadataId(artistId);
+    if (artistMetadataId == null) return null;
+    artistId = String(artistMetadataId);
     const preferredSlot = librarySlotForRoot(libraryRoot);
     const stem = path.parse(filePath).name;
     const comparable = videoStemComparableTitle(stem)

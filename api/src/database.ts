@@ -1,9 +1,11 @@
 import { ensureEditionBarcodeIndex } from "./database/schema/edition-barcode-index.js";
 import Database from "better-sqlite3";
+import { createArtworkStateSchema } from "./database/schema/artwork-state.js";
 import { assertOutsideSqliteReadPlan, recordSqlitePlanRead } from "./database/sqlite-read-plan.js";
 import { BASE_SCHEMA_VERSION } from "./database/schema/version.js";
 import { isMainThread } from "node:worker_threads";
 import { DB_PATH } from "./services/config/bootstrap.js";
+import { enterWriteGate } from "./services/commands/disk-admission.js";
 
 import {
   createCatalogForeignKeyIndexes,
@@ -34,6 +36,17 @@ import {
   createDownloadQueueSchema,
   createCommandFileWorkSchema,
 } from "./database/schema/commands.js";
+import { migrateFileWorkRestartResume } from "./database/schema/file-work-restart-resume.js";
+import { migrateRetagAlbumScheduling } from "./database/schema/retag-album-scheduling.js";
+import { migrateDeliveredQuality } from "./database/schema/delivered-quality.js";
+import { migrateReleaseTagFields } from "./database/schema/release-tag-fields.js";
+import { migrateRelationshipCredits } from "./database/schema/relationship-credits.js";
+import { migrateLibraryUserDecisions } from "./database/schema/library-user-decisions.js";
+import { migrateDownloadQueueEditionIdentity } from "./database/schema/download-queue-edition-identity.js";
+import { migrateDropDownconvertSetting } from "./database/schema/drop-downconvert-setting.js";
+import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
+import { createTrackArtistCreditNamesSchema, migrateTrackArtistCreditNames } from "./database/schema/track-artist-credit-names.js";
+import { createArtistLocaleAliasesSchema, migrateArtistLocaleAliases } from "./database/schema/artist-locale-aliases.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
   createCanonicalCreditSchemaV41,
@@ -52,10 +65,48 @@ import {
 
 let _db: Database.Database | null = null;
 
+export function isDatabaseOpen(): boolean {
+  return _db != null;
+}
+
 /** Wait for writer admission without blocking HTTP. The callback runs once;
  * retrying a callback can repeat filesystem or event side effects. */
 export function withDbWrite<T>(fn: () => T): Promise<T> {
   return withSqliteWriteMutexAsync(fn);
+}
+
+const SQLITE_BUSY_RETRY_WAITS_MS = [0, 25, 50, 100, 200, 400, 800];
+
+/** Retry a short SQLite write that hit SQLITE_BUSY. Never swallows: the last error is thrown. */
+export function retrySqliteBusySync<T>(work: () => T): T {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < SQLITE_BUSY_RETRY_WAITS_MS.length; attempt += 1) {
+    const waitMs = SQLITE_BUSY_RETRY_WAITS_MS[attempt];
+    if (waitMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, waitMs);
+    try {
+      return work();
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+/** Async counterpart of retrySqliteBusySync. Used on the admitted write path. */
+export async function retrySqliteBusyAsync<T>(work: () => T | Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < SQLITE_BUSY_RETRY_WAITS_MS.length; attempt += 1) {
+    const waitMs = SQLITE_BUSY_RETRY_WAITS_MS[attempt];
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    try {
+      return await work();
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 // SQLite's own timeout only covers writers outside our shared admission queue.
@@ -412,7 +463,9 @@ export async function withSqliteWriteGate<T>(
   const { withGlobalSqliteWriteLock } = await import(
     "./services/commands/worker/sqlite-write-lock.js"
   );
-  return withGlobalSqliteWriteLock(work, undefined, label);
+  // Folder lock, then HDD permit, then this gate. enterWriteGate refuses the
+  // gate while a permit is held.
+  return enterWriteGate(() => withGlobalSqliteWriteLock(work, undefined, label));
 }
 
 /**
@@ -508,7 +561,31 @@ export function initDatabase() {
   // Durable runtime work records are additive command-queue objects, not a
   // second catalogue schema or a compatibility writer.
   createCommandFileWorkSchema(db, { ifNotExists: true });
+  migrateFileWorkRestartResume(db);
+  // Columns only. user_version stays 46 so a running or queued RetagArtist
+  // is not reset. Existing plans stay plan_complete = 1 and resume at cursor.
+  migrateRetagAlbumScheduling(db);
+  migrateDeliveredQuality(db);
+  migrateDropDownconvertSetting(db);
+  // New table + config marker only. user_version stays 46 so a running
+  // RetagArtist is not reset.
+  migrateProviderAuthState(db);
+  // New table + config marker only (published MusicBrainz track credits for
+  // track artist tags). user_version stays 46.
+  migrateTrackArtistCreditNames(db);
+  migrateArtistLocaleAliases(db);
+  // Nullable AlbumEditions columns for Picard catalog number, ASIN, script,
+  // and language. user_version stays 46.
+  migrateReleaseTagFields(db);
+  // Relationship-credit tables only. user_version stays 46 so a queued
+  // RetagArtist is not reset.
+  migrateRelationshipCredits(db);
+  // Decision column + exclusion/outcome tables. user_version stays 46.
+  migrateLibraryUserDecisions(db);
+  createArtworkStateSchema(db);
   ensureDownloadQueueSchema();
+  // One album row per library+edition, DB-enforced. user_version stays 46.
+  migrateDownloadQueueEditionIdentity(db);
   pruneStaleArtistIdCommandFailures();
   ensureLibraryLookupIndexes();
   ensureEditionBarcodeIndex(db);
@@ -527,6 +604,10 @@ export function initDatabase() {
  */
 function ensureLibraryLookupIndexes(): void {
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_library_artists_path
+      ON LibraryArtists(path, library_id);
+    CREATE INDEX IF NOT EXISTS idx_library_artists_path_folded
+      ON LibraryArtists(path COLLATE NOCASE, library_id);
     CREATE INDEX IF NOT EXISTS idx_library_albums_release_group
       ON LibraryAlbums(release_group_id);
     CREATE INDEX IF NOT EXISTS idx_acquisition_sources_match
@@ -537,6 +618,14 @@ function ensureLibraryLookupIndexes(): void {
       ON AcquisitionPlanTracks(track_id);
     CREATE INDEX IF NOT EXISTS idx_download_queue_plan
       ON DownloadQueue(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_download_queue_standalone_recording
+      ON DownloadQueue(json_extract(payload, '$.canonicalRecordingMbid')) WHERE plan_id IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_download_queue_standalone_recording_id
+      ON DownloadQueue(CAST(json_extract(payload, '$.canonicalRecordingId') AS TEXT)) WHERE plan_id IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_download_queue_standalone_track
+      ON DownloadQueue(json_extract(payload, '$.canonicalTrackMbid')) WHERE plan_id IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_download_queue_standalone_track_id
+      ON DownloadQueue(CAST(json_extract(payload, '$.canonicalTrackId') AS TEXT)) WHERE plan_id IS NULL;
     CREATE INDEX IF NOT EXISTS idx_commands_live_acquisition_plan
       ON commands(CAST(json_extract(payload, '$.acquisitionPlanId') AS INTEGER))
       WHERE status IN ('queued', 'started');
@@ -708,6 +797,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
       extension TEXT NOT NULL,           -- File extension (flac, mp3, mp4, etc)
       file_size INT,                     -- File size in bytes
       file_hash TEXT,                    -- MD5/SHA hash for integrity checking
+      managed_tag_fingerprint TEXT,     -- Last written managed-tag fingerprint. Null means the file has not been stamped.
       duration INT,                      -- Duration in seconds (from file metadata)
       bitrate INT,                       -- Bitrate in kbps
       sample_rate INT,                   -- Sample rate in Hz (e.g. 44100, 96000)
@@ -754,6 +844,9 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
   createCatalogSchema(schemaDb);
   createCanonicalCreditSchemaV41(schemaDb);
   createCommandsSchema(schemaDb);
+  createProviderAuthStateSchema(schemaDb);
+  createTrackArtistCreditNamesSchema(schemaDb);
+  createArtistLocaleAliasesSchema(schemaDb);
   createCommandFileWorkSchema(schemaDb);
   createRuntimeControlSchema(schemaDb);
   createLibrarySchemaV41(schemaDb);
@@ -783,6 +876,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
   createTrackLibraryProjectionSchema(schemaDb);
   createExtraFileSchema(schemaDb);
   createMediaCoverProxyCacheSchema(schemaDb);
+  createArtworkStateSchema(schemaDb);
   createTrackFileForeignKeyTriggers(schemaDb);
 
   // ====================================================================

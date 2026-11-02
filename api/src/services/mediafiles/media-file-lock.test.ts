@@ -55,3 +55,24 @@ test("a physical worker exit releases its shared file lock before the next write
     releaseExitedMediaFileOwner(Number(data[MEDIA_FILE_LOCK_OWNER_KEY]));
   }
 });
+
+test("work scheduled inside a media file lock must take the lock again after release", async () => {
+  const file = "/library/leaked-media-lock.flac";
+  let spawned!: Promise<boolean>;
+  await withMediaFileLock(file, async () => {
+    spawned = new Promise<boolean>((resolve) => setImmediate(async () => {
+      let release!: () => void;
+      const holder = withMediaFileLock(file, () => new Promise<void>((done) => { release = done; }));
+      await new Promise((r) => setTimeout(r, 5));
+      let entered = false;
+      const second = withMediaFileLock(file, async () => { entered = true; });
+      await new Promise((r) => setTimeout(r, 30));
+      const enteredWhileHeld = entered;
+      release();
+      await holder;
+      await second;
+      resolve(enteredWhileHeld);
+    }));
+  });
+  assert.equal(await spawned, false, "a flow spawned inside a released media lock skipped the lock");
+});

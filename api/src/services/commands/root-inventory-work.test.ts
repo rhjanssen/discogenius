@@ -121,6 +121,102 @@ test("directory read failure cannot mark the inventory complete", async () => {
     assert.equal(queue.CommandQueueManager.get(job.id)!.payload.rootInventory!.complete, false);
 });
 
+test("a discovered directory disappearing cannot complete the inventory", async () => {
+    const album = path.join(root, "Disappearing Album");
+    wav(path.join(album, "Track.wav"));
+    const job = claim();
+    const read = fs.readdirSync;
+    fs.readdirSync = ((directory: fs.PathLike, ...args: unknown[]) => {
+        const entries = (read as (...values: unknown[]) => unknown)(directory, ...args);
+        if (String(directory) === root) fs.rmSync(album, { recursive: true });
+        return entries;
+    }) as typeof fs.readdirSync;
+    try {
+        await assert.rejects(inventory.runRootInventoryWorkUnit(job, ctx), /directory disappeared during scan/);
+    } finally { fs.readdirSync = read; }
+    assert.equal(queue.CommandQueueManager.get(job.id)!.payload.rootInventory!.complete, false);
+});
+
+test("root replacement between batches invalidates the persisted inventory", async () => {
+    for (let n = 0; n < 210; n++) fs.writeFileSync(path.join(root, `${n}.txt`), "original");
+    const job = claim();
+    let continuation: unknown;
+    try { await inventory.runRootInventoryWorkUnit(job, ctx); } catch (error) { continuation = error; }
+    assert.equal(await outcome.persistCommandOutcome(job, continuation), "requeued");
+    const relocated = `${root}-original`;
+    fs.renameSync(root, relocated);
+    fs.mkdirSync(root);
+    try {
+        await assert.rejects(inventory.runRootInventoryWorkUnit(claim(job.id), ctx), /directory replaced during scan/);
+        assert.equal(queue.CommandQueueManager.get(job.id)!.payload.rootInventory!.complete, false);
+        assert.equal(fs.existsSync(path.join(relocated, "0.txt")), true);
+    } finally { fs.rmSync(relocated, { recursive: true }); }
+});
+
+test("a listed album directory replacement cannot reuse its file cursor", async () => {
+    const album = path.join(root, "Album");
+    fs.mkdirSync(album);
+    for (let n = 0; n < 210; n++) fs.writeFileSync(path.join(album, `${n}.txt`), "original");
+    const job = claim();
+    let continuation: unknown;
+    try { await inventory.runRootInventoryWorkUnit(job, ctx); } catch (error) { continuation = error; }
+    assert.equal(await outcome.persistCommandOutcome(job, continuation), "requeued");
+    assert.equal(queue.CommandQueueManager.get(job.id)!.payload.rootInventory!.current!.directory, album);
+    fs.renameSync(album, `${album}-original`);
+    fs.mkdirSync(album);
+    await assert.rejects(inventory.runRootInventoryWorkUnit(claim(job.id), ctx), /directory replaced during scan/);
+    assert.equal(queue.CommandQueueManager.get(job.id)!.payload.rootInventory!.complete, false);
+});
+
+test("initially missing roots stay marked incomplete even if they appear during traversal", async () => {
+    const spatial = config.Config.getSpatialPath();
+    fs.rmdirSync(spatial);
+    const read = fs.readdirSync;
+    fs.readdirSync = ((directory: fs.PathLike, ...args: unknown[]) => {
+        const entries = (read as (...values: unknown[]) => unknown)(directory, ...args);
+        if (String(directory) === config.Config.getVideoPath()) fs.mkdirSync(spatial);
+        return entries;
+    }) as typeof fs.readdirSync;
+    try {
+        const result = await finish();
+        assert.equal(result.complete, true, "traversal may finish without certifying every root as available");
+        assert.deepEqual(result.missingRoots, [spatial]);
+        assert.equal(result.rootIdentities![1], null);
+    } finally { fs.readdirSync = read; }
+});
+
+test("an ancestor replaced by a link is refused before reading an empty directory", async t => {
+    const artist = path.join(root, "Artist");
+    const album = path.join(artist, "Empty Album");
+    fs.mkdirSync(album, { recursive: true });
+    const outside = fs.mkdtempSync(path.join(tempDir, "replacement-"));
+    fs.mkdirSync(path.join(outside, "Empty Album"));
+    const probe = path.join(root, "link-probe");
+    try { fs.symlinkSync(outside, probe, "junction"); fs.unlinkSync(probe); }
+    catch (error) { fs.rmSync(outside, { recursive: true }); t.skip(`Symlink unavailable: ${String(error)}`); return; }
+    const job = claim();
+    const read = fs.readdirSync;
+    let escapedRead = false;
+    fs.readdirSync = ((directory: fs.PathLike, ...args: unknown[]) => {
+        if (String(directory) === album) escapedRead = true;
+        const entries = (read as (...values: unknown[]) => unknown)(directory, ...args);
+        if (String(directory) === artist) {
+            fs.rmSync(artist, { recursive: true });
+            fs.symlinkSync(outside, artist, "junction");
+        }
+        return entries;
+    }) as typeof fs.readdirSync;
+    try {
+        await assert.rejects(inventory.runRootInventoryWorkUnit(job, ctx), /Inventory directory changed/);
+        assert.equal(escapedRead, false);
+        assert.equal(queue.CommandQueueManager.get(job.id)!.payload.rootInventory!.complete, false);
+    } finally {
+        fs.readdirSync = read;
+        fs.unlinkSync(artist);
+        fs.rmSync(outside, { recursive: true });
+    }
+});
+
 test("symlinks outside a root are not traversed", async t => {
     const outside = fs.mkdtempSync(path.join(tempDir, "outside-"));
     const file = path.join(outside, "Private.wav"); wav(file);

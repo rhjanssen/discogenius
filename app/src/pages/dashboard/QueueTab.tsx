@@ -20,7 +20,6 @@ import {
     tokens,
 } from "@fluentui/react-components";
 import {
-  CheckmarkCircle16Filled,
   ArrowClockwise24Regular,
   Delete24Regular,
   MusicNote224Regular,
@@ -50,8 +49,7 @@ import type { QueueItemContract as QueueItem } from "@contracts/status";
 import { useQueueHistoryFeed } from "@/hooks/useQueueHistoryFeed";
 import { useSelectableCollection } from "@/hooks/useSelectableCollection";
 import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
-import { QueuedStatusIcon, SemanticStatusIcon, StatusIconSlot } from "@/components/ui/SemanticStatusIcon";
-import { statusIconGlyphPx, statusIconGlyphStyle } from "@/components/ui/statusIconMetrics";
+import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
@@ -291,17 +289,7 @@ function renderPendingIndicator(styles: ReturnType<typeof useDashboardStyles>) {
 }
 
 function renderDownloadedCheck(styles: ReturnType<typeof useDashboardStyles>) {
-    const glyph = statusIconGlyphPx("filled");
-    return (
-        <StatusIconSlot>
-            <CheckmarkCircle16Filled
-                className={styles.downloadStatusCompleteIcon}
-                fontSize={glyph}
-                style={statusIconGlyphStyle("filled")}
-                title="Downloaded"
-            />
-        </StatusIconSlot>
-    );
+    return <SemanticStatusIcon status="success" className={styles.downloadStatusCompleteIcon} title="Downloaded" />;
 }
 
 function renderTrackStatusIndicator(
@@ -1135,10 +1123,10 @@ const QueueTab = () => {
         return (
             <div className={styles.tabSection}>
                 <div className={styles.queueColumnsWrapper}>
-                    <section className={styles.queueSection} aria-label="Active">
+                    <section className={styles.queueSection} aria-label="Download queue">
                         <div className={styles.queueSectionHeader}>
                             <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                                <Subtitle2 className={styles.queueSectionTitle}>Download queue</Subtitle2>
                             </div>
                         </div>
                         <QueueListSkeleton rows={4} />
@@ -1161,10 +1149,10 @@ const QueueTab = () => {
             {recoveryMessage && <MessageBar intent="warning"><MessageBarBody>{recoveryMessage}</MessageBarBody></MessageBar>}
             <div className={styles.queueColumnsWrapper}>
                 {hasQueueRows ? (
-                    <section className={styles.queueSection} aria-label="Active">
+                    <section className={styles.queueSection} aria-label="Download queue">
                         <div className={styles.queueSectionHeader}>
                             <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                                <Subtitle2 className={styles.queueSectionTitle}>Download queue</Subtitle2>
                             </div>
                             {isSelectionMode && hasPendingReorderUi ? (
                                 <div className={styles.queueSectionActions}>
@@ -1334,6 +1322,11 @@ const QueueTab = () => {
                                                     </div>
                                                 </div>
 
+                                                {!isDownloading && !isFailed && !isImportPending && prog?.statusMessage && (
+                                                    <Text className={styles.downloadMeta} truncate title={prog.statusMessage}>
+                                                        {prog.statusMessage}
+                                                    </Text>
+                                                )}
                                                 {isDownloading && prog && (
                                                     <div className={styles.downloadProgress}>
                                                         <div className={styles.progressBarWrapper}>
@@ -1640,10 +1633,10 @@ const QueueTab = () => {
                         </div>
                     </section>
                 ) : (
-                    <section className={styles.queueSection} aria-label="Active">
+                    <section className={styles.queueSection} aria-label="Download queue">
                         <div className={styles.queueSectionHeader}>
                             <div className={styles.queueSectionHeading}>
-                                <Subtitle2 className={styles.queueSectionTitle}>Active</Subtitle2>
+                                <Subtitle2 className={styles.queueSectionTitle}>Download queue</Subtitle2>
                             </div>
                         </div>
                         {hasQueueRefreshError ? (

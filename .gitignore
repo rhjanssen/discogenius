@@ -72,3 +72,5 @@ provider-test-failures.log
 /tmp-*
 /*.png
 /artist-videos.yml
+
+.codex-remote-attachments/

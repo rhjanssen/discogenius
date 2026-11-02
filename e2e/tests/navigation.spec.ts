@@ -132,7 +132,9 @@ test.describe('App shell & navigation', () => {
     const publicResponse = await request.get(`${baseURL}/health`);
     expect(publicResponse.status()).toBe(200);
     const publicData = await publicResponse.json();
-    expect(Object.keys(publicData)).toEqual(['status']);
+    // Liveness plus the login banner. Diagnostics stay on /api/health.
+    expect(Object.keys(publicData).sort()).toEqual(['providerAuth', 'status']);
+    expect(Array.isArray(publicData.providerAuth)).toBe(true);
     expect(['ok', 'degraded']).toContain(publicData.status);
 
     // E2E runs with application authentication disabled. Deployments with an

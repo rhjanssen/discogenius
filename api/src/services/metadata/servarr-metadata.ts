@@ -10,7 +10,8 @@ import { MediaCoverService } from "./media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "./musicbrainz-artist-credit-service.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import pLimit from "p-limit";
-import { groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions } from "../catalog/catalog-track-reconciliation.js";
+import {isPreservedCatalogIdentityConflict, reconcileRecordingRedirects} from "../catalog/catalog-recording-reconciliation.js";
+import { collectCatalogRedirects, groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions, reconcileEditionTrackIdentities } from "../catalog/catalog-track-reconciliation.js";
 import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
 
 /** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
@@ -103,6 +104,15 @@ export interface LidarrRelease {
   Barcode?: string;
   barcode?: string;
   Label: string[];
+  /**
+   * Present only when the source payload carried the field. `null` or `[]`
+   * clears the stored value. An omitted property leaves the stored value
+   * (a WS payload without `asin` must not wipe a mirror import).
+   */
+  CatalogNumbers?: string[] | null;
+  Asin?: string | null;
+  Script?: string | null;
+  Language?: string | null;
   Media: Array<{ Position: number; Format: string; Name: string }>;
   ReleaseDate: string;
   TrackCount: number;
@@ -116,6 +126,9 @@ export interface LidarrRelease {
 export interface LidarrTrack {
   Id: string;
   RecordingId: string;
+  /** Authoritative catalogue redirects, distinct from occurrence replacement. */
+  OldIds?: string[];
+  OldRecordingIds?: string[];
   TrackName: string;
   TrackNumber: string;
   TrackPosition: number;
@@ -221,6 +234,23 @@ class ServarrMetadataRequestError extends Error {
  */
 export function computeContentHash(payload: unknown): string {
   return createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+}
+
+/**
+ * Bind a release field that may be absent.
+ * SQL NULL keeps the stored value. `''` clears it. A JSON array or text is the
+ * new value. Callers pass the raw release object so a missing key stays NULL.
+ */
+export function carriedReleaseColumn(record: object, key: string): string | null {
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return null;
+  const raw = (record as Record<string, unknown>)[key];
+  if (Array.isArray(raw)) {
+    const values = raw.map((item) => String(item ?? "").trim()).filter(Boolean);
+    return values.length > 0 ? JSON.stringify(values) : "";
+  }
+  if (raw == null) return "";
+  const text = String(raw).trim();
+  return text || "";
 }
 
 export function mapServarrMetadataImages(images?: any[] | null): MediaCover[] {
@@ -821,6 +851,7 @@ export class ServarrMetadataService {
     const releases = (detail.Releases || []).map(release => ({
       ...release, Tracks: normalizeEditionTracks(release.Id, release.Tracks),
     }));
+    collectCatalogRedirects(releases.flatMap(release => release.Tracks));
     const trackEditions = new Map<string, string>();
     for (const release of releases) for (const track of release.Tracks) {
       const previous = trackEditions.get(track.Id);
@@ -856,7 +887,13 @@ export class ServarrMetadataService {
           return row?.recording_mbid === track.RecordingId && row.medium_position === track.MediumNumber && row.position === track.TrackPosition;
         });
       });
-      if (complete) return;
+      if (complete) {
+        await this.refreshRelationshipCredits(
+          releases.flatMap((release) => release.Tracks.map((track) => track.RecordingId)),
+          releases.map((release) => release.Id),
+        );
+        return;
+      }
     }
 
     const insertRg = db.prepare(`
@@ -887,9 +924,9 @@ export class ServarrMetadataService {
       INSERT INTO AlbumEditions (
         mbid, release_group_mbid, artist_mbid, title, status, country,
         date, barcode, disambiguation, media_count, track_count,
-        label, media, old_foreign_ids, updated_at
+        label, media, old_foreign_ids, catalog_numbers, asin, script, language, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(mbid) DO UPDATE SET
         title = excluded.title,
         status = excluded.status,
@@ -903,6 +940,28 @@ export class ServarrMetadataService {
         label = excluded.label,
         media = excluded.media,
         old_foreign_ids = excluded.old_foreign_ids,
+        -- NULL in the INSERT means the payload did not carry the field (keep).
+        -- '' means the payload carried it empty (MusicBrainz removed it).
+        catalog_numbers = CASE
+          WHEN excluded.catalog_numbers IS NULL THEN AlbumEditions.catalog_numbers
+          WHEN excluded.catalog_numbers = '' THEN NULL
+          ELSE excluded.catalog_numbers
+        END,
+        asin = CASE
+          WHEN excluded.asin IS NULL THEN AlbumEditions.asin
+          WHEN excluded.asin = '' THEN NULL
+          ELSE excluded.asin
+        END,
+        script = CASE
+          WHEN excluded.script IS NULL THEN AlbumEditions.script
+          WHEN excluded.script = '' THEN NULL
+          ELSE excluded.script
+        END,
+        language = CASE
+          WHEN excluded.language IS NULL THEN AlbumEditions.language
+          WHEN excluded.language = '' THEN NULL
+          ELSE excluded.language
+        END,
         updated_at = CURRENT_TIMESTAMP
     `);
 
@@ -990,6 +1049,10 @@ export class ServarrMetadataService {
             JSON.stringify(release.Label ?? rawRelease.label ?? []),
             JSON.stringify(release.Media ?? rawRelease.media ?? []),
             JSON.stringify(rawRelease.OldIds ?? rawRelease.oldids ?? []),
+            carriedReleaseColumn(rawRelease, "CatalogNumbers"),
+            carriedReleaseColumn(rawRelease, "Asin"),
+            carriedReleaseColumn(rawRelease, "Script"),
+            carriedReleaseColumn(rawRelease, "Language"),
           );
         }
         MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);
@@ -1000,10 +1063,7 @@ export class ServarrMetadataService {
     // unit. Unrelated editions still yield admission separately. Stage every
     // connected edition before writing, so exchanges never expose temporary slots.
     const retainedTrackIds = new Set(trackEditions.keys());
-    const editionGroups = groupConnectedEditions(db, releases);
-    await runGatedChunkedWrite(editionGroups, editions => {
-      for (const release of editions) prepareEditionTrackPositions(db, release.Id, release.Tracks, retainedTrackIds);
-      for (const release of editions) for (const track of release.Tracks) {
+    const insertCanonicalRecording = (track: LidarrTrack) => {
         const isrcs = Array.isArray(track.Isrcs)
           ? track.Isrcs
           : Array.isArray(track.isrcs)
@@ -1025,24 +1085,77 @@ export class ServarrMetadataService {
           isVideo,
           ownerArtistMbid || null,
         );
-        insertTrack.run(
-          track.Id,
-          release.Id,
-          track.RecordingId,
-          track.MediumNumber,
-          track.TrackPosition,
-          track.TrackNumber,
-          track.TrackName,
-          track.DurationMs,
-        );
+    };
+    const editionGroups = groupConnectedEditions(db, releases);
+    // One connected edition group per transaction, same as chunk size 1.
+    // A credit, relation, video-match, or audio/video identity collision rolls
+    // that group back and leaves it for a later refresh. It must not fail the
+    // artist, and it must not stamp the release group complete.
+    let preservedIdentityConflict = false;
+    for (const editions of editionGroups) {
+      try {
+        await withSqliteWriteGate(() => {
+          db.transaction(() => {
+            for (const release of editions) for (const track of release.Tracks) insertCanonicalRecording(track);
+            reconcileRecordingRedirects(db, editions.flatMap(release => release.Tracks));
+            for (const release of editions) reconcileEditionTrackIdentities(db, release.Id, release.Tracks, retainedTrackIds);
+            for (const release of editions) prepareEditionTrackPositions(db, release.Id, release.Tracks, retainedTrackIds);
+            for (const release of editions) for (const track of release.Tracks) {
+              insertTrack.run(
+                track.Id,
+                release.Id,
+                track.RecordingId,
+                track.MediumNumber,
+                track.TrackPosition,
+                track.TrackNumber,
+                track.TrackName,
+                track.DurationMs,
+              );
+            }
+          })();
+        }, "servarr:edition-tracks");
+      } catch (error) {
+        if (!isPreservedCatalogIdentityConflict(error)) throw error;
+        preservedIdentityConflict = true;
+        const editionIds = editions.map(release => release.Id).join(",");
+        console.warn(`[Catalog] Left ${releaseGroupMbid} editions ${editionIds} unchanged: ${error instanceof Error ? error.message : error}`);
       }
-    }, 1, "servarr:edition-tracks");
+    }
     await withSqliteWriteGate(() => {
       db.transaction(() => {
         MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);
-        db.prepare("UPDATE Albums SET content_hash = ? WHERE mbid = ?").run(contentHash, releaseGroupMbid);
+        if (!preservedIdentityConflict) {
+          db.prepare("UPDATE Albums SET content_hash = ? WHERE mbid = ?").run(contentHash, releaseGroupMbid);
+        }
       })();
     }, "servarr:release-group-credits");
+    await this.refreshRelationshipCredits(
+      releases.flatMap((release) => release.Tracks.map((track) => track.RecordingId)),
+      releases.map((release) => release.Id),
+    );
+  }
+
+  /**
+   * Mirror providers supply relationship credits. A WS provider does not, and
+   * that absence must not delete credits already stored. A mirror error is
+   * logged and skipped so one relationship read cannot fail the artist.
+   */
+  private async refreshRelationshipCredits(recordingMbids: string[], releaseMbids: string[]): Promise<void> {
+    const recordings = recordingMbids.map((mbid) => String(mbid || "").trim()).filter(Boolean);
+    const releases = releaseMbids.map((mbid) => String(mbid || "").trim()).filter(Boolean);
+    if (recordings.length === 0 && releases.length === 0) return;
+    const { catalogProviderRegistry } = await import("../catalog/index.js");
+    const provider = catalogProviderRegistry.getActive();
+    if (typeof provider.getRelationshipBundle !== "function") return;
+    try {
+      const bundle = await provider.getRelationshipBundle(recordings, releases);
+      const { applyRelationshipRefresh } = await import("./relationship-credit-store.js");
+      await withSqliteWriteGate(() => {
+        applyRelationshipRefresh(db, bundle);
+      }, "servarr:relationship-credits");
+    } catch (error) {
+      console.warn(`[Catalog] Relationship credits were not refreshed: ${error instanceof Error ? error.message : error}`);
+    }
   }
 }
 

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   comparePrimaryEditionCandidates,
   curateLibraryReleases,
+  editionTitleMatchesAlbum,
   selectRepresentativeEdition,
   type CurationEditionCandidate,
 } from "./library-curation-planner.js";
@@ -32,6 +33,24 @@ function candidate(
     ...overrides,
   };
 }
+
+test("a same-titled edition beats a foreign-titled superset", () => {
+  assert.equal(editionTitleMatchesAlbum("HIT ME HARD AND SOFT", "HIT ME HARD AND SOFT"), true);
+  assert.equal(editionTitleMatchesAlbum("HIT ME HARD AND SOFT (Deluxe)", "HIT ME HARD AND SOFT"), true);
+  assert.equal(editionTitleMatchesAlbum("ヒット・ミー・ハード・アンド・ソフト", "HIT ME HARD AND SOFT"), false);
+  assert.equal(editionTitleMatchesAlbum("", "HIT ME HARD AND SOFT"), false);
+
+  const english = candidate(1, 10, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], {
+    albumTitleMatch: true,
+    releaseDate: "2024-05-17",
+  });
+  const japanese = candidate(1, 11, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], {
+    albumTitleMatch: false,
+    releaseDate: "2025-08-01",
+  });
+  const result = curateLibraryReleases([japanese, english], false);
+  assert.equal(result.representativeEditionIdByReleaseGroup.get(1), 10);
+});
 
 test("1. Exactly one representative per release group before gap fill", () => {
   const c1 = candidate(1, 101, [1, 2, 3]);
@@ -216,4 +235,42 @@ test("18. Supplemental contributedUnitIds are non-empty unless the edition is pr
   assert.equal(suppDecision?.role, "supplemental");
   assert.ok(suppDecision?.contributedUnitIds.length > 0);
   assert.deepEqual(suppDecision?.contributedUnitIds, [3]);
+});
+
+// Robert's wish: compilations only fill gaps. A greatest-hits release whose
+// songs all exist on the artist's own albums is not kept, even when it is the
+// only way to get some song in one release; and it never pushes an original out.
+test("original discography: a compilation is only a gap filler", () => {
+  const album = candidate(1, 101, [1, 2, 3]);
+  const deluxe = candidate(1, 102, [1, 2, 3, 4]); // bonus track 4
+  const single = candidate(2, 201, [5], { releaseTypeRank: 2 });
+  const hits = candidate(3, 301, [1, 4, 5], { secondaryTypeRank: 3 });
+  const rarities = candidate(4, 401, [1, 6], { secondaryTypeRank: 3 }); // unreleased demo 6
+
+  const result = curateLibraryReleases([album, deluxe, single, hits, rarities], true, "original_discography");
+  assert.ok(result.selectedEditionIds.includes(102), "the deluxe edition delivers the bonus track");
+  assert.ok(result.selectedEditionIds.includes(201), "the single is not replaced by a compilation");
+  assert.ok(!result.selectedEditionIds.includes(301), "greatest hits adds nothing original releases lack");
+  assert.ok(result.selectedEditionIds.includes(401), "rarities compilation fills the demo gap");
+  assert.deepEqual([...result.attainableUnitIds].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6]);
+});
+
+test("original discography is the default policy", () => {
+  const single = candidate(2, 201, [5], { releaseTypeRank: 2 });
+  const album = candidate(1, 101, [1, 2]);
+  const hits = candidate(3, 301, [1, 2, 5, 9], { secondaryTypeRank: 3 });
+  assert.deepEqual(curateLibraryReleases([album, single, hits], true).selectedEditionIds, [101, 201, 301]);
+  // hits stays for unit 9 only; the single it repeats is kept as an original
+});
+
+test("fewest albums: a compilation may replace the releases it repeats", () => {
+  const single1 = candidate(1, 101, [1], { releaseTypeRank: 2 });
+  const single2 = candidate(2, 201, [2], { releaseTypeRank: 2 });
+  const single3 = candidate(3, 301, [3], { releaseTypeRank: 2 });
+  const hits = candidate(4, 401, [1, 2, 3], { secondaryTypeRank: 3 });
+
+  const fewest = curateLibraryReleases([single1, single2, single3, hits], true, "fewest_albums");
+  assert.deepEqual(fewest.selectedEditionIds, [401]);
+  const original = curateLibraryReleases([single1, single2, single3, hits], true, "original_discography");
+  assert.deepEqual(original.selectedEditionIds, [101, 201, 301]);
 });

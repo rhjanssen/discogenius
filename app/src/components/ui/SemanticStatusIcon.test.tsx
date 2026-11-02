@@ -2,14 +2,17 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CancelledStatusIcon, QueuedStatusIcon, SemanticStatusIcon } from "./SemanticStatusIcon";
 import { statusIconGlyphPx } from "./statusIconMetrics";
+import { tokens } from "@fluentui/react-components";
 
 describe("SemanticStatusIcon", () => {
-    it("renders each status without applying a CSS color tint", () => {
+    it("uses green for completion and neutral colors for other statuses", () => {
         const { container, rerender } = render(<SemanticStatusIcon status="success" title="ok" />);
         expect(container.querySelector("svg")).toBeTruthy();
+        expect(container.querySelector("svg")?.style.color).toBe(tokens.colorPaletteGreenForeground2);
 
         rerender(<SemanticStatusIcon status="info" />);
         expect(container.querySelector("svg")).toBeTruthy();
+        expect(container.querySelector("svg")?.style.color).toBe(tokens.colorNeutralForeground2);
 
         rerender(<SemanticStatusIcon status="warning" size={24} />);
         expect(container.querySelector("svg")).toBeTruthy();

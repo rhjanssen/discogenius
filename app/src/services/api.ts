@@ -257,6 +257,23 @@ function isExpectedEventSourceClose(eventSource: ManagedEventSource): boolean {
     || (typeof document !== "undefined" && document.visibilityState === "hidden");
 }
 
+export type ProviderAuthHealth = {
+  provider: string;
+  status: 'ok' | 'needs_reauth' | 'unknown';
+  since: string | null;
+  lastOkAt: string | null;
+  lastError: string | null;
+  accountLabel: string | null;
+  credentialSavedAt: string | null;
+  credentialAgeDays: number | null;
+  ageWarning: string | null;
+  held: number;
+  banner: string | null;
+  queueMessage: string | null;
+  href: string | null;
+  settingsLabel: string | null;
+};
+
 export type StreamingProviderStatus = {
   id: string;
   name: string;
@@ -549,6 +566,17 @@ class ApiClient {
     return this.request('/provider');
   }
 
+  async getProviderAuthHealth(): Promise<{ providers: ProviderAuthHealth[] }> {
+    return this.request('/provider/auth-state');
+  }
+
+  async retryAuthFailedAlbums(days?: number): Promise<{ days: number; requeued: number; jobIds: number[] }> {
+    return this.request('/v1/queue/retry-auth-failures', {
+      method: 'POST',
+      body: JSON.stringify(days == null ? {} : { days }),
+    });
+  }
+
   /** Persist provider preference order; the first entry becomes the default provider. */
   async updateProviderPriority(order: string[]): Promise<{ providerPriority: string[]; defaultProviderId: string; plansPendingCuration: boolean }> {
     return this.request('/provider/priority', {
@@ -641,6 +669,10 @@ class ApiClient {
 
   async getMetadataConfig(): Promise<MetadataConfigContract> {
     return this.request('/v1/config/metadata', {}, parseMetadataConfigContract);
+  }
+
+  async cleanupArtworkCache() {
+    return this.request('/v1/config/artwork-cache/cleanup', {method:'POST'});
   }
 
   async updateMetadataConfig(config: Partial<MetadataConfigContract>) {
@@ -875,6 +907,11 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ id: albumId, slot: options?.slot }),
     });
+  }
+
+  /** Clear a user decision and let the active monitoring mode choose again. */
+  async revertAlbumToAutomatic(albumId: string) {
+    return this.request(`/v1/album/${albumId}/decision/automatic`, { method: 'POST' });
   }
 
   /** `scope` is required for monitored/monitored_lock changes — see monitorAlbum. */

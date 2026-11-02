@@ -21,7 +21,9 @@ import {
   TIDDL_CONFIG_DIR,
 } from "../providers/tidal/tiddl.js";
 import { getDownloadQueueControlState } from "../download/download-queue-control.js";
+import { listProviderAuthPublic, type ProviderAuthPublic } from "../providers/provider-auth-state.js";
 import { CommandNames } from "./command-names.js";
+import { importAdmissionStallMs, listStrandedImportHandoffs } from "./import-admission.js";
 
 // Single source of truth; see the note on the constant.
 const EXPECTED_SCHEMA_VERSION = BASE_SCHEMA_VERSION;
@@ -91,7 +93,10 @@ export interface HealthDiagnosticsSnapshot {
     imports: HealthCheckResult;
     statistics: HealthCheckResult;
     catalog: HealthCheckResult;
+    providerAuth: HealthCheckResult;
   };
+  /** Current rows. Empty when the table is not there yet. Never contains secrets. */
+  providerAuth: ProviderAuthPublic[];
   issues: HealthCheckResult[];
 }
 
@@ -609,6 +614,7 @@ function collectImportCheck(): HealthCheckResult {
       return progressAt != null && Date.now() - progressAt >= staleImportMs;
     });
     const failedCount = Number(failed.count) || 0;
+    const stranded = listStrandedImportHandoffs();
     const details = {
       active: active.length,
       failedLast7Days: failedCount,
@@ -621,8 +627,19 @@ function collectImportCheck(): HealthCheckResult {
         startedAt: command.started_at,
         lastProgressAt: command.last_progress_at,
       })),
+      importAdmissionStallMs: importAdmissionStallMs(),
+      strandedCommandIds: stranded.map((row) => row.id),
     };
 
+    if (stranded.length > 0) {
+      const ids = stranded.map((row) => `#${row.id}`).join(", ");
+      return {
+        scope: "imports.health",
+        status: "error",
+        message: `${stranded.length} completed download(s) are waiting for disk admission and no import is running: ${ids}`,
+        details,
+      };
+    }
     if (stale.length > 0) {
       return {
         scope: "imports.health",
@@ -909,6 +926,40 @@ export function runDeepDatabaseHealthCheck(): DeepDatabaseHealthResult {
   return persistDeepHealthResult(result).result;
 }
 
+/**
+ * A missing table (the snapshot collected before initDatabase) is ok.
+ * needs_reauth is a warning, so the rollup is degraded and /api/health stays
+ * HTTP 200. It must not become unhealthy: Docker restarts on 503.
+ */
+function providerAuthCheckFrom(rows: ProviderAuthPublic[]): HealthCheckResult {
+  const blocked = rows.filter((row) => row.status === "needs_reauth");
+  if (blocked.length === 0) {
+    return {
+      scope: "providers.auth",
+      status: "ok",
+      message: "Provider logins are usable",
+    };
+  }
+  const held = blocked.reduce((sum, row) => sum + row.held, 0);
+  return {
+    scope: "providers.auth",
+    status: "warning",
+    message: `Provider login required (${blocked.map((row) => `${row.provider}: ${row.held} held`).join("; ")})`,
+    details: {
+      held,
+      providers: blocked.map((row) => row.provider),
+    },
+  };
+}
+
+function readProviderAuthRows(): ProviderAuthPublic[] {
+  try {
+    return listProviderAuthPublic();
+  } catch {
+    return [];
+  }
+}
+
 export function collectHealthDiagnosticsSnapshot(
   options: { deepResult?: DeepDatabaseHealthResult } = {},
 ): HealthDiagnosticsSnapshot {
@@ -997,6 +1048,8 @@ export function collectHealthDiagnosticsSnapshot(
   const importCheck = collectImportCheck();
   const statisticsCheck = collectStatisticsCheck();
   const catalogCheck = collectCatalogCheck();
+  const providerAuth = readProviderAuthRows();
+  const providerAuthCheck = providerAuthCheckFrom(providerAuth);
 
   const issues = flattenChecks(
     [
@@ -1018,8 +1071,12 @@ export function collectHealthDiagnosticsSnapshot(
       importCheck,
       statisticsCheck,
       catalogCheck,
+      providerAuthCheck,
       safeCheck("files.recovery", "File mutation recovery", () => {
-        const failures = db.prepare("SELECT COUNT(*) AS count FROM FileMutationJournal WHERE recovery_error IS NOT NULL").get() as { count: number };
+        const failures = db.prepare(`SELECT
+          (SELECT COUNT(*) FROM FileMutationJournal WHERE recovery_error IS NOT NULL) +
+          (SELECT COUNT(*) FROM LibraryCleanupJournal WHERE recovery_error IS NOT NULL) +
+          (SELECT COUNT(*) FROM ArtworkMutationJournal WHERE recovery_error IS NOT NULL) AS count`).get() as { count: number };
         return {
           scope: "files.recovery", status: failures.count > 0 ? "error" : "ok",
           message: failures.count > 0 ? `${failures.count} file mutation(s) need recovery; library file jobs are blocked` : "No unresolved file mutation recovery errors",
@@ -1070,7 +1127,9 @@ export function collectHealthDiagnosticsSnapshot(
       imports: importCheck,
       statistics: statisticsCheck,
       catalog: catalogCheck,
+      providerAuth: providerAuthCheck,
     },
+    providerAuth,
     issues,
   };
 }

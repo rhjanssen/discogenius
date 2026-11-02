@@ -12,6 +12,7 @@ import { assertSafeDownloadResourceId } from '../../services/download/download-p
 import { DownloadQueueQueryService } from '../../services/download/download-queue-query-service.js';
 import { DownloadWaitQueue } from '../../services/download/download-wait-queue.js';
 import { retryDownloadQueueItem } from '../../services/download/download-queue-retry.js';
+import { retryAuthFailedAlbums } from '../../services/download/download-auth-retry.js';
 import { looksLikeMusicBrainzMbid, resolveProviderTrackForCanonicalTrack } from '../../services/metadata/provider-track-resolver.js';
 import { resolvePreferredVideoOffer, resolveRequestedVideoOffer } from '../../services/music/video-offer-resolver.js';
 import { CurationService } from '../../services/music/curation-service.js';
@@ -321,6 +322,30 @@ router.delete('/:id', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/v1/queue/retry-auth-failures
+ * Put albums that failed because a provider login expired back on the queue.
+ */
+router.post('/retry-auth-failures', async (req: Request, res: Response) => {
+  try {
+    const body = getObjectBody(req.body ?? {});
+    rejectUnknownKeys(body, ['days']);
+    const days = getOptionalInteger(body, 'days');
+    if (days !== undefined && (days < 1 || days > 90)) {
+      return res.status(400).json({ error: 'days must be between 1 and 90' });
+    }
+    const result = await runQueueUserWrite(() => retryAuthFailedAlbums(days));
+    void downloadProcessor.processQueue().catch((error) => {
+      console.error('[QUEUE-API] Error resuming auth-failed albums:', error);
+    });
+    res.json(result);
+  } catch (error: any) {
+    if (isRequestValidationError(error)) return res.status(400).json({ error: error.message });
+    console.error('[QUEUE-API] Error retrying auth failures:', error);
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to retry auth failures', message: error.message });
+  }
+});
+
+/**
  * POST /api/v1/queue/:id/retry
  * Retry a failed download queue item
  */
@@ -503,6 +528,48 @@ router.post('/reorder', async (req: Request, res: Response) => {
  * POST /api/v1/queue/clear-completed
  * Clear all completed download queue items
  */
+/**
+ * POST /api/v1/queue/prune
+ * Remove every waiting (unclaimed) queue row in one write. Running or claimed
+ * downloads are never touched. Body: { mediaKind?: "album"|"track"|"video", dryRun?: boolean }
+ */
+router.post('/prune', async (req, res) => {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+    const mediaKind = body.mediaKind == null ? null : String(body.mediaKind);
+    if (mediaKind != null && !['album', 'track', 'video'].includes(mediaKind)) {
+      return res.status(400).json({ error: 'Invalid prune request', message: 'mediaKind must be album, track or video' });
+    }
+    const dryRun = body.dryRun === true;
+    const removed = await runQueueUserWrite(() => DownloadWaitQueue.pruneUnclaimed({
+      mediaKind: mediaKind as 'album' | 'track' | 'video' | null,
+      dryRun,
+    }));
+    if (!dryRun) DownloadQueueQueryService.invalidateSnapshots();
+    res.json({ dryRun, removed });
+  } catch (error: any) {
+    console.error('[QUEUE-API] Error pruning queue:', error);
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to prune queue', message: error.message });
+  }
+});
+
+/**
+ * POST /api/v1/queue/dedupe
+ * Drop waiting whole-album rows that repeat another row for the same release
+ * group and slot. Body: { dryRun?: boolean }
+ */
+router.post('/dedupe', async (req, res) => {
+  try {
+    const dryRun = req.body?.dryRun === true;
+    const removed = await runQueueUserWrite(() => DownloadWaitQueue.dedupeUnclaimedAlbums({ dryRun }));
+    if (!dryRun) DownloadQueueQueryService.invalidateSnapshots();
+    res.json({ dryRun, removed });
+  } catch (error: any) {
+    console.error('[QUEUE-API] Error deduping queue:', error);
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to dedupe queue', message: error.message });
+  }
+});
+
 router.post('/clear-completed', async (req: Request, res: Response) => {
   try {
     const body = getObjectBody(req.body ?? {});

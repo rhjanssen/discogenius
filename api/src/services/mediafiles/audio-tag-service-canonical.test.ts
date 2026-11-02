@@ -184,20 +184,21 @@ dbModule.db.prepare(`
   assert.equal(byKey.get("track"), "1/1");
   assert.equal(byKey.get("disc"), "1/1");
   assert.equal(byKey.get("date"), "2024-03-01");
-  assert.equal(byKey.get("genre"), "Indie Rock / Alternative");
+  assert.equal(byKey.get("genre"), "Indie Rock; Alternative");
   assert.equal(byKey.get("label"), "Canonical Label");
   assert.equal(byKey.get("barcode"), "987654321000");
   assert.equal(byKey.get("isrc"), "TESTISRC1234");
   assert.equal(byKey.get("copyright"), "(P) 2024 Canonical Recording");
   assert.equal(byKey.get("comment"), "Canonical review\ntext");
-  assert.equal(byKey.get("provider_url"), "https://tidal.com/browse/track/provider-track-1");
+  assert.equal(byKey.get("provider_url"), undefined);
+  assert.equal(byKey.has("album_artist_mbids"), false);
   assert.equal(byKey.get("musicbrainz_recordingid"), "recording-mbid-1");
   assert.equal(byKey.get("musicbrainz_albumid"), "release-mbid-1");
   assert.equal(byKey.get("musicbrainz_releasegroupid"), "release-group-mbid-1");
   assert.equal(byKey.get("musicbrainz_releasetrackid"), "track-mbid-1");
   assert.equal(byKey.get("release_status"), "official");
   assert.equal(byKey.get("release_type"), "album;compilation");
-  assert.equal(byKey.get("itunesadvisory"), "1");
+  assert.equal(byKey.get("itunesadvisory"), undefined);
   assert.equal(byKey.get("replaygain_track_gain"), "-7.31 dB");
   assert.equal(byKey.get("replaygain_track_peak"), "0.967717");
 
@@ -422,7 +423,7 @@ for (const extension of ["flac", "m4a", "mp3"]) {
       })).success, true);
     }
     dbModule.db.prepare(`UPDATE TrackFiles SET file_path = ?, relative_path = ?, extension = ?,
-      provider_item_id = NULL, provider = NULL, provider_id = NULL WHERE id = ?`)
+      provider_item_id = NULL, provider = NULL, provider_id = NULL, managed_tag_fingerprint = NULL WHERE id = ?`)
       .run(mediaPath, path.basename(mediaPath), extension, row.id);
     configModule.updateConfig("metadata", {
       ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files", scrub_audio_tags: true,
@@ -452,7 +453,9 @@ for (const extension of ["flac", "m4a", "mp3"]) {
     assert.deepEqual(metadata.common.isrc?.flatMap(value => value.split(/\s*\/\s*|;\s*/)).sort(),
       ["USUM70722793", "USUM70809583"]);
     const embedded = Object.values(metadata.native).flat().find(tag => ["LYRICS", "©lyr", "USLT"].includes(tag.id));
-    assert.equal(extension === "mp3" ? (embedded?.value as { text?: string } | undefined)?.text : embedded?.value, lyrics);
+    const plainLyrics = "A test melody\nAnother test line";
+    assert.equal(extension === "mp3" ? (embedded?.value as { text?: string } | undefined)?.text : embedded?.value, plainLyrics);
+    assert.equal(fs.readFileSync(sidecarPath, "utf8"), lyrics);
     assert.deepEqual(await audioTagServiceModule.AudioTagService.apply([row.id]), {
       retagged: 0, skipped: 1, missing: 0, errors: [],
     });
@@ -479,7 +482,7 @@ test("retag verifies its written track-count snapshot while catalogue hydration 
   const mediaPath = path.join(tempDir, "concurrent-catalog.flac");
   const generated = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.1", mediaPath], { windowsHide: true, encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
-  dbModule.db.prepare("UPDATE TrackFiles SET file_path = ?, relative_path = ?, extension = 'flac' WHERE id = ?")
+  dbModule.db.prepare("UPDATE TrackFiles SET file_path = ?, relative_path = ?, extension = 'flac', managed_tag_fingerprint = NULL WHERE id = ?")
     .run(mediaPath, path.basename(mediaPath), row.id);
   configModule.updateConfig("metadata", { ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files" });
   configModule.updateConfig("quality", { ...configModule.getConfigSection("quality"), embed_cover: false, embed_lyrics: false });
@@ -518,7 +521,7 @@ for (const extension of ["flac", "m4a", "mp3"]) {
     const generated = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "0.1",
       "-c:a", codec, "-metadata", "track=7/12", "-metadata", "disc=2/3", "-metadata", "title=Wrong title", mediaPath], { windowsHide: true, encoding: "utf8" });
     assert.equal(generated.status, 0, generated.stderr);
-    dbModule.db.prepare("UPDATE TrackFiles SET file_path=?, relative_path=?, extension=?, track_id=NULL, canonical_track_mbid=NULL WHERE id=?")
+    dbModule.db.prepare("UPDATE TrackFiles SET file_path=?, relative_path=?, extension=?, track_id=NULL, canonical_track_mbid=NULL, managed_tag_fingerprint=NULL WHERE id=?")
       .run(mediaPath, path.basename(mediaPath), extension, row.id);
     configModule.updateConfig("metadata", { ...configModule.getConfigSection("metadata"), write_audio_tags_policy: "all_files", scrub_audio_tags: true });
     configModule.updateConfig("quality", { ...configModule.getConfigSection("quality"), embed_cover: false, embed_lyrics: false });

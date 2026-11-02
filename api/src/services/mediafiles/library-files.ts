@@ -1,4 +1,6 @@
-import { linkCachedAlbumCoverSidecar } from "../metadata/media-cover-service.js";
+import { linkCachedMediaCoverSidecar } from "../metadata/media-cover-service.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
+import { classifyUnmonitoredFileDeletes } from "./unmonitored-file-policy.js";
 import fs from "fs";
 import path from "path";
 import { db, batchDelete, batchRun, withSqliteWriteGate } from "../../database.js";
@@ -13,7 +15,8 @@ import {
 } from "./video-folder-layout.js";
 import { mainVideoMayFollowAudioRelationSql } from "../music/live-performance-markers.js";
 import { VIDEO_ALBUM_ASSOCIATION_KIND_SQL } from "../music/video-album-association.js";
-import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext, type library_root } from "../config/naming.js";
+import { getNamingConfig, joinCappedFileName, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord, type NamingContext, type library_root } from "../config/naming.js";
+import { resolveArtistFolderForExpectedPath } from "../music/artist-paths.js";
 import {
   getCurrentLibraryRootPath,
   resolveLibraryRootKey,
@@ -37,6 +40,7 @@ import {
   type library_slot,
 } from "./library-file-identity.js";
 import { getCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
+import { parseFilenameDiscTrack } from "./library-scan-metadata-match.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { getCanonicalAlbumMetadata, getCanonicalMediumNaming } from "../metadata/canonical-album-metadata.js";
@@ -154,20 +158,35 @@ export function hasMeaningfulLibraryFileChange(
   );
 }
 
-export function removeEmptyParents(startDir: string, stopDir: string) {
+export function removeEmptyParents(startDir: string, stopDir: string): number {
   const stop = path.resolve(stopDir);
+  const stopKey = normalizeResolvedPath(stop);
   let current = path.resolve(startDir);
+  let removed = 0;
 
-  while (resolvedPathIsInsideRoot(current, stop) && current !== stop) {
+  while (resolvedPathIsInsideRoot(current, stop) && normalizeResolvedPath(current) !== stopKey) {
     try {
+      // A lexically contained path can still traverse a directory symlink or
+      // Windows junction. Check the complete chain before touching the tree.
+      let ancestor = current;
+      while (true) {
+        const stat = fs.lstatSync(ancestor);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) return removed;
+        if (normalizeResolvedPath(ancestor) === stopKey) break;
+        const parent = path.dirname(ancestor);
+        if (parent === ancestor) return removed;
+        ancestor = parent;
+      }
       const entries = fs.readdirSync(current);
       if (entries.length > 0) break;
       fs.rmdirSync(current);
+      removed++;
     } catch {
       break;
     }
     current = path.dirname(current);
   }
+  return removed;
 }
 
 export function normalizeInlineVideoTitle(value: string | null | undefined): string {
@@ -378,12 +397,16 @@ export type RenamePreviewItem = {
   expected_path: string | null;
   needs_rename: boolean;
   conflict: boolean;
+  /** Selectable candidate; Apply must prove exact edition/quality/audio equality. */
+  verify_duplicate?: boolean;
   /** When set, Apply will drop this file as a same-stem duplicate instead of renaming. */
   drop_duplicate?: boolean;
   missing: boolean;
   reason?: string;
   /** Human-readable conflict explanation for the preview UI. */
   conflict_message?: string;
+  /** Set when the conflict is a duplicate track file that Apply resolves (one file per track per library). */
+  duplicate_resolution?: import("./duplicate-track-files.js").DuplicateResolution;
 };
 
 export type RenameApplyResult = {
@@ -414,6 +437,37 @@ export type RenameStatusSummary = {
   conflicts: number;
   missing: number;
   sample: RenamePreviewItem[];
+};
+
+export type RenameDryRunMove = {
+  from: string;
+  to: string;
+  fileType: string;
+  conflict: boolean;
+  duplicateResolution?: "delete-unlinked" | "unmapped" | "ambiguous";
+};
+
+export type RenameDryRunAlbum = {
+  artistId: number;
+  artistName: string;
+  artistMbid: string | null;
+  albumId: string | null;
+  moves: RenameDryRunMove[];
+  collisions: number;
+  duplicates: number;
+  overlongComponents: number;
+  mbidFolderMerges: number;
+};
+
+export type RenameDryRunReport = {
+  artists: number;
+  albums: number;
+  moves: number;
+  collisions: number;
+  duplicates: number;
+  overlongComponents: number;
+  mbidFolderMerges: number;
+  byAlbum: RenameDryRunAlbum[];
 };
 
 type LibraryFileEventInput = {
@@ -549,10 +603,10 @@ function resolveCanonicalInlineAudioExpectedPath(
 
   const naming = cache?.configSnapshot.naming ?? getNamingConfig();
   const artistName = String(artist.name || "Unknown Artist");
-  const artistFolder = resolveArtistFolderFromRecord({
-    name: artistName,
-    mbid: artistMbId,
-    path: artist.path || null,
+  const artistFolder = resolveArtistFolderForExpectedPath({
+    artistName,
+    artistMbId,
+    existingPath: artist.path || null,
   });
   const renderedTrackPath = renderRelativePath(naming.album_track_path_single, {
     artistName,
@@ -572,7 +626,7 @@ function resolveCanonicalInlineAudioExpectedPath(
   return path.join(
     cache?.libraryRoots.music ?? getCurrentLibraryRootPath("music"),
     artistFolder,
-    `${renderedTrackPath}.flac`,
+    joinCappedFileName(renderedTrackPath, ".flac"),
   );
 }
 
@@ -661,6 +715,8 @@ export interface ExpectedPathCache {
   trackMeta: Map<string, CanonicalTrackLookupRow | null>;
   /** ArtistMetadata (name/mbid) by mbid — bulk-loaded once per batch. */
   artistMeta: Map<string, { name?: string; mbid?: string | null } | null>;
+  /** Parsed AlbumEditions.media by release mbid and medium position. */
+  mediums: Map<string, { mediumName: string | null; mediumFormat: string | null }>;
   /** Rename batches collect candidate paths, then resolve all occupants in one indexed query. */
   trackCollisionMode: "database" | "collect" | "loaded";
   pendingTrackPaths: Map<string, string>;
@@ -686,6 +742,7 @@ export function createExpectedPathCache(
     albumDirs: new Map(),
     trackMeta: new Map(),
     artistMeta: new Map(),
+    mediums: new Map(),
     trackCollisionMode: options.deferTrackCollisionLookup ? "collect" : "database",
     pendingTrackPaths: new Map(),
     trackPathOwners: new Map(),
@@ -813,6 +870,20 @@ export function hasExpectedTrackPathConflict(
   return Boolean(owners && Array.from(owners).some((ownerId) => ownerId !== rowId));
 }
 
+function cachedMediumNaming(
+  cache: ExpectedPathCache | undefined,
+  releaseMbid: string | null | undefined,
+  position: number | null | undefined,
+): { mediumName: string | null; mediumFormat: string | null } {
+  if (!cache) return getCanonicalMediumNaming(releaseMbid, position);
+  const key = `${releaseMbid ?? ""}|${position ?? ""}`;
+  const hit = cache.mediums.get(key);
+  if (hit) return hit;
+  const resolved = getCanonicalMediumNaming(releaseMbid, position);
+  cache.mediums.set(key, resolved);
+  return resolved;
+}
+
 function mustDisambiguateTrackPath(
   expectedPath: string,
   rowId: number,
@@ -832,6 +903,82 @@ function mustDisambiguateTrackPath(
     return false;
   }
   return hasExpectedTrackPathConflict(cache, expectedPath, rowId);
+}
+
+function chooseTrackForFilename<T extends {
+  medium_position: number | null;
+  position: number | null;
+}>(rows: T[], filePath: string): T | null {
+  if (rows.length === 1) return rows[0];
+  const disc = parseFilenameDiscTrack(filePath);
+  if (!disc) return null;
+  const hits = rows.filter((row) =>
+    Number(row.medium_position || 1) === disc.medium
+    && Number(row.position || 0) === disc.position
+  );
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** The monitored edition named in the file's folder. Several tracks for one
+ * recording stay unresolved unless the filename's disc and position pick one.
+ * A later mbid that is not an edition is ignored. */
+function monitoredEditionTrackForPath(
+  filePath: string,
+  recordingMbid: string | null,
+  libraryId: number | null,
+): { releaseMbid: string; releaseGroupMbid: string; trackMbid: string } | null {
+  if (!recordingMbid || libraryId == null) return null;
+  const mbids = [...filePath.matchAll(/\{mbid-([0-9a-f-]{36})\}/gi)].map((match) => match[1]);
+  for (let index = mbids.length - 1; index >= 0; index -= 1) {
+    const rows = db.prepare(`
+      SELECT ae.mbid AS release_mbid, al.mbid AS release_group_mbid, t.mbid AS track_mbid,
+             t.medium_position AS medium_position, t.position AS position
+      FROM AlbumEditions ae
+      JOIN Albums al ON al.id = ae.release_group_id
+      JOIN LibraryEditions le ON le.edition_id = ae.id AND le.library_id = ?
+      JOIN Tracks t ON t.album_edition_id = ae.id
+      JOIN Recordings r ON r.id = t.recording_id AND r.mbid = ?
+      WHERE ae.mbid = ?
+    `).all(libraryId, recordingMbid, mbids[index]) as Array<{
+      release_mbid: string;
+      release_group_mbid: string;
+      track_mbid: string;
+      medium_position: number | null;
+      position: number | null;
+    }>;
+    if (rows.length === 0) continue;
+    const chosen = chooseTrackForFilename(rows, filePath);
+    if (!chosen) return null;
+    return {
+      releaseMbid: chosen.release_mbid,
+      releaseGroupMbid: chosen.release_group_mbid,
+      trackMbid: chosen.track_mbid,
+    };
+  }
+  return null;
+}
+
+/** When the chosen edition lists this recording more than once, the filename
+ * disc and position select the track. One track, or no filename hit, leaves
+ * the caller's choice alone. */
+function filenameTrackOnRelease(
+  filePath: string,
+  releaseMbid: string,
+  recordingMbid: string,
+): string | null {
+  const rows = db.prepare(`
+    SELECT t.mbid AS track_mbid, t.medium_position AS medium_position, t.position AS position
+    FROM Tracks t
+    JOIN AlbumEditions ae ON ae.id = t.album_edition_id
+    JOIN Recordings r ON r.id = t.recording_id
+    WHERE ae.mbid = ? AND r.mbid = ?
+  `).all(releaseMbid, recordingMbid) as Array<{
+    track_mbid: string;
+    medium_position: number | null;
+    position: number | null;
+  }>;
+  if (rows.length < 2) return null;
+  return chooseTrackForFilename(rows, filePath)?.track_mbid ?? null;
 }
 
 export class LibraryFilesService {
@@ -1263,15 +1410,21 @@ export class LibraryFilesService {
     const artistName = (artist?.name as string | undefined) || "Unknown Artist";
     const artistMbId = artist?.mbid ? String(artist.mbid) : null;
     const artistFolder = ((): string => {
+      const resolveFolder = () => resolveArtistFolderForExpectedPath({
+        artistId: row.artist_metadata_id,
+        artistName,
+        artistMbId,
+        existingPath: artist?.path || null,
+      });
       if (cache) {
         const key = String(row.artist_metadata_id);
         const hit = cache.artistFolders.get(key);
         if (hit !== undefined) return hit;
-        const resolved = resolveArtistFolderFromRecord({ name: artistName, mbid: artistMbId, path: artist?.path || null });
+        const resolved = resolveFolder();
         cache.artistFolders.set(key, resolved);
         return resolved;
       }
-      return resolveArtistFolderFromRecord({ name: artistName, mbid: artistMbId, path: artist?.path || null });
+      return resolveFolder();
     })();
 
     // Provider ids collide across services and entity types. A file row that
@@ -1311,7 +1464,7 @@ export class LibraryFilesService {
       // Separated layout: the naming template owns the Plex type suffix via
       // {Video Type}. Do not append a second suffix after render.
       const fileStem = renderFileStem(naming.video_file, context);
-      const fileName = `${fileStem}.${ext}`;
+      const fileName = joinCappedFileName(fileStem, ext);
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -1342,7 +1495,7 @@ export class LibraryFilesService {
       // Sidecars must share the video file's stem (including any Plex extras
       // suffix from the template) so Plex/Kodi pair them with the video.
       const fileStem = renderFileStem(naming.video_file, context);
-      const fileName = `${fileStem}.${ext}`;
+      const fileName = joinCappedFileName(fileStem, ext);
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -1367,7 +1520,7 @@ export class LibraryFilesService {
           channels: row.channels || null,
         };
         const fileStem = renderFileStem(naming.video_file, context);
-        return { expectedPath: path.join(libraryRootPath, artistFolder, `${fileStem}.nfo`) };
+        return { expectedPath: path.join(libraryRootPath, artistFolder, joinCappedFileName(fileStem, ".nfo")) };
       }
     }
 
@@ -1381,6 +1534,10 @@ export class LibraryFilesService {
       if (row.file_type === "cover") {
         const name = metadataConfig.artist_picture_name || "folder.jpg";
         return { expectedPath: path.join(libraryRootPath, artistFolder, name) };
+      }
+
+      if (row.file_type === "artwork") {
+        return { expectedPath: path.join(libraryRootPath, artistFolder, path.basename(row.file_path)) };
       }
 
       return { expectedPath: null, reason: "missing_album_id" };
@@ -1460,7 +1617,7 @@ export class LibraryFilesService {
         ...albumContext,
         originalFileName: path.parse(String(row.file_path || "")).name,
         originalTitle: path.parse(String(row.file_path || "")).name,
-        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, 1),
+        ...cachedMediumNaming(cache, canonicalIdentity.canonicalReleaseMbid, 1),
         trackTitle: "Track",
         trackNumber: 1,
         volumeNumber: 1,
@@ -1506,6 +1663,10 @@ export class LibraryFilesService {
       return deriveAlbumDirRelativeFromTemplate(trackTemplateForAlbum);
     })();
     const albumDir = path.join(libraryRootPath, artistFolder, albumDirRelative);
+
+    if (row.file_type === "artwork") {
+      return { expectedPath: path.join(albumDir, path.basename(row.file_path)) };
+    }
 
     if (row.file_type === "cover") {
       const name = metadataConfig.album_cover_name || "cover.jpg";
@@ -1553,7 +1714,7 @@ export class LibraryFilesService {
         ...albumContext,
         originalFileName: path.parse(String(row.file_path || "")).name,
         originalTitle: path.parse(String(row.file_path || "")).name,
-        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
+        ...cachedMediumNaming(cache, canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
         trackId: String(row.media_id ?? canonicalTrack?.mbid ?? ""),
         trackMbId: canonicalTrack?.mbid || null,
@@ -1573,7 +1734,7 @@ export class LibraryFilesService {
 
       const trackTemplate = pickTrackTemplate(Number(canonicalAlbum.volumeCount || 1));
       const renderedTrackPath = renderRelativePath(trackTemplate, trackContext);
-      const baseExpectedPath = path.join(libraryRootPath, artistFolder, `${renderedTrackPath}.${ext}`);
+      const baseExpectedPath = path.join(libraryRootPath, artistFolder, joinCappedFileName(renderedTrackPath, ext));
       const relativeTrackPath = renderAudioRelativePathForLibrary({
         relativePath: renderedTrackPath,
         quality: row.quality,
@@ -1581,7 +1742,7 @@ export class LibraryFilesService {
         spatialRoot: cache?.libraryRoots.spatial ?? getCurrentLibraryRootPath("spatial"),
         mustDisambiguate: mustDisambiguateTrackPath(baseExpectedPath, row.id, cache),
       });
-      const fileName = `${relativeTrackPath}.${ext}`;
+      const fileName = joinCappedFileName(relativeTrackPath, ext);
 
       return {
         expectedPath: path.join(libraryRootPath, artistFolder, fileName),
@@ -1682,7 +1843,7 @@ export class LibraryFilesService {
         ...albumContext,
         originalFileName: path.parse(String(row.file_path || "")).name,
         originalTitle: path.parse(String(row.file_path || "")).name,
-        ...getCanonicalMediumNaming(canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
+        ...cachedMediumNaming(cache, canonicalIdentity.canonicalReleaseMbid, canonicalPosition?.volumeNumber ?? canonicalTrack?.medium_position),
         trackTitle: canonicalPosition?.title || canonicalTrack?.title || canonicalTrack?.recording_title || "Unknown Track",
         trackId: String(row.media_id ?? canonicalTrack?.mbid ?? ""),
         trackMbId: canonicalTrack?.mbid || null,
@@ -1707,7 +1868,7 @@ export class LibraryFilesService {
         musicRoot: cache?.libraryRoots.music ?? getCurrentLibraryRootPath("music"),
         spatialRoot: cache?.libraryRoots.spatial ?? getCurrentLibraryRootPath("spatial"),
       });
-      const trackPath = path.join(libraryRootPath, artistFolder, `${relativeTrackPath}.${ext}`);
+      const trackPath = path.join(libraryRootPath, artistFolder, joinCappedFileName(relativeTrackPath, ext));
       const lyricExtension = String(row.extension || "lrc").toLowerCase() === "txt" ? ".txt" : ".lrc";
       const lyricPath = trackPath.replace(new RegExp(`${path.extname(trackPath)}$`), lyricExtension);
       return { expectedPath: lyricPath };
@@ -2017,8 +2178,15 @@ export class LibraryFilesService {
       this.upsertExtraFileRecord(params, canonicalIdentity, libraryId);
       const insertedId = ExtraFileService.findIdByPath(tableName, params.filePath) || 0;
       if (params.fileType === "cover" && insertedId > 0) {
-        linkCachedAlbumCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseGroupMbid, coverEntity: "Album", outputPath: params.filePath, metadataFileId: insertedId });
-        linkCachedAlbumCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseMbid, coverEntity: "Edition", outputPath: params.filePath, metadataFileId: insertedId });
+        linkCachedMediaCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseGroupMbid, coverEntity: "Album", outputPath: params.filePath, metadataFileId: insertedId });
+        linkCachedMediaCoverSidecar({ entityId: canonicalIdentity.canonicalReleaseMbid, coverEntity: "Edition", outputPath: params.filePath, metadataFileId: insertedId });
+        if (!canonicalIdentity.canonicalReleaseGroupMbid && !canonicalIdentity.canonicalReleaseMbid) {
+          linkCachedMediaCoverSidecar({ entityId: canonicalIdentity.canonicalArtistMbid, coverEntity: "Artist", coverTypes: ["poster", "headshot"], outputPath: params.filePath, metadataFileId: insertedId });
+        }
+      }
+      if (params.fileType === "video_thumbnail" && insertedId > 0 && canonicalIdentity.canonicalRecordingMbid) {
+        const video = db.prepare("SELECT id FROM Recordings WHERE mbid = ? AND is_video = 1").get(canonicalIdentity.canonicalRecordingMbid) as { id: number } | undefined;
+        if (video) linkCachedMediaCoverSidecar({ entityId: video.id, coverEntity: "Video", outputPath: params.filePath, metadataFileId: insertedId });
       }
 
       if (params.removeFromUnmapped !== false) {
@@ -2172,7 +2340,15 @@ export class LibraryFilesService {
               width = COALESCE(?, width),
               height = COALESCE(?, height),
               duration = COALESCE(?, duration),
-              fingerprint = COALESCE(?, fingerprint)
+              fingerprint = COALESCE(?, fingerprint),
+              -- Import replaces bytes when the size changes, or when the same
+              -- path has a new mtime. A rename keeps the size and the path's
+              -- mtime, so the managed-tag fingerprint stays valid.
+              managed_tag_fingerprint = CASE
+                WHEN file_size IS NOT NULL AND ? IS NOT NULL AND file_size != ? THEN NULL
+                WHEN file_path = ? AND modified_at IS NOT NULL AND ? IS NOT NULL AND modified_at != ? THEN NULL
+                ELSE managed_tag_fingerprint
+              END
           WHERE id = ?
         `).run(
           artistMetadataId,
@@ -2213,6 +2389,11 @@ export class LibraryFilesService {
           params.height || null,
           params.duration || null,
           params.fingerprint || null,
+          fileSize,
+          fileSize,
+          params.filePath,
+          modifiedAt,
+          modifiedAt,
           rowToUpdate.id,
         );
 
@@ -2553,9 +2734,9 @@ export class LibraryFilesService {
       return { removed };
     }
 
-    // Each monitored edition has its own album folder. Cover.jpg / album.nfo in
-    // "All This Bad Blood (2012)" and "Bad Blood X (2023)" are not duplicates.
-    // A leftover sidecar in a folder with no audio (rename debris) still is.
+    // Absence of adjacent audio is not proof that a sidecar is debris: artist
+    // artwork, empty monitored folders and incomplete edition ownership are
+    // valid cases. Distinct paths require verified journaled cleanup.
     const byDirectory = new Map<string, TrackedAssetRow[]>();
     for (const row of rows) {
       const directory = path.dirname(normalizeResolvedPath(resolveStoredLibraryPath({
@@ -2568,23 +2749,9 @@ export class LibraryFilesService {
       byDirectory.set(directory, group);
     }
 
-    const live: TrackedAssetRow[][] = [];
-    const stale: TrackedAssetRow[] = [];
-    for (const [directory, group] of byDirectory) {
-      if (this.directoryHasTrackedAudio(directory)) live.push(group);
-      else stale.push(...group);
-    }
-
-    if (live.length === 0) {
-      return { removed: this.removeDuplicateTrackedAssetRows(tableName, rows) };
-    }
-
     let removed = 0;
-    for (const group of live) {
+    for (const group of byDirectory.values()) {
       removed += this.removeDuplicateTrackedAssetRows(tableName, group);
-    }
-    if (stale.length > 0) {
-      removed += this.deleteTrackedAssetRows(tableName, stale);
     }
     if (removed > 0) {
       console.log(`[${tableName}] Removed ${removed} duplicate tracked ${params.fileType} file(s) for artist ${params.artistId}.`);
@@ -2610,25 +2777,16 @@ export class LibraryFilesService {
     let removed = 0;
     const idsToDelete: number[] = [];
     for (const row of remove) {
+      const resolvedPath = resolveStoredLibraryPath({
+        filePath: row.file_path,
+        libraryRoot: row.library_root,
+        relativePath: row.relative_path,
+      });
+
+      // Only redundant database aliases of the same resolved path can be
+      // merged here. Never remove a distinct physical sidecar during upsert.
+      if (normalizeResolvedPath(resolvedPath) !== keepResolvedPath) continue;
       ExtraFileService.mergeLibraryAssociations(tableName, row.id, keep.id);
-      const resolvedPath = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
-      });
-
-      try {
-        if (normalizeResolvedPath(resolvedPath) !== keepResolvedPath && fs.existsSync(resolvedPath)) {
-          fs.rmSync(resolvedPath, { force: true });
-          const root = resolveLibraryRootPath(row.library_root, row.file_path);
-          if (root) {
-            removeEmptyParents(path.dirname(resolvedPath), root);
-          }
-        }
-      } catch (error) {
-        console.warn(`[${tableName}] Failed removing duplicate ${row.file_type} file ${resolvedPath}:`, error);
-      }
-
       idsToDelete.push(row.id);
       this.emitFileDeleted({
         libraryFileId: row.id,
@@ -2648,50 +2806,6 @@ export class LibraryFilesService {
       batchDelete(tableName, idsToDelete);
     }
 
-    return removed;
-  }
-
-  private static deleteTrackedAssetRows(
-    tableName: "MetadataFiles" | "LyricFiles" | "ExtraFiles",
-    rows: TrackedAssetRow[],
-  ): number {
-    if (rows.length === 0) return 0;
-    let removed = 0;
-    const idsToDelete: number[] = [];
-    for (const row of rows) {
-      const resolvedPath = resolveStoredLibraryPath({
-        filePath: row.file_path,
-        libraryRoot: row.library_root,
-        relativePath: row.relative_path,
-      });
-      try {
-        if (fs.existsSync(resolvedPath)) {
-          fs.rmSync(resolvedPath, { force: true });
-          const root = resolveLibraryRootPath(row.library_root, row.file_path);
-          if (root) {
-            removeEmptyParents(path.dirname(resolvedPath), root);
-          }
-        }
-      } catch (error) {
-        console.warn(`[${tableName}] Failed removing stale ${row.file_type} file ${resolvedPath}:`, error);
-      }
-      idsToDelete.push(row.id);
-      this.emitFileDeleted({
-        libraryFileId: row.id,
-        artistId: row.artist_metadata_id,
-        albumId: row.album_id,
-        mediaId: row.media_id,
-        fileType: row.file_type,
-        filePath: resolvedPath,
-        libraryRoot: row.library_root,
-        reason: "duplicate-tracked-asset",
-        missing: !fs.existsSync(resolvedPath),
-      });
-      removed += 1;
-    }
-    if (idsToDelete.length > 0) {
-      batchDelete(tableName, idsToDelete);
-    }
     return removed;
   }
 
@@ -3025,13 +3139,20 @@ export class LibraryFilesService {
    * while curation later selects the Jan 1 edition). Re-resolve identity now
    * that LibraryEditions exist: the unique monitored edition that carries this
    * recording wins, matching download-import remap.
+   *
+   * A file that already sits in a monitored edition folder keeps that edition
+   * when the folder has exactly one track for its recording. Several monitored
+   * editions often share a recording (remix albums, reissues). Pulling every
+   * copy onto the representative makes rename try to stack different audio
+   * onto one path. Unmonitor the folder edition before a scan when the file
+   * should move, the same way a foreign edition is dropped before rebind.
    */
   static rebindFilesToMonitoredEditions(artistId: string): { rebound: number } {
     const artistMetadataId = resolveArtistMetadataId(artistId);
     if (artistMetadataId == null) return { rebound: 0 };
     const rows = db.prepare(`
       SELECT
-        id, artist_metadata_id, file_path, library_root, file_type, quality, library_slot,
+        id, artist_metadata_id, library_id, file_path, library_root, file_type, quality, library_slot,
         provider, provider_entity_type, provider_id,
         canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
         canonical_track_mbid, canonical_recording_mbid
@@ -3042,6 +3163,7 @@ export class LibraryFilesService {
     `).all(artistMetadataId) as Array<{
       id: number;
       artist_metadata_id: string | number;
+      library_id: number | null;
       file_path: string;
       library_root: string | null;
       file_type: string;
@@ -3089,10 +3211,22 @@ export class LibraryFilesService {
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const identity = identities[index];
-      if (!identity?.canonicalReleaseMbid || !identity.canonicalTrackMbid) continue;
+      const folderTrack = monitoredEditionTrackForPath(
+        row.file_path,
+        row.canonical_recording_mbid,
+        row.library_id,
+      );
+      const releaseMbid = folderTrack?.releaseMbid ?? identity?.canonicalReleaseMbid ?? null;
+      const namedTrack = releaseMbid && row.canonical_recording_mbid
+        ? filenameTrackOnRelease(row.file_path, releaseMbid, row.canonical_recording_mbid)
+        : null;
+      const trackMbid = namedTrack ?? folderTrack?.trackMbid ?? identity?.canonicalTrackMbid ?? null;
+      const releaseGroupMbid = folderTrack?.releaseGroupMbid ?? identity?.canonicalReleaseGroupMbid ?? null;
+      const recordingMbid = identity?.canonicalRecordingMbid ?? row.canonical_recording_mbid;
+      if (!releaseMbid || !trackMbid) continue;
       if (
-        identity.canonicalReleaseMbid === row.canonical_release_mbid
-        && identity.canonicalTrackMbid === row.canonical_track_mbid
+        releaseMbid === row.canonical_release_mbid
+        && trackMbid === row.canonical_track_mbid
       ) {
         continue;
       }
@@ -3102,9 +3236,9 @@ export class LibraryFilesService {
           (SELECT id FROM Tracks WHERE mbid = ?) AS track_id,
           (SELECT id FROM Recordings WHERE mbid = ?) AS recording_id
       `).get(
-        identity.canonicalReleaseMbid,
-        identity.canonicalTrackMbid,
-        identity.canonicalRecordingMbid,
+        releaseMbid,
+        trackMbid,
+        recordingMbid,
       ) as {
         album_edition_id: number | null;
         track_id: number | null;
@@ -3115,10 +3249,10 @@ export class LibraryFilesService {
         catalogIds.album_edition_id,
         catalogIds.track_id,
         catalogIds.recording_id,
-        identity.canonicalReleaseMbid,
-        identity.canonicalTrackMbid,
-        identity.canonicalRecordingMbid,
-        identity.canonicalReleaseGroupMbid,
+        releaseMbid,
+        trackMbid,
+        recordingMbid,
+        releaseGroupMbid,
         row.id,
       );
       rebound += 1;
@@ -3129,7 +3263,17 @@ export class LibraryFilesService {
     return { rebound };
   }
 
-  static pruneUnmonitoredFiles(artistId: string): { deleted: number; missing: number; errors: number } {
+  static pruneUnmonitoredFiles(
+    artistId: string,
+    options?: {
+      mode?: "coverage" | "immediate";
+      releaseGroupIds?: readonly number[];
+      editionIds?: readonly number[];
+      recordingIds?: readonly number[];
+      /** Skip artist-wide folder sweeps. Used after one import. */
+      filesOnly?: boolean;
+    },
+  ): { deleted: number; missing: number; errors: number } {
     const artistMonitored = isArtistLibraryMonitored(artistId);
 
     // Unmonitoring an artist does not implicitly wipe the artist folder.
@@ -3140,10 +3284,19 @@ export class LibraryFilesService {
       return { deleted: 0, missing: 0, errors: 0 };
     }
 
-    const rows = LibraryFilesService.selectUnmonitoredFileRows(artistId);
+    const candidates = LibraryFilesService.selectUnmonitoredFileRows(artistId);
+    const decisions = classifyUnmonitoredFileDeletes(db, candidates.map((row) => row.id), {
+      mode: options?.mode ?? "coverage",
+      releaseGroupIds: options?.releaseGroupIds,
+      editionIds: options?.editionIds,
+      recordingIds: options?.recordingIds,
+    });
+    const deleteIds = new Set(decisions.filter((decision) => decision.delete).map((decision) => decision.id));
+    const rows = candidates.filter((row) => deleteIds.has(row.id));
     const prunedDirectories = new Map<string, string>();
 
     if (rows.length === 0) {
+      if (options?.filesOnly) return { deleted: 0, missing: 0, errors: 0 };
       const untracked = this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
       const renamed = this.pruneLeftoverRenamedAlbumFolders(artistId);
       return {
@@ -3241,14 +3394,16 @@ export class LibraryFilesService {
     deleted += leftovers.deleted;
     missing += leftovers.missing;
     errors += leftovers.errors;
-    const untracked = this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
-    deleted += untracked.deleted;
-    missing += untracked.missing;
-    errors += untracked.errors;
-    const renamed = this.pruneLeftoverRenamedAlbumFolders(artistId);
-    deleted += renamed.deleted;
-    missing += renamed.missing;
-    errors += renamed.errors;
+    if (!options?.filesOnly) {
+      const untracked = this.pruneUntrackedMediaInUnmonitoredEditionFolders(artistId);
+      deleted += untracked.deleted;
+      missing += untracked.missing;
+      errors += untracked.errors;
+      const renamed = this.pruneLeftoverRenamedAlbumFolders(artistId);
+      deleted += renamed.deleted;
+      missing += renamed.missing;
+      errors += renamed.errors;
+    }
 
     return { deleted, missing, errors };
   }
@@ -3257,19 +3412,6 @@ export class LibraryFilesService {
     ".flac", ".alac", ".wav", ".aiff", ".mp3", ".m4a", ".aac", ".ogg", ".opus",
     ".wma", ".ape", ".mp2", ".mp4", ".m4v", ".mkv", ".mov", ".webm",
   ]);
-
-  private static directoryHasTrackedAudio(directory: string): boolean {
-    const normalized = normalizeComparablePath(directory);
-    if (!normalized) return false;
-    const rows = db.prepare(`
-      SELECT file_path
-      FROM TrackFiles
-      WHERE file_type IN ('track', 'video')
-        AND ${comparablePathColumnSql("file_path")} >= ?
-        AND ${comparablePathColumnSql("file_path")} < ?
-    `).all(`${normalized}/`, `${normalized}0`) as Array<{ file_path: string }>;
-    return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalized);
-  }
 
   private static directoryHasMonitoredAudio(directory: string): boolean {
     const normalizedDir = normalizeComparablePath(directory);
@@ -3542,23 +3684,139 @@ export class LibraryFilesService {
    * removal, and housekeeping all go through here so extras in that folder
    * leave with the TrackFiles instead of surviving as orphan ExtraFiles.
    */
-  static pruneUnmonitoredForReleaseGroup(releaseGroupMbid: string): {
+  static pruneUnmonitoredForReleaseGroup(
+    releaseGroupMbid: string,
+    options?: { immediate?: boolean; editionIds?: readonly number[] },
+  ): {
     deleted: number; missing: number; errors: number;
   } {
     if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) {
       return { deleted: 0, missing: 0, errors: 0 };
     }
     const artist = db.prepare(`
-      SELECT CAST(artist.id AS TEXT) AS id
+      SELECT CAST(artist.mbid AS TEXT) AS id, album.id AS release_group_id
       FROM Albums album
       JOIN ArtistMetadata artist ON artist.mbid = album.artist_mbid
       WHERE album.mbid = ?
       LIMIT 1
-    `).get(releaseGroupMbid) as { id?: string } | undefined;
-    if (!artist?.id) {
+    `).get(releaseGroupMbid) as { id?: string; release_group_id?: number } | undefined;
+    if (!artist?.id || artist.release_group_id == null) {
       return { deleted: 0, missing: 0, errors: 0 };
     }
-    return this.pruneUnmonitoredFiles(artist.id);
+    return this.pruneUnmonitoredFiles(artist.id, {
+      mode: options?.immediate ? "immediate" : "coverage",
+      releaseGroupIds: [artist.release_group_id],
+      editionIds: options?.editionIds,
+      filesOnly: true,
+    });
+  }
+
+  /**
+   * After a successful import, delete unmonitored files whose recordings this
+   * import covered. Does not scan the artist folder.
+   */
+  static settleImportedRecordings(recordingIds: readonly number[]): void {
+    if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) return;
+    const ids = [...new Set(recordingIds.filter((id) => Number.isInteger(id) && id > 0))];
+    if (ids.length === 0) return;
+    const artists = db.prepare(`
+      SELECT DISTINCT artist.mbid AS mbid
+      FROM TrackFiles file
+      JOIN ArtistMetadata artist ON artist.id = file.artist_metadata_id
+      WHERE file.recording_id IN ${SQL_JSON_LIST}
+         OR file.canonical_recording_mbid IN (
+           SELECT recording.mbid FROM Recordings recording
+           WHERE recording.id IN ${SQL_JSON_LIST}
+             AND recording.mbid IS NOT NULL
+         )
+    `).all(jsonList(ids), jsonList(ids)) as Array<{ mbid: string }>;
+    for (const artist of artists) {
+      if (!artist.mbid) continue;
+      this.pruneUnmonitoredFiles(artist.mbid, {
+        mode: "coverage",
+        recordingIds: ids,
+        filesOnly: true,
+      });
+    }
+  }
+
+  /**
+   * Read-only: what "Remove unmonitored files" would delete right now, as
+   * library track files grouped by album folder and split into compilation
+   * and other releases. Folder sweeps of untracked leftovers are not counted.
+   */
+  static previewUnmonitoredFiles(sampleSize = 25): {
+    artists: number;
+    files: number;
+    folders: number;
+    compilationFolders: number;
+    otherFolders: number;
+    /** Folders whose album curation still keeps through another edition. */
+    keptAlbumFolders: number;
+    samples: { compilation: string[]; other: string[]; keptAlbum: string[] };
+  } {
+    const keptAlbum = db.prepare(`
+      SELECT 1
+      FROM TrackFiles lf
+      JOIN AlbumEditions owned ON owned.id = lf.album_edition_id
+      JOIN AlbumEditions sibling ON sibling.release_group_id = owned.release_group_id
+      JOIN LibraryEditions monitored ON monitored.edition_id = sibling.id AND monitored.library_id = lf.library_id
+      WHERE lf.id = ?
+      LIMIT 1
+    `);
+    const keptFolders = new Set<string>();
+    const artists = db.prepare(`
+      SELECT a.mbid AS id
+      FROM ArtistMetadata a
+      WHERE ${buildLibraryArtistMonitoredExistsSql("a")}
+    `).all() as Array<{ id: string }>;
+    const secondaryTypes = db.prepare(`
+      SELECT release_group.secondary_types
+      FROM TrackFiles lf
+      JOIN Albums release_group ON release_group.id = COALESCE(
+        lf.release_group_id,
+        (SELECT edition.release_group_id FROM AlbumEditions edition WHERE edition.id = lf.album_edition_id)
+      )
+      WHERE lf.id = ?
+    `);
+    const folders = new Map<string, boolean>();
+    let files = 0;
+    let artistCount = 0;
+    for (const artist of artists) {
+      if (!isArtistLibraryMonitored(artist.id)) continue;
+      const candidates = this.selectUnmonitoredFileRows(artist.id);
+      const decisions = classifyUnmonitoredFileDeletes(db, candidates.map((row) => row.id), {
+        mode: "coverage",
+        dryRun: true,
+      });
+      const deleteIds = new Set(decisions.filter((decision) => decision.delete).map((decision) => decision.id));
+      const rows = candidates.filter((row) => deleteIds.has(row.id));
+      if (rows.length === 0) continue;
+      artistCount += 1;
+      for (const row of rows) {
+        files += 1;
+        const folder = path.dirname(row.file_path);
+        if (!keptFolders.has(folder) && keptAlbum.get(row.id)) keptFolders.add(folder);
+        if (folders.get(folder) === true) continue;
+        const types = (secondaryTypes.get(row.id) as { secondary_types?: string | null } | undefined)?.secondary_types;
+        folders.set(folder, /compilation|dj-mix|mixtape/i.test(String(types || "")));
+      }
+    }
+    const compilation = [...folders].filter(([, c]) => c).map(([f]) => f);
+    const other = [...folders].filter(([, c]) => !c).map(([f]) => f);
+    return {
+      artists: artistCount,
+      files,
+      folders: folders.size,
+      compilationFolders: compilation.length,
+      otherFolders: other.length,
+      keptAlbumFolders: keptFolders.size,
+      samples: {
+        compilation: compilation.slice(0, sampleSize),
+        other: other.slice(0, sampleSize),
+        keptAlbum: [...keptFolders].slice(0, sampleSize),
+      },
+    };
   }
 
   static async pruneUnmonitoredFilesForMonitoredArtists(): Promise<{ artists: number; deleted: number; missing: number; errors: number }> {

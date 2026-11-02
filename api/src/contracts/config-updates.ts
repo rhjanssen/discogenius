@@ -44,7 +44,6 @@ const QUALITY_UPDATE_KEYS = [
   "embed_cover",
   "embed_lyrics",
   "upgrade_existing_files",
-  "downconvert_existing_files",
   "convert_video_mp4",
   "extract_flac",
 ] as const satisfies readonly (keyof QualityConfigContract)[];
@@ -75,6 +74,11 @@ const METADATA_UPDATE_KEYS = [
   "write_audio_tags_policy",
   "embed_replaygain",
   "scrub_audio_tags",
+  "album_artist_mode",
+  "full_album_artist_credit",
+  "translate_artist_names",
+  "artist_name_locales",
+  "translate_artist_names_skip_latin",
 ] as const satisfies readonly (keyof MetadataConfigContract)[];
 
 const PATH_UPDATE_KEYS = [
@@ -126,6 +130,7 @@ const FILTERING_UPDATE_KEYS = [
   "include_video_official_audio",
   "prefer_explicit",
   "enable_redundancy_filter",
+  "compilation_policy",
   "require_provider_availability",
 ] as const satisfies readonly (keyof FilteringConfigContract)[];
 

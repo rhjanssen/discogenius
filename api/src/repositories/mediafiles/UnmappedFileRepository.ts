@@ -4,6 +4,7 @@ import {
     comparablePathColumnSql,
     normalizeComparablePath,
 } from "../../services/mediafiles/path-utils.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
 export interface UnmappedFile {
     id: number;
@@ -58,8 +59,7 @@ export class UnmappedFileRepository extends BaseRepository<UnmappedFile, number>
 
     findByIds(ids: number[]): UnmappedFile[] {
         if (ids.length === 0) return [];
-        const placeholders = ids.map(() => "?").join(",");
-        const rows = this.prepare(`SELECT * FROM UnmappedFiles WHERE id IN (${placeholders})`).all(...ids) as any[];
+        const rows = this.prepare(`SELECT * FROM UnmappedFiles WHERE id IN ${SQL_JSON_LIST}`).all(jsonList(ids)) as any[];
         return rows.map(mapRow);
     }
 

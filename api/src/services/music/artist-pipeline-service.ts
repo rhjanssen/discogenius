@@ -1,4 +1,4 @@
-import { db, withSqliteWriteGate } from "../../database.js";
+import { db, retrySqliteBusyAsync, withSqliteWriteGate } from "../../database.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { DiskScanService, type ScanResult } from "../mediafiles/library-scan.js";
 import { parseScanFileFilter } from "../mediafiles/scan-file-filter.js";
@@ -316,21 +316,19 @@ export class ArtistPipelineService {
         let downloadsQueued: DownloadMissingResult | undefined;
         if (phases.queueDownloads && workflow === "monitoring-intake") {
             options.onProgress?.(90, "checking and queueing missing downloads");
-            try {
-                downloadsQueued = await DownloadMissingService.queueMonitoredItems(artistId);
-                await ArtistStatisticsService.refreshAsync([artistId]);
-                const total = (downloadsQueued?.albums ?? 0) + (downloadsQueued?.tracks ?? 0) + (downloadsQueued?.videos ?? 0);
-                options.onProgress?.(
-                    100,
-                    total > 0
-                        ? `intake complete - queued ${total} missing download(s)`
-                        : (downloadsQueued?.alreadyQueued ?? 0) > 0
-                            ? `intake complete - ${downloadsQueued?.alreadyQueued} download(s) already queued`
-                            : "intake complete - library up to date",
-                );
-            } catch (error) {
-                console.warn(`[ArtistPipelineService] Failed to queue missing downloads for artist ${artistId}:`, error);
-            }
+            downloadsQueued = await retrySqliteBusyAsync(
+                () => DownloadMissingService.queueMonitoredItems(artistId),
+            );
+            await ArtistStatisticsService.refreshAsync([artistId]);
+            const total = (downloadsQueued?.albums ?? 0) + (downloadsQueued?.tracks ?? 0) + (downloadsQueued?.videos ?? 0);
+            options.onProgress?.(
+                100,
+                total > 0
+                    ? `intake complete - queued ${total} missing download(s)`
+                    : (downloadsQueued?.alreadyQueued ?? 0) > 0
+                        ? `intake complete - ${downloadsQueued?.alreadyQueued} download(s) already queued`
+                        : "intake complete - library up to date",
+            );
         } else {
             options.onProgress?.(100, "artist processing complete");
         }

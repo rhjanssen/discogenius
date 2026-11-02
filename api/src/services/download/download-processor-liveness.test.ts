@@ -21,12 +21,15 @@ const { db } = databaseModule;
 const {
     DownloadProcessor,
     DownloadProcessorWorkerProxy,
+    importWorkerInstanceId,
     recoverInterruptedDownloadAttempts,
 } = await import('./download-processor.js');
 const {
     CommandNames,
     CommandQueueManager,
 } = await import('../commands/command-queue-manager.js');
+const { CommandManager } = await import('../commands/command.js');
+const { collectHealthDiagnosticsSnapshot } = await import('../commands/health.js');
 const { DownloadWaitQueue } = await import('./download-wait-queue.js');
 
 function resetRows(): void {
@@ -129,6 +132,75 @@ test('a full durable import backlog stops new download claims', () => {
         assert.equal(processor.activeDownloads.size, 0);
     } finally {
         DownloadWaitQueue.remove(wait.id);
+    }
+});
+
+test('worker continues blocked admission after releasing its turn and rechecks pause before claiming', async () => {
+    for (let i = 0; i < 41; i++) DownloadWaitQueue.enqueue({
+        refKey: `blocked-page-${i}`, mediaKind: 'album', commandName: CommandNames.DownloadAlbum,
+        planId: 999999, provider: 'tidal', payload: { libraryId: 4, releaseMbid: 'missing' }, notify: false,
+    });
+    const ready = DownloadWaitQueue.enqueue({
+        refKey: 'ready-page', mediaKind: 'track', commandName: CommandNames.DownloadTrack,
+        provider: 'tidal', providerId: 'ready-page', payload: { provider: 'tidal', providerId: 'ready-page' }, notify: false,
+    });
+    const processor = new DownloadProcessor() as any;
+    let continuations = 0;
+    const dispatched: number[] = [];
+    processor.scheduleNext = () => { continuations++; };
+    processor.dispatchDownloadPhase = (job: {id:number}) => {
+        dispatched.push(job.id);
+        processor.activeDownloads.set(job.id, { provider: 'tidal' });
+    };
+    try {
+        await processor.processQueue();
+        assert.equal(continuations, 1);
+        assert.ok(processor.admissionCursor);
+        assert.equal(DownloadWaitQueue.get(ready.id)?.command_id, null);
+        processor.isPaused = true;
+        await processor.processQueue();
+        assert.equal(processor.admissionCursor, null);
+        assert.deepEqual(dispatched, []);
+        processor.isPaused = false;
+        await processor.processQueue();
+        await processor.processQueue(false);
+        assert.equal(dispatched.length, 1);
+        assert.equal(DownloadWaitQueue.get(ready.id)?.command_id, dispatched[0]);
+        assert.equal(DownloadWaitQueue.countUnclaimed(), 41);
+    } finally {
+        processor.suspended = true;
+        clearTimeout(processor.retryWakeTimer);
+        db.prepare('DELETE FROM DownloadQueue').run();
+    }
+});
+
+test('an external queue kick restarts admission for new work inserted before the cursor', async () => {
+    for (let i = 0; i < 41; i++) DownloadWaitQueue.enqueue({
+        refKey: `front-blocked-${i}`, mediaKind: 'album', commandName: CommandNames.DownloadAlbum,
+        planId: 999999, provider: 'tidal', payload: {}, notify: false,
+    });
+    const processor = new DownloadProcessor() as any;
+    processor.scheduleNext = () => {};
+    const dispatched: number[] = [];
+    processor.dispatchDownloadPhase = (job: {id:number}) => {
+        dispatched.push(job.id);
+        processor.activeDownloads.set(job.id, { provider: 'tidal' });
+    };
+    try {
+        await processor.processQueue();
+        assert.ok(processor.admissionCursor);
+        const front = DownloadWaitQueue.enqueue({
+            refKey: 'new-front', mediaKind: 'track', commandName: CommandNames.DownloadTrack,
+            provider: 'tidal', providerId: 'new-front', payload: { provider: 'tidal', providerId: 'new-front' },
+            position: 'front', notify: false,
+        });
+        await processor.processQueue();
+        assert.equal(dispatched.length, 1);
+        assert.equal(DownloadWaitQueue.get(front.id)?.command_id, dispatched[0]);
+    } finally {
+        processor.suspended = true;
+        clearTimeout(processor.retryWakeTimer);
+        db.prepare('DELETE FROM DownloadQueue').run();
     }
 });
 
@@ -242,9 +314,131 @@ test('an interrupted active import fails closed and preserves its staging eviden
     assert.match(failed.error || '', /partially mutated library files/i);
     assert.equal(CommandQueueManager.complete(id, owner), false);
     assert.equal(fs.existsSync(stagedFile), true);
+    const repairs = db.prepare("SELECT COUNT(*) AS count FROM commands WHERE name = ?").get(CommandNames.RetagFiles) as { count: number };
+    assert.equal(repairs.count, 0, "an import that never recorded file ids does not invent a retag");
 });
 
-test('a durable import-pending handoff is claimed by a fresh attempt without re-downloading', () => {
+test("a tag-rule phase that ticks per file is not poisoned while the percent stays put", async () => {
+    const id = pushTrack("tag-ticks");
+    const owner = "download-attempt:tag-ticks";
+    claim(id, owner, new Date());
+    const processor = new DownloadProcessor() as any;
+    processor.attemptOwners.set(id, owner);
+    for (let file = 1; file <= 30; file += 1) {
+        processor.persistDownloadState(id, {
+            state: "importing",
+            progress: 94,
+            description: "ImportDownload: applying audio tag rules",
+            statusMessage: "Applying audio tag rules",
+            currentFileNum: file,
+            totalFiles: 477,
+            subphaseTick: true,
+        }, owner);
+    }
+    db.prepare(`
+        UPDATE commands
+        SET last_progress_at = '2020-01-01 00:00:00',
+            heartbeat_at = '2020-01-01 00:00:00'
+        WHERE id = ?
+    `).run(id);
+    processor.persistDownloadState(id, {
+        state: "importing",
+        progress: 94,
+        description: "ImportDownload: applying audio tag rules",
+        statusMessage: "Applying audio tag rules",
+        currentFileNum: 30,
+        totalFiles: 477,
+        subphaseTick: true,
+    }, owner);
+
+    const ticking = CommandQueueManager.get(id)!;
+    assert.equal(ticking.progress, 94);
+    assert.equal((ticking.payload as { downloadState?: { currentFileNum?: number; totalFiles?: number } }).downloadState?.currentFileNum, 30);
+    assert.equal((ticking.payload as { downloadState?: { totalFiles?: number } }).downloadState?.totalFiles, 477);
+    assert.notEqual(ticking.last_progress_at, "2020-01-01 00:00:00");
+    assert.notEqual(ticking.heartbeat_at, "2020-01-01 00:00:00");
+    const progressedAt = Date.parse(
+        String(ticking.last_progress_at).includes("T")
+            ? String(ticking.last_progress_at)
+            : `${String(ticking.last_progress_at).replace(" ", "T")}Z`,
+    );
+
+    let terminations = 0;
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.worker = {
+        terminate: async () => {
+            terminations += 1;
+            return 1;
+        },
+    };
+    assert.equal(await proxy.runWatchdogOnce(new Date(progressedAt + 200)), false);
+    assert.equal(terminations, 0);
+    assert.equal(CommandQueueManager.get(id)?.status, "started");
+    assert.equal(CommandQueueManager.get(id)?.blocked_reason ?? null, null);
+});
+
+test("a stuck tag-rule phase is poisoned and queues a retag of the files it touched", async () => {
+    const id = pushTrack("tag-stuck");
+    const owner = "download-attempt:tag-stuck";
+    claim(id, owner);
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progress: 94,
+        progressPhase: "importing",
+        payloadPatch: {
+            downloadState: {
+                state: "importing",
+                progress: 94,
+                statusMessage: "Applying audio tag rules",
+            },
+            downloadImportHandoff: {
+                importPayload: {
+                    type: "album",
+                    provider: "synthetic",
+                    providerId: "track-tag-stuck",
+                    path: path.join(tempDir, "tag-stuck"),
+                },
+                resolved: { title: "Golden Earring", artist: "Lease Fixture", cover: null },
+                executionStartedAt: "2026-01-01T00:00:01.000Z",
+                importTouchedFileIds: [11, 22, 11],
+            },
+        } as any,
+    });
+    db.prepare(`
+        UPDATE commands
+        SET heartbeat_at = '2026-01-01 00:00:09',
+            lease_expires_at = '2026-01-01 00:01:00',
+            last_progress_at = '2026-01-01 00:00:00'
+        WHERE id = ?
+    `).run(id);
+
+    let terminations = 0;
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.worker = {
+        terminate: async () => {
+            terminations += 1;
+            return 1;
+        },
+    };
+    assert.equal(await proxy.runWatchdogOnce(new Date("2026-01-01T00:00:10.000Z")), true);
+    assert.equal(terminations, 1);
+
+    const recovered = recoverInterruptedDownloadAttempts(
+        "Download worker watchdog detected stale execution",
+        new Date("2026-01-01T00:00:10.000Z"),
+    );
+    assert.deepEqual(recovered, { requeued: 0, failed: 1, ignored: 0 });
+    const failed = CommandQueueManager.get(id)!;
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.blocked_reason, "poisoned command");
+    assert.match(failed.error || "", /not replayed/i);
+    const repairs = db.prepare("SELECT payload, ref_id FROM commands WHERE name = ?").all(CommandNames.RetagFiles) as Array<{ payload: string; ref_id: string }>;
+    assert.equal(repairs.length, 1);
+    assert.equal(repairs[0].ref_id, `import-tag-repair:${id}`);
+    assert.deepEqual(JSON.parse(repairs[0].payload).ids, [11, 22]);
+});
+
+test('a durable import-pending handoff is resumed on the same attempt without re-downloading', () => {
     const id = pushTrack('pending-import');
     const firstOwner = 'download-attempt:pending';
     claim(id, firstOwner);
@@ -270,21 +464,35 @@ test('a durable import-pending handoff is claimed by a fresh attempt without re-
             },
         } as any,
     });
-    recoverInterruptedDownloadAttempts(
+    const recovered = recoverInterruptedDownloadAttempts(
         'Synthetic restart before import slot',
         new Date('2026-01-01T00:00:10.000Z'),
     );
+    assert.deepEqual(recovered, { requeued: 0, failed: 0, ignored: 0 });
+    const parked = CommandQueueManager.get(id)!;
+    assert.equal(parked.status, 'started');
+    assert.equal(parked.attempt, 1);
+    assert.equal(parked.worker_id, firstOwner);
 
+    // updateState extended the lease. A dead worker's lease is what lets the
+    // scheduler take the handoff without burning an attempt.
+    db.prepare('UPDATE commands SET lease_expires_at = ? WHERE id = ?').run(
+        new Date(Date.now() - 30_000).toISOString(),
+        id,
+    );
     const processor = new DownloadProcessor() as any;
-    processor.claimRecoveredImportHandoffs();
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+    processor.scheduleQueueWithWriteLock();
 
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [id]);
     const replacement = CommandQueueManager.get(id)!;
     assert.equal(replacement.status, 'started');
-    assert.equal(replacement.attempt, 2);
+    assert.equal(replacement.attempt, 1);
     assert.notEqual(replacement.worker_id, firstOwner);
-    assert.equal(processor.pendingImports.length, 1);
-    assert.equal(processor.pendingImports[0].importPayload.path, staging);
+    assert.equal((replacement.payload as { downloadImportHandoff?: { importPayload?: { path?: string } } }).downloadImportHandoff?.importPayload?.path, staging);
     assert.equal(processor.activeDownloads.size, 0);
+    assert.equal(processor.pendingImports.length, 0);
 });
 
 test('heartbeats renew active download, import-pending, and active-import leases', () => {
@@ -356,7 +564,65 @@ test('watchdog terminates a heartbeating worker whose command stopped making pro
     assert.equal(CommandQueueManager.get(id)?.worker_id, owner);
 });
 
-test('a parked import-pending download is requeued after max attempts', () => {
+test('an import killed before its first file change is reparked and resumed on the same attempt', () => {
+    const id = pushTrack('untouched-import');
+    const owner = 'download-attempt:untouched';
+    claim(id, owner);
+    db.prepare('UPDATE commands SET attempt = 2 WHERE id = ?').run(id);
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progressPhase: 'importing',
+        blockedReason: 'waiting on disk',
+        payloadPatch: {
+            downloadState: { state: 'importing', progress: 100 },
+            downloadImportHandoff: {
+                importPayload: { type: 'track', provider: 'synthetic', providerId: 'track-untouched-import', path: path.join(tempDir, 'untouched-staging') },
+                resolved: { title: 'Untouched import', artist: 'Lease Fixture', cover: null },
+                executionStartedAt: '2026-01-01T00:00:01.000Z',
+                mutationCheckpoint: 1,
+            },
+        } as any,
+    });
+
+    const recovered = recoverInterruptedDownloadAttempts('Dedicated download worker restarted before the attempt completed', new Date('2026-01-01T00:00:10.000Z'));
+    assert.deepEqual(recovered, { requeued: 1, failed: 0, ignored: 0 });
+    const row = CommandQueueManager.get(id)!;
+    assert.equal(row.status, 'started');
+    assert.equal(row.attempt, 2);
+    assert.equal(row.payload.downloadState?.state, 'importPending');
+
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+    processor.scheduleQueueWithWriteLock();
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [id]);
+    assert.equal(CommandQueueManager.get(id)!.attempt, 2);
+});
+
+test('an import killed after its first file change still fails closed', () => {
+    const id = pushTrack('mutated-import');
+    const owner = 'download-attempt:mutated';
+    claim(id, owner);
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progressPhase: 'importing',
+        payloadPatch: {
+            downloadState: { state: 'importing', progress: 40 },
+            downloadImportHandoff: {
+                importPayload: { type: 'track', provider: 'synthetic', providerId: 'track-mutated-import', path: path.join(tempDir, 'mutated-staging') },
+                resolved: { title: 'Mutated import', artist: 'Lease Fixture', cover: null },
+                executionStartedAt: '2026-01-01T00:00:01.000Z',
+                mutationCheckpoint: 1,
+                libraryMutationStartedAt: '2026-01-01T00:00:02.000Z',
+            },
+        } as any,
+    });
+    const recovered = recoverInterruptedDownloadAttempts('Synthetic worker exit during import', new Date('2026-01-01T00:00:10.000Z'));
+    assert.deepEqual(recovered, { requeued: 0, failed: 1, ignored: 0 });
+    assert.equal(CommandQueueManager.get(id)!.status, 'failed');
+});
+
+test('a parked import-pending download keeps its attempt across restart recovery', () => {
     const id = pushTrack('parked-import');
     const owner = 'download-attempt:parked';
     claim(id, owner);
@@ -388,10 +654,24 @@ test('a parked import-pending download is requeued after max attempts', () => {
         'Download worker watchdog detected stale execution',
         new Date('2026-01-01T00:00:10.000Z'),
     );
-    assert.deepEqual(recovered, { requeued: 1, failed: 0, ignored: 0 });
-    const queued = CommandQueueManager.get(id)!;
-    assert.equal(queued.status, 'queued');
-    assert.match(String(queued.payload.downloadState?.state || ''), /importPending/);
+    assert.deepEqual(recovered, { requeued: 0, failed: 0, ignored: 0 });
+    const parked = CommandQueueManager.get(id)!;
+    assert.equal(parked.status, 'started');
+    assert.equal(parked.attempt, 3);
+    assert.match(String(parked.payload.downloadState?.state || ''), /importPending/);
+
+    db.prepare('UPDATE commands SET lease_expires_at = ? WHERE id = ?').run(
+        new Date(Date.now() - 30_000).toISOString(),
+        id,
+    );
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+    processor.scheduleQueueWithWriteLock();
+
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [id]);
+    assert.equal(CommandQueueManager.get(id)!.attempt, 3);
+    assert.equal(CommandQueueManager.get(id)!.status, 'started');
 });
 
 test('watchdog ignores a parked import-pending lease', async () => {
@@ -587,6 +867,349 @@ test('download failure and import completion wait for a contended writer while p
     }
 });
 
+
+function handoffPayload(suffix: string, readyAt: string, executionStartedAt: string | null) {
+    return {
+        downloadState: { state: 'importPending', progress: 100 },
+        downloadImportHandoff: {
+            readyAt,
+            importPayload: {
+                type: 'track',
+                provider: 'deezer',
+                providerId: `track-${suffix}`,
+                path: path.join(tempDir, `staging-${suffix}`),
+            },
+            resolved: { title: suffix, artist: 'Lease Fixture', cover: null },
+            executionStartedAt,
+        },
+    };
+}
+
+/** The 18 Oct 2026 incident row: started, importPending, handoff persisted, lease still live. */
+function seedImportHandoff(suffix: string, options: {
+    owner?: string;
+    lease?: 'live' | 'dead';
+    progressPhase?: string;
+    executionStartedAt?: string | null;
+    readyAt?: string;
+} = {}) {
+    const id = pushTrack(suffix);
+    const owner = options.owner ?? `download-attempt:${importWorkerInstanceId}:${id}:${suffix}`;
+    claim(id, owner);
+    const readyAt = options.readyAt ?? new Date(Date.now() - 10 * 60_000).toISOString();
+    CommandQueueManager.updateState(id, {
+        workerId: owner,
+        progressPhase: options.progressPhase ?? 'waiting to import',
+        blockedReason: 'waiting on import slot',
+        payloadPatch: handoffPayload(suffix, readyAt, options.executionStartedAt ?? null) as any,
+    });
+    const live = options.lease !== 'dead';
+    const heartbeat = live ? new Date() : new Date(Date.now() - 120_000);
+    const expires = live ? new Date(Date.now() + 90_000) : new Date(Date.now() - 30_000);
+    db.prepare(`
+        UPDATE commands SET heartbeat_at = ?, lease_expires_at = ? WHERE id = ?
+    `).run(heartbeat.toISOString(), expires.toISOString(), id);
+    const row = CommandQueueManager.get(id)!;
+    return { id, owner, attempt: row.attempt, workerId: row.worker_id! };
+}
+
+function stubImportDispatch(processor: any, dispatched: Array<{ commandId: number; workerId: string }>) {
+    processor.dispatchImportPhase = (entry: { commandId: number; workerId: string; providerId: string; type: string }) => {
+        dispatched.push({ commandId: entry.commandId, workerId: entry.workerId });
+        processor.activeImports.set(entry.commandId, {
+            providerId: entry.providerId,
+            type: entry.type,
+            workerId: entry.workerId,
+            promise: Promise.resolve(),
+        });
+    };
+}
+
+test('a started importPending handoff missing from memory starts on the next tick without a new attempt', () => {
+    const row = seedImportHandoff('incident-missing');
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+
+    processor.scheduleQueueWithWriteLock();
+
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [row.id]);
+    assert.equal(dispatched[0]?.workerId, row.owner);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.status, 'started');
+    assert.equal(current.attempt, row.attempt, 're-adopting a live handoff must not burn a retry');
+    assert.equal(current.worker_id, row.owner);
+    assert.equal(processor.activeDownloads.size, 0);
+});
+
+test('a stranded import does not block a queued RetagArtist', () => {
+    const row = seedImportHandoff('retag-after-import');
+    const retag = CommandQueueManager.push(CommandNames.RetagArtist, { artistId: 'bastille' } as any, 'bastille');
+    const retagStart = CommandManager.canStartCommand(CommandNames.RetagArtist, { artistId: 'bastille' }, 'bastille');
+    assert.equal(retagStart.canStart, true);
+    const backup = CommandManager.canStartCommand(CommandNames.BackupDatabase);
+    assert.equal(backup.canStart, false);
+    assert.match(backup.reason || '', /completed download is waiting for disk admission/);
+
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+    processor.scheduleQueueWithWriteLock();
+
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [row.id]);
+    assert.equal(CommandQueueManager.complete(row.id, row.owner), true);
+    assert.equal(CommandManager.canStartCommand(CommandNames.BackupDatabase).canStart, true);
+    assert.equal(CommandQueueManager.get(retag)?.status, 'queued');
+});
+
+test('an unclaimable import head does not block the next handoff', () => {
+    // scheduleQueueWithWriteLock used to break() when claimImportForExecution
+    // returned false, so every handoff behind that head stayed unscheduled.
+    const head = seedImportHandoff('unclaimable-head', { lease: 'live' });
+    const next = seedImportHandoff('claimable-next', { lease: 'live' });
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+    processor.pendingImports.push(
+        {
+            commandId: head.id,
+            providerId: 'track-unclaimable-head',
+            type: 'track',
+            workerId: head.owner,
+            importPayload: { type: 'track', provider: 'deezer', providerId: 'track-unclaimable-head', path: path.join(tempDir, 'staging-unclaimable-head') },
+            resolved: { title: 'unclaimable-head', artist: 'Lease Fixture', cover: null },
+        },
+        {
+            commandId: next.id,
+            providerId: 'track-claimable-next',
+            type: 'track',
+            workerId: next.owner,
+            importPayload: { type: 'track', provider: 'deezer', providerId: 'track-claimable-next', path: path.join(tempDir, 'staging-claimable-next') },
+            resolved: { title: 'claimable-next', artist: 'Lease Fixture', cover: null },
+        },
+    );
+
+    const claimImport = CommandQueueManager.claimImportForExecution.bind(CommandQueueManager);
+    CommandQueueManager.claimImportForExecution = (id: number, workerId: string) => {
+        if (id === head.id) return false;
+        return claimImport(id, workerId);
+    };
+    try {
+        processor.scheduleQueueWithWriteLock();
+    } finally {
+        CommandQueueManager.claimImportForExecution = claimImport;
+    }
+
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [next.id]);
+    const blocked = CommandQueueManager.get(head.id)!;
+    assert.equal(blocked.status, 'started');
+    assert.equal(blocked.attempt, head.attempt);
+    assert.equal(blocked.worker_id, head.owner);
+    assert.equal(blocked.progress_phase, 'waiting to import');
+    assert.equal(
+        processor.pendingImports.some((entry: { commandId: number }) => entry.commandId === head.id),
+        true,
+        'a refused head stays queued until it can claim',
+    );
+});
+
+test('an owner mismatch keeps the replayable handoff and imports it on the same attempt', () => {
+    // scheduleQueueWithWriteLock used to shift() this entry when isExecutionOwner
+    // failed (download-processor.ts) and wrote no terminal or requeue state.
+    const row = seedImportHandoff('owner-shift');
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+    processor.pendingImports.push({
+        commandId: row.id,
+        providerId: 'track-owner-shift',
+        type: 'track',
+        workerId: 'stale-memory-owner',
+        importPayload: { type: 'track', provider: 'deezer', providerId: 'track-owner-shift', path: path.join(tempDir, 'staging-owner-shift') },
+        resolved: { title: 'owner-shift', artist: 'Lease Fixture', cover: null },
+    });
+
+    processor.scheduleQueueWithWriteLock();
+
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [row.id]);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.status, 'started');
+    assert.equal(current.worker_id, row.owner);
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.payload.downloadState?.state, 'importPending');
+});
+
+test('a same-boot import token is resumed without compare-and-swap', () => {
+    const row = seedImportHandoff('same-boot');
+    assert.match(row.owner, new RegExp(`^download-attempt:${importWorkerInstanceId}:`));
+    const processor = new DownloadProcessor() as any;
+    assert.equal(processor.mintedAttemptOwners.has(row.owner), false);
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+
+    processor.scheduleQueueWithWriteLock();
+
+    assert.deepEqual(dispatched, [{ commandId: row.id, workerId: row.owner }]);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.worker_id, row.owner);
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.status, 'started');
+});
+
+test('a previous-boot pid token with a live lease is left alone', () => {
+    const row = seedImportHandoff('previous-boot-live', {
+        owner: `download-attempt:${process.pid}:previous:live`,
+        lease: 'live',
+    });
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+
+    processor.scheduleQueueWithWriteLock();
+
+    assert.deepEqual(dispatched, []);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.worker_id, row.owner);
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.status, 'started');
+    assert.equal(current.payload.downloadState?.state, 'importPending');
+});
+
+test('an expired previous-boot pid token is adopted by compare-and-swap', () => {
+    const row = seedImportHandoff('previous-boot-expired', {
+        owner: `download-attempt:${process.pid}:previous:expired`,
+        lease: 'dead',
+    });
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+
+    processor.scheduleQueueWithWriteLock();
+
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0]?.commandId, row.id);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.status, 'started');
+    assert.notEqual(current.worker_id, row.owner);
+    assert.match(current.worker_id || '', new RegExp(`^download-attempt:${importWorkerInstanceId}:`));
+    assert.equal(dispatched[0]?.workerId, current.worker_id);
+});
+
+test('a dead-owner import handoff is adopted once when two schedulers run', () => {
+    const row = seedImportHandoff('dead-owner', {
+        owner: 'download-attempt:1:dead-owner',
+        lease: 'dead',
+    });
+    const first = new DownloadProcessor() as any;
+    const second = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(first, dispatched);
+    stubImportDispatch(second, dispatched);
+
+    first.scheduleQueueWithWriteLock();
+    second.scheduleQueueWithWriteLock();
+
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0]?.commandId, row.id);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.status, 'started');
+    assert.notEqual(current.worker_id, row.owner);
+    assert.equal((current.payload as { downloadImportHandoff?: { executionStartedAt?: string | null } }).downloadImportHandoff?.executionStartedAt ?? null, null);
+});
+
+function totalChanges(): number {
+    const row = db.prepare('SELECT total_changes() AS n').get() as { n: number };
+    return Number(row.n);
+}
+
+test('a scheduling pass does not write when every handoff is already in memory', () => {
+    const processor = new DownloadProcessor() as any;
+    const empty = totalChanges();
+    processor.scheduleQueueWithWriteLock();
+    assert.equal(totalChanges(), empty, 'an empty import pass is a read');
+
+    const row = seedImportHandoff('steady-memory');
+    processor.pendingImports.push({
+        commandId: row.id,
+        providerId: 'track-steady-memory',
+        type: 'track',
+        workerId: row.owner,
+        importPayload: {
+            type: 'track',
+            provider: 'deezer',
+            providerId: 'track-steady-memory',
+            path: path.join(tempDir, 'staging-steady-memory'),
+        },
+        resolved: { title: 'steady-memory', artist: 'Lease Fixture', cover: null },
+    });
+    processor.activeImports.set(-1, {
+        providerId: 'slot-a',
+        type: 'track',
+        workerId: 'slot-a',
+        promise: Promise.resolve(),
+    });
+    processor.activeImports.set(-2, {
+        providerId: 'slot-b',
+        type: 'track',
+        workerId: 'slot-b',
+        promise: Promise.resolve(),
+    });
+    const held = totalChanges();
+    processor.scheduleQueueWithWriteLock();
+    assert.equal(totalChanges(), held, 'reconcile does not write while the handoff is already queued');
+    assert.equal(processor.pendingImports.some((entry: { commandId: number }) => entry.commandId === row.id), true);
+    const current = CommandQueueManager.get(row.id)!;
+    assert.equal(current.attempt, row.attempt);
+    assert.equal(current.worker_id, row.owner);
+    assert.equal(current.progress_phase, 'waiting to import');
+});
+
+test('import admission watchdog raises and clears the imports health signal', async () => {
+    const row = seedImportHandoff('admission-watchdog', {
+        readyAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+    });
+    const raised = collectHealthDiagnosticsSnapshot();
+    assert.equal(raised.subsystems.imports.status, 'error');
+    assert.match(raised.subsystems.imports.message, new RegExp(`#${row.id}`));
+    assert.equal(raised.issues.some((issue) => issue.scope === 'imports.health'), true);
+
+    const processor = new DownloadProcessor() as any;
+    const dispatched: Array<{ commandId: number; workerId: string }> = [];
+    stubImportDispatch(processor, dispatched);
+    let schedules = 0;
+    processor.scheduleNext = () => { schedules += 1; };
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+        errors.push(args.map((part) => String(part)).join(' '));
+    };
+    try {
+        processor.runImportAdmissionWatchdog();
+        processor.runImportAdmissionWatchdog();
+        assert.equal(schedules, 2, 'each watchdog fire schedules once and does not loop');
+        assert.match(errors.join('\n'), new RegExp(`#${row.id}`));
+    } finally {
+        console.error = originalError;
+    }
+
+    await processor.processQueue();
+    assert.deepEqual(dispatched.map((entry) => entry.commandId), [row.id]);
+    assert.equal(dispatched[0]?.workerId, row.owner);
+    assert.equal(CommandQueueManager.get(row.id)!.attempt, row.attempt);
+
+    processor.runImportAdmissionWatchdog();
+    assert.equal(schedules, 2, 'an active import is not scheduled again');
+
+    assert.equal(CommandQueueManager.complete(row.id, row.owner), true);
+    processor.activeImports.clear();
+    const cleared = collectHealthDiagnosticsSnapshot();
+    assert.equal(cleared.subsystems.imports.status, 'ok');
+    assert.equal(cleared.issues.some((issue) => issue.scope === 'imports.health'), false);
+    processor.runImportAdmissionWatchdog();
+    assert.equal(schedules, 2, 'a cleared handoff does not schedule again');
+});
 
 test('import progress counts organized files rather than previously completed downloads', () => {
     const id = pushTrack('import-progress');

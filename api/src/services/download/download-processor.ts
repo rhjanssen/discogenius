@@ -1,4 +1,5 @@
 import { markAcquisitionPlanningStale } from "../music/acquisition-planning-control.js";
+import { prefetchImportNetworkData, resolveImportedCatalogIdentity } from "../mediafiles/downloaded-tracks-import-service.js";
 import { ProviderUnavailableError } from "./provider-unavailable-error.js";
 import { providerRequestWorkerData } from "../providers/provider-request-state.js";
 import { superviseDownloadProcesses } from "./download-child-process.js";
@@ -12,10 +13,18 @@ import { startExecutionHeartbeat } from '../commands/worker/execution-heartbeat.
 import {CommandModel, CommandModelOf} from "../commands/command-model.js";
 import { DOWNLOAD_COMMAND_NAMES, DOWNLOAD_OR_IMPORT_COMMAND_NAMES, CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
-import { buildDurableQueueOrderClause } from "../commands/command-ordering.js";
+import { parseSqliteDate } from "../commands/command-ordering.js";
+import {
+    listImportPendingHandoffs,
+    listStrandedImportHandoffs,
+    type ImportPendingHandoff,
+} from "../commands/import-admission.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 import { getConfigSection, Config } from '../config/config.js';
 import { downloadEvents } from './download-events.js';
-import { DownloadWaitQueue } from './download-wait-queue.js';
+import { DownloadWaitQueue, type QueueRankRow } from './download-wait-queue.js';
+import { withVerifiedAcquisitionFiles } from '../music/acquisition-file-verification.js';
+import { evaluateWaitingAcquisitionPlan } from './waiting-acquisition-plan.js';
 import {
     invalidateAlbumDownloadStatus,
     invalidateAllDownloadState,
@@ -78,6 +87,10 @@ import type {
 import { DownloadedTracksImportService } from '../mediafiles/downloaded-tracks-import-service.js';
 import { removeEmptyParents } from '../mediafiles/library-files.js';
 import { appEvents, AppEvent, type CommandEventPayload } from '../commands/app-events.js';
+import { asProviderAuthError, ProviderAuthError } from '../providers/provider-auth-error.js';
+import { providersNeedingReauth, providerNeedsReauth, queueHoldMessage, recordProviderAuthFailure } from '../providers/provider-auth-state.js';
+import { probeDeezerBeforeDownloadBatch, startDeezerAuthProbeLoop } from '../providers/deezer/deezer-arl-health.js';
+import { startAppleWrapperHoldProbeLoop } from '../providers/apple-music/apple-music-auth.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
 import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
 import {
@@ -211,6 +224,12 @@ export function remapAlbumTrackOffersForFallback(
         });
         if (candidates.length !== 1) return null;
         remapped.push(applyFallbackTrackOffer(current, candidates[0]));
+    }
+    const identities = new Set<string>();
+    for (const offer of remapped) {
+      const identity = `${offer.provider}:${offer.providerTrackId}`;
+      if (identities.has(identity)) return null;
+      identities.add(identity);
     }
     return remapped;
 }
@@ -450,6 +469,35 @@ const MAX_CONCURRENT_IMPORTS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_IMPORTS', 
 const MAX_CONCURRENT_DOWNLOADS = readIntEnv('DISCOGENIUS_MAX_CONCURRENT_DOWNLOADS', 2, 1);
 const MAX_PENDING_IMPORTS = readIntEnv('DISCOGENIUS_MAX_PENDING_IMPORTS', 4, 1);
 const DOWNLOAD_LEASE_MS = readIntEnv('DISCOGENIUS_DOWNLOAD_LEASE_MS', 90_000, 1_000);
+/** How long shutdown waits for running imports to finish. A killed import is
+ * failed closed on restart once it changed files (it may have moved half an
+ * album), so finishing it is worth most of the stop grace period (compose:
+ * 180s). Imports on the HDD take 1-3 minutes. */
+const SHUTDOWN_IMPORT_DRAIN_MS = readIntEnv('DISCOGENIUS_SHUTDOWN_IMPORT_DRAIN_MS', 140_000, 0);
+
+/** Wait until every running import settles, or until the deadline. Returns the
+ * command ids still running when it gave up. Never throws: an import's own
+ * failure is recorded by the import itself. */
+export async function drainActiveImports(
+    running: ReadonlyMap<number, { promise: Promise<unknown> }>,
+    deadlineMs: number,
+): Promise<number[]> {
+    const ids = [...running.keys()];
+    if (ids.length === 0) return [];
+    const settled = new Set<number>();
+    let timer: NodeJS.Timeout | undefined;
+    const allDone = Promise.all(ids.map((id) => Promise.resolve(running.get(id)!.promise)
+        .catch(() => undefined)
+        .then(() => { settled.add(id); })));
+    const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, deadlineMs); });
+    await Promise.race([allDone, timeout]);
+    clearTimeout(timer);
+    return ids.filter((id) => !settled.has(id));
+}
+
+/** One id per process start. Docker reuses the same pid, so a pid prefix would
+ * treat the previous boot's still-live import lease as ours and skip CAS. */
+export const importWorkerInstanceId = randomUUID();
 const DOWNLOAD_HEARTBEAT_MS = readIntEnv(
     'DISCOGENIUS_DOWNLOAD_HEARTBEAT_MS',
     Math.max(1_000, Math.floor(DOWNLOAD_LEASE_MS / 3)),
@@ -471,6 +519,11 @@ const DOWNLOAD_RECOVERY_RETRY_MS = readIntEnv(
     5_000,
     0,
 );
+const IMPORT_ADMISSION_WATCHDOG_MS = readIntEnv(
+    'DISCOGENIUS_IMPORT_ADMISSION_WATCHDOG_MS',
+    60_000,
+    1_000,
+);
 export const DOWNLOAD_WORKER_MARKER = "discogeniusDownloadWorker" as const;
 
 type DurableImportHandoff = {
@@ -478,6 +531,11 @@ type DurableImportHandoff = {
     importPayload: ImportDownloadCommand;
     resolved: { title: string; artist: string; cover: string | null };
     executionStartedAt?: string | null;
+    /** TrackFiles ids the import had already placed before artwork, lyrics, or tags. */
+    importTouchedFileIds?: number[];
+    /** 1 = this attempt writes libraryMutationStartedAt before its first file change. */
+    mutationCheckpoint?: number;
+    libraryMutationStartedAt?: string | null;
 };
 
 type InterruptedDownloadRow = {
@@ -503,6 +561,36 @@ function isUnsafeInterruptedImport(payload: Record<string, any>): boolean {
     const state = String(payload.downloadState?.state || '');
     const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
     return state === 'importing' || Boolean(handoff?.executionStartedAt);
+}
+
+/** Started, but killed before touching staged or library files (for example
+ * while waiting for a disk permit during shutdown). Safe to run again. */
+function isUntouchedInterruptedImport(payload: Record<string, any>): boolean {
+    const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+    return Boolean(handoff?.executionStartedAt)
+        && handoff?.mutationCheckpoint === 1
+        && !handoff.libraryMutationStartedAt
+        && !(Array.isArray(handoff.importTouchedFileIds) && handoff.importTouchedFileIds.length > 0)
+        && Boolean(handoff.importPayload);
+}
+
+/** Put an untouched import back in its parked importPending shape, ownerless,
+ * so the scheduler re-adopts it on the same attempt. */
+function reparkUntouchedImport(id: number, payload: Record<string, any>): boolean {
+    const handoff = payload.downloadImportHandoff as DurableImportHandoff;
+    const next = {
+        ...payload,
+        downloadState: { ...(payload.downloadState || {}), state: 'importPending', statusMessage: 'Waiting to import' },
+        downloadImportHandoff: { ...handoff, executionStartedAt: null },
+    };
+    const result = db.prepare(`
+        UPDATE commands
+        SET payload = ?, worker_id = NULL, lease_expires_at = NULL,
+            progress_phase = 'waiting to import', blocked_reason = 'waiting on import slot',
+            updated_at = ?
+        WHERE id = ? AND status = 'started'
+    `).run(JSON.stringify(next), new Date().toISOString(), id);
+    return result.changes === 1;
 }
 
 function isParkedImportPending(payload: Record<string, any>): boolean {
@@ -537,6 +625,19 @@ export function recoverInterruptedDownloadAttempts(
 
     for (const row of rows) {
         const payload = parseCommandPayload(row.payload);
+        if (isParkedImportPending(payload)) {
+            // The scheduler re-adopts this handoff in place. Requeueing it would
+            // burn an attempt and leave status='queued', which is the only shape
+            // the old recovery claim could see.
+            continue;
+        }
+
+        if (isUntouchedInterruptedImport(payload)) {
+            if (reparkUntouchedImport(row.id, payload)) requeued += 1;
+            else ignored += 1;
+            continue;
+        }
+
         const owner = row.worker_id || `download-restart-recovery:${row.id}:${randomUUID()}`;
         if (!row.worker_id) {
             const adopted = db.prepare(`
@@ -551,7 +652,6 @@ export function recoverInterruptedDownloadAttempts(
         }
 
         const unsafeImport = isUnsafeInterruptedImport(payload);
-        const parkedImport = isParkedImportPending(payload);
         const currentAttempt = Math.max(1, Number(row.attempt) || 1);
         const recovery = CommandQueueManager.recoverOwnedCommand({
             id: row.id,
@@ -561,22 +661,40 @@ export function recoverInterruptedDownloadAttempts(
                 : reason,
             // Setting maxAttempts to the current attempt makes the recovery API
             // take its visible poison/fail branch for unsafe partial imports.
-            // Parked "waiting to import" is Lidarr Completed-download state: it
-            // must not burn retry budget while Rename/Retag holds the disk slot.
+            // Parked importPending rows are skipped above and never reach this call.
             maxAttempts: unsafeImport
                 ? currentAttempt
-                : parkedImport
-                    ? currentAttempt + 1
-                    : DOWNLOAD_RECOVERY_MAX_ATTEMPTS,
+                : DOWNLOAD_RECOVERY_MAX_ATTEMPTS,
             retryDelayMs: unsafeImport ? 0 : DOWNLOAD_RECOVERY_RETRY_MS,
             now,
         });
         if (recovery.outcome === 'requeued') requeued += 1;
-        else if (recovery.outcome === 'failed') failed += 1;
+        else if (recovery.outcome === 'failed') {
+            failed += 1;
+            if (unsafeImport) queueImportTagRepair(row.id, payload);
+        }
         else ignored += 1;
     }
 
     return { requeued, failed, ignored };
+}
+
+/** A poisoned import may have tagged only part of the album. Retag exactly
+ * the files it had already placed. Older in-flight rows have no id list, and
+ * inventing a library-wide retag would be worse than leaving them for a person. */
+function queueImportTagRepair(commandId: number, payload: Record<string, any>): void {
+    const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+    const ids = Array.from(new Set(
+        (Array.isArray(handoff?.importTouchedFileIds) ? handoff.importTouchedFileIds : [])
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0),
+    ));
+    if (ids.length === 0) return;
+    CommandQueueManager.push(
+        CommandNames.RetagFiles,
+        { ids },
+        `import-tag-repair:${commandId}`,
+    );
 }
 
 // Docker: tiddl/ffmpeg installed globally via Dockerfile. Local dev resolves them from PATH (TIDDL_BIN override supported).
@@ -600,6 +718,11 @@ export class DownloadProcessor {
     private stopHeartbeat?: () => Promise<void>;
     private lastBusyLogAt: number = 0;
     private queueEventsSubscribed: boolean = false;
+    private admissionCursor: QueueRankRow | null = null;
+    private schedulingQueued = false;
+    private restartAdmissionQueued = false;
+    private admissionVerificationRunning = false;
+    private admissionEpoch = 0;
 
     /**
      * Active download slots keyed by command id. Up to MAX_CONCURRENT_DOWNLOADS
@@ -619,12 +742,18 @@ export class DownloadProcessor {
     private explicitlyCancelledDownloads = new Set<number>();
     /** Attempt owner retained across download → pending import → active import. */
     private attemptOwners = new Map<number, string>();
+    /** Every owner token this process minted. Clearing attemptOwners must not
+     * forget that a live handoff still belongs to this worker. */
+    private mintedAttemptOwners = new Set<string>();
+    private importAdmissionWatchdog?: NodeJS.Timeout;
 
     // Download commands whose download phase finished and are waiting for an
     // import slot. The command stays 'started' throughout (one queue entity
     // spanning download → import, Lidarr TrackedDownload-style); it only leaves
-    // the active queue for History when the import completes/fails. Rebuilt from
-    // scratch on restart — interrupted commands are re-queued by crash recovery.
+    // the active queue for History when the import completes/fails. The DB row
+    // is the source of truth: a scheduling pass re-adopts any replayable
+    // handoff this list lost. Entries leave the list only when the import
+    // starts, the durable row is terminal, or another live owner holds it.
     private pendingImports: Array<{
         commandId: number;
         providerId: string;
@@ -667,9 +796,15 @@ export class DownloadProcessor {
         this.retryWakeTimer.unref();
     }
 
-    private scheduleNext(): void {
+    private scheduleNext(restartAdmission = true): void {
+        this.restartAdmissionQueued ||= restartAdmission;
+        if (this.schedulingQueued) return;
+        this.schedulingQueued = true;
         setImmediate(() => {
-            this.processQueue().catch((error) => {
+            this.schedulingQueued = false;
+            const restart = this.restartAdmissionQueued;
+            this.restartAdmissionQueued = false;
+            this.processQueue(restart).catch((error) => {
                 console.error('[DOWNLOAD-PROCESSOR] Error scheduling next queue item:', error);
             });
         });
@@ -718,7 +853,26 @@ export class DownloadProcessor {
     }
 
     private makeAttemptOwner(commandId: number): string {
-        return `download-attempt:${process.pid}:${commandId}:${randomUUID()}`;
+        const workerId = `download-attempt:${importWorkerInstanceId}:${commandId}:${randomUUID()}`;
+        this.mintedAttemptOwners.add(workerId);
+        return workerId;
+    }
+
+    private ownsImportWorker(workerId: string | null | undefined): boolean {
+        if (!workerId) return false;
+        if (this.mintedAttemptOwners.has(workerId)) return true;
+        for (const owner of this.attemptOwners.values()) {
+            if (owner === workerId) return true;
+        }
+        // Same boot, new in-memory queue: the token still names this start.
+        // A previous boot's pid token does not, even when the pid matches.
+        return workerId.startsWith(`download-attempt:${importWorkerInstanceId}:`);
+    }
+
+    private leaseIsLive(leaseExpiresAt: string | null | undefined, now: Date): boolean {
+        if (!leaseExpiresAt) return false;
+        const expiresAt = parseSqliteDate(leaseExpiresAt);
+        return expiresAt > now.getTime();
     }
 
     private claimDownloadJob(job: CommandModel): CommandModel | null {
@@ -764,6 +918,10 @@ export class DownloadProcessor {
             || command.status !== 'started'
             || (workerId && command.worker_id && command.worker_id !== workerId)
         ) {
+            // The claim already reserved the disk. Put that reservation back
+            // when this attempt will not run, or the row stays progress_phase
+            // 'importing' with nobody in activeImports.
+            if (workerId) this.releaseStuckImportReservation(commandId, workerId);
             // Never let a retired attempt delete a workspace now owned by a
             // replacement. Explicit cancellation performs its own safe cleanup.
             this.scheduleNext();
@@ -827,6 +985,7 @@ export class DownloadProcessor {
                     importPayload,
                     resolved,
                     executionStartedAt: new Date().toISOString(),
+                    mutationCheckpoint: 1,
                 };
                 await withSqliteWriteGate(() => {
                     const phaseUpdate = CommandQueueManager.updateState(commandId, {
@@ -880,6 +1039,9 @@ export class DownloadProcessor {
                     cover: resolved.cover,
                 }, waitJobId);
                 console.log(`[DOWNLOAD-PROCESSOR] Completed download+import for ${type} ${providerId} (command #${commandId})`);
+                // Identity/album refresh after the plan is released; network-bound,
+                // so it never holds the disk slot or blocks the next import.
+                void resolveImportedCatalogIdentity(type, String(importPayload.providerId || providerId), importPayload.provider || null);
             } catch (error: any) {
                 if (error?.name === 'ImportDownloadCancelledError' || error?.constructor?.name === 'ImportDownloadCancelledError') {
                     console.log(`[DOWNLOAD-PROCESSOR] Import command #${commandId} cancelled (${error.message})`);
@@ -1139,6 +1301,8 @@ export class DownloadProcessor {
         warningMessage?: string;
         primaryProvider?: string;
         fallbackProvider?: string;
+        /** Same displayed percent, new file. Forces last_progress_at and the lease forward. */
+        subphaseTick?: boolean;
     }, workerId: string | undefined = this.attemptOwners.get(commandId)) {
         // Merge into any buffered snapshot instead of replacing it: progress
         // events are partial (a per-track update carries no statusMessage; a
@@ -1168,6 +1332,8 @@ export class DownloadProcessor {
         // scalar event would lose other tracks completed during this interval.
         const tracks = state.tracks ?? buffered?.tracks ?? this.getProgressTracksForEvent(commandId);
         if (tracks) merged.tracks = applyTrackProgress(tracks, state);
+        const subphaseTick = state.subphaseTick === true;
+        delete merged.subphaseTick;
         const snapshot = merged as typeof state;
 
         // Terminal / transition states bypass the buffer and write immediately.
@@ -1175,7 +1341,8 @@ export class DownloadProcessor {
             // Flush any pending buffered state for this job first so the
             // immediate write always represents the latest snapshot.
             this.progressBuffer.delete(commandId);
-            if (!this.tryWriteDownloadState(commandId, snapshot, workerId)) {
+            const toWrite = subphaseTick ? { ...snapshot, subphaseTick: true } : snapshot;
+            if (!this.tryWriteDownloadState(commandId, toWrite, workerId)) {
                 this.progressBuffer.set(commandId, { workerId, state: snapshot });
                 this.ensureProgressFlushTimer();
             }
@@ -1238,6 +1405,7 @@ export class DownloadProcessor {
         warningMessage?: string;
         primaryProvider?: string;
         fallbackProvider?: string;
+        subphaseTick?: boolean;
     }, workerId?: string) {
         const currentJob = CommandQueueManager.get(commandId);
         const currentDownloadState = (currentJob?.payload?.downloadState as Record<string, unknown> | undefined) || {};
@@ -1337,7 +1505,11 @@ export class DownloadProcessor {
             && nextProgress !== currentJob?.progress;
         const phaseChanged = phase !== undefined
             && phase !== currentJob?.progress_phase;
-        const positionChanged = nextCurrentFileNum !== currentDownloadState.currentFileNum
+        // A tag, lyric, or cover file keeps the same percent. The tick is still
+        // progress: last_progress_at and the lease move, or a live phase looks frozen.
+        const subphaseTick = state.subphaseTick === true;
+        const positionChanged = subphaseTick
+            || nextCurrentFileNum !== currentDownloadState.currentFileNum
             || nextTotalFiles !== currentDownloadState.totalFiles
             || state.trackStatus !== undefined
                 && state.trackStatus !== currentDownloadState.trackStatus;
@@ -1361,6 +1533,7 @@ export class DownloadProcessor {
                 : undefined,
             progressTotal: positionChanged ? 100 : undefined,
             blockedReason,
+            renewHeartbeat: subphaseTick,
         });
     }
 
@@ -1431,76 +1604,267 @@ export class DownloadProcessor {
     }
 
     /**
-     * Rebuild durable download→import handoffs after a process/worker restart.
-     * Only handoffs that never entered import execution are replayable.
+     * The DB is the source of truth for import handoffs. One indexed read per
+     * scheduling pass. A write happens only when a missing handoff needs a new
+     * owner (queued, null owner, or a dead lease). A live owner this worker
+     * minted is put back in memory with no write and no extra attempt.
      */
-    private claimRecoveredImportHandoffs(): void {
-        const available = MAX_CONCURRENT_IMPORTS
-            - this.activeImports.size
-            - this.pendingImports.length;
-        if (available <= 0) return;
+    private reconcileImportHandoffs(rows: readonly ImportPendingHandoff[], now: Date): void {
+        const present = new Set<number>([
+            ...this.pendingImports.map((entry) => entry.commandId),
+            ...this.activeImports.keys(),
+            ...this.activeDownloads.keys(),
+        ]);
+        const missing = rows.filter((row) =>
+            !present.has(row.id)
+            && row.hasImportPayload
+            && !row.executionStartedAt
+        );
+        if (missing.length === 0) return;
 
-        const candidateIds = db.prepare(`
-            SELECT id
-            FROM commands
-            WHERE status = 'queued'
-              AND name IN (${DOWNLOAD_COMMAND_NAMES.map(() => '?').join(',')})
-              AND (retry_after IS NULL OR julianday(retry_after) <= julianday('now'))
+        const payloads = this.loadCommandPayloads(missing.map((row) => row.id));
+        for (const row of missing) {
+            const payload = payloads.get(row.id);
+            if (!payload) continue;
+            const workerId = this.resolveImportHandoffOwner(row, now);
+            if (!workerId) continue;
+            this.rememberImportHandoff(row, workerId, payload);
+        }
+    }
+
+    private resolveImportHandoffOwner(row: ImportPendingHandoff, now: Date): string | null {
+        const live = row.status === 'started' && !!row.workerId && this.leaseIsLive(row.leaseExpiresAt, now);
+        if (live) {
+            return this.ownsImportWorker(row.workerId) ? row.workerId : null;
+        }
+        return this.takeoverImportHandoff(row.id, row.workerId, now);
+    }
+
+    /** Compare-and-swap the owner. Attempt is not incremented. A second scheduler
+     * loses the WHERE worker_id predicate and must not import. */
+    private takeoverImportHandoff(id: number, previousWorkerId: string | null, now: Date): string | null {
+        const workerId = this.makeAttemptOwner(id);
+        const heartbeat = now.toISOString();
+        const expires = new Date(now.getTime() + DOWNLOAD_LEASE_MS).toISOString();
+        const result = db.prepare(`
+            UPDATE commands
+            SET status = 'started',
+                worker_id = ?,
+                heartbeat_at = ?,
+                lease_expires_at = ?,
+                started_at = COALESCE(started_at, ?),
+                blocked_reason = COALESCE(blocked_reason, 'waiting on import slot'),
+                progress_phase = CASE
+                    WHEN progress_phase = 'importing' THEN 'waiting to import'
+                    ELSE COALESCE(progress_phase, 'waiting to import')
+                END,
+                updated_at = ?
+            WHERE id = ?
+              AND status IN ('queued', 'started')
+              AND worker_id IS ?
               AND json_valid(payload)
               AND json_extract(payload, '$.downloadState.state') = 'importPending'
-            ORDER BY ${buildDurableQueueOrderClause()}
-            LIMIT ?
-        `).all(...DOWNLOAD_COMMAND_NAMES, available) as Array<{ id: number }>;
-        const candidates = candidateIds
-            .map((row) => CommandQueueManager.get(row.id))
-            .filter((candidate): candidate is CommandModel => candidate != null);
-        let claimedCount = 0;
-        for (const candidate of candidates) {
-            if (claimedCount >= available) break;
-            const payload = candidate.payload as Record<string, any>;
-            const state = String(payload.downloadState?.state || '');
-            const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+              AND json_extract(payload, '$.downloadImportHandoff.executionStartedAt') IS NULL
+              AND json_extract(payload, '$.downloadImportHandoff.importPayload') IS NOT NULL
+              AND (
+                status = 'queued'
+                OR worker_id IS NULL
+                OR lease_expires_at IS NULL
+                OR julianday(lease_expires_at) <= julianday(?)
+              )
+        `).run(
+            workerId,
+            heartbeat,
+            expires,
+            heartbeat,
+            heartbeat,
+            id,
+            previousWorkerId,
+            heartbeat,
+        );
+        if (result.changes !== 1) return null;
+        console.warn(`[DOWNLOAD-PROCESSOR] Re-adopted import handoff #${id} without a new attempt`);
+        return workerId;
+    }
+
+    private loadCommandPayloads(ids: readonly number[]): Map<number, Record<string, any>> {
+        const payloads = new Map<number, Record<string, any>>();
+        if (ids.length === 0) return payloads;
+        const rows = db.prepare(`
+            SELECT id, payload FROM commands WHERE id IN ${SQL_JSON_LIST}
+        `).all(jsonList(ids)) as Array<{ id: number; payload: string | null }>;
+        for (const row of rows) {
+            payloads.set(Number(row.id), parseCommandPayload(row.payload));
+        }
+        return payloads;
+    }
+
+    private rememberImportHandoff(row: ImportPendingHandoff, workerId: string, payload: Record<string, any>): void {
+        if (this.pendingImports.some((entry) => entry.commandId === row.id) || this.activeImports.has(row.id)) return;
+        const handoff = payload.downloadImportHandoff as DurableImportHandoff | undefined;
+        if (!handoff?.importPayload || handoff.executionStartedAt) return;
+        const type: DownloadJobType = row.name === CommandNames.DownloadVideo
+            ? 'video'
+            : row.name === CommandNames.DownloadAlbum
+                ? 'album'
+                : 'track';
+        this.attemptOwners.set(row.id, workerId);
+        this.pendingImports.push({
+            commandId: row.id,
+            providerId: String(
+                handoff.importPayload.providerId
+                || handoff.importPayload.provider
+                || '',
+            ),
+            type,
+            importPayload: handoff.importPayload,
+            resolved: handoff.resolved || {
+                title: String(payload.title || 'Unknown'),
+                artist: String(payload.artist || 'Unknown'),
+                cover: (payload.cover as string | null | undefined) ?? null,
+            },
+            workerId,
+        });
+        if (workerId !== row.workerId) {
+            // takeoverImportHandoff already logged the owner change.
+            return;
+        }
+        console.warn(`[DOWNLOAD-PROCESSOR] Re-adopted import handoff #${row.id} on attempt ${row.attempt}`);
+    }
+
+    private releaseStuckImportReservation(commandId: number, workerId: string): boolean {
+        const result = db.prepare(`
+            UPDATE commands
+            SET progress_phase = 'waiting to import',
+                blocked_reason = 'waiting on import slot'
+            WHERE id = ?
+              AND status = 'started'
+              AND worker_id = ?
+              AND progress_phase = 'importing'
+              AND json_valid(payload)
+              AND json_extract(payload, '$.downloadState.state') = 'importPending'
+              AND json_extract(payload, '$.downloadImportHandoff.executionStartedAt') IS NULL
+        `).run(commandId, workerId);
+        return result.changes === 1;
+    }
+
+    /** 'drop' is only for a durable terminal row, an import that already started,
+     * or a live owner that is not this worker. Replayable work stays queued. */
+    private preparePendingImport(
+        entry: DownloadProcessor['pendingImports'][number],
+        now: Date,
+    ): 'ready' | 'defer' | 'drop' {
+        const command = CommandQueueManager.get(entry.commandId);
+        if (!command || (command.status !== 'started' && command.status !== 'queued')) return 'drop';
+        const payload = command.payload as Record<string, any>;
+        const handoff = payload?.downloadImportHandoff as DurableImportHandoff | undefined;
+        if (String(payload?.downloadState?.state || '') !== 'importPending' || !handoff?.importPayload || handoff.executionStartedAt) {
+            return 'drop';
+        }
+        const dbOwner = command.worker_id ?? null;
+        const live = command.status === 'started' && !!dbOwner && this.leaseIsLive(command.lease_expires_at, now);
+        if (live) {
+            if (!dbOwner || !this.ownsImportWorker(dbOwner)) return 'drop';
+            entry.workerId = dbOwner;
+            this.attemptOwners.set(entry.commandId, dbOwner);
             if (
-                state !== 'importPending'
-                || !handoff?.importPayload
-                || handoff.executionStartedAt
+                command.progress_phase === 'importing'
+                && this.mintedAttemptOwners.has(dbOwner)
+                && !this.activeImports.has(entry.commandId)
             ) {
+                this.releaseStuckImportReservation(entry.commandId, dbOwner);
+            }
+            return 'ready';
+        }
+        const adopted = this.takeoverImportHandoff(entry.commandId, dbOwner, now);
+        if (!adopted) {
+            // The compare-and-swap lost, or the row changed between the read
+            // and the update. A replayable handoff stays in memory. Dropping
+            // it here is how a started import disappeared with no durable write.
+            const latest = CommandQueueManager.get(entry.commandId);
+            if (!latest || (latest.status !== 'started' && latest.status !== 'queued')) return 'drop';
+            const latestPayload = latest.payload as Record<string, any>;
+            const latestHandoff = latestPayload?.downloadImportHandoff as DurableImportHandoff | undefined;
+            if (
+                String(latestPayload?.downloadState?.state || '') !== 'importPending'
+                || !latestHandoff?.importPayload
+                || latestHandoff.executionStartedAt
+            ) {
+                return 'drop';
+            }
+            const latestOwner = latest.worker_id ?? null;
+            const latestLive = latest.status === 'started'
+                && !!latestOwner
+                && this.leaseIsLive(latest.lease_expires_at, now);
+            if (latestLive && latestOwner && this.ownsImportWorker(latestOwner)) {
+                entry.workerId = latestOwner;
+                this.attemptOwners.set(entry.commandId, latestOwner);
+                return 'ready';
+            }
+            if (latestLive) return 'drop';
+            return 'defer';
+        }
+        entry.workerId = adopted;
+        entry.importPayload = handoff.importPayload;
+        entry.resolved = handoff.resolved || entry.resolved;
+        return 'ready';
+    }
+
+    private dispatchReadyImports(now: Date): void {
+        const deferred: DownloadProcessor['pendingImports'] = [];
+        const queued = this.pendingImports.splice(0, this.pendingImports.length);
+        for (const entry of queued) {
+            if (this.activeImports.size >= MAX_CONCURRENT_IMPORTS) {
+                deferred.push(entry);
                 continue;
             }
-
-            const claimed = this.claimDownloadJob(candidate);
-            if (!claimed) continue;
-            const workerId = claimed.worker_id;
-            if (!workerId) continue;
-
-            const type: DownloadJobType = candidate.name === CommandNames.DownloadVideo
-                ? 'video'
-                : candidate.name === CommandNames.DownloadAlbum
-                    ? 'album'
-                    : 'track';
-            this.pendingImports.push({
-                commandId: candidate.id,
-                providerId: String(
-                    handoff.importPayload.providerId
-                    || handoff.importPayload.provider
-                    || candidate.ref_id
-                    || '',
-                ),
-                type,
-                importPayload: handoff.importPayload,
-                resolved: handoff.resolved || {
-                    title: String(payload.title || 'Unknown'),
-                    artist: String(payload.artist || 'Unknown'),
-                    cover: payload.cover ?? null,
-                },
-                workerId,
-            });
-            this.persistDownloadState(candidate.id, {
-                state: 'importPending',
-                statusMessage: 'Recovered download; waiting to import',
-            }, workerId);
-            claimedCount += 1;
+            if (this.activeImports.has(entry.commandId)) continue;
+            const prepared = this.preparePendingImport(entry, now);
+            if (prepared === 'drop') continue;
+            if (prepared !== 'ready') {
+                deferred.push(entry);
+                continue;
+            }
+            // One refusal must not stop the handoff behind it. Disk admission
+            // is global, but a single reserved or foreign head used to break
+            // the loop and leave every later import unscheduled.
+            if (!CommandQueueManager.claimImportForExecution(entry.commandId, entry.workerId)) {
+                deferred.push(entry);
+                continue;
+            }
+            this.dispatchImportPhase(entry);
         }
+        const seen = new Set(this.pendingImports.map((entry) => entry.commandId));
+        for (const entry of deferred) {
+            if (seen.has(entry.commandId) || this.activeImports.has(entry.commandId)) continue;
+            this.pendingImports.push(entry);
+            seen.add(entry.commandId);
+        }
+    }
+
+    private startImportAdmissionWatchdog(): void {
+        if (this.importAdmissionWatchdog) return;
+        this.importAdmissionWatchdog = setInterval(() => {
+            try {
+                this.runImportAdmissionWatchdog();
+            } catch (error) {
+                console.error('[DOWNLOAD-PROCESSOR] Import admission watchdog failed:', error);
+            }
+        }, IMPORT_ADMISSION_WATCHDOG_MS);
+        this.importAdmissionWatchdog.unref();
+    }
+
+    /** One read and, only when a handoff has been waiting with no import, one
+     * schedule. A second call does not loop; the interval is the retry. */
+    runImportAdmissionWatchdog(now: Date = new Date()): void {
+        if (this.suspended || this.activeImports.size > 0) return;
+        const stranded = listStrandedImportHandoffs(now);
+        if (stranded.length === 0) return;
+        const ids = stranded.map((row) => `#${row.id}`).join(', ');
+        console.error(
+            `[DOWNLOAD-PROCESSOR] Completed downloads waiting for disk admission with no import active: ${ids}`,
+        );
+        this.scheduleNext();
     }
 
     async initialize() {
@@ -1516,6 +1880,7 @@ export class DownloadProcessor {
         }
 
         this.startHeartbeatLoop();
+        this.startImportAdmissionWatchdog();
 
         // Recover durable ownership before any provider initialization can
         // block. No replacement work is dispatched until every old attempt is
@@ -1557,20 +1922,43 @@ export class DownloadProcessor {
                 // admission. Wake pending imports before its next work unit.
                 if (event.status === 'queued' || event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.scheduleNext();
             });
+            appEvents.on(AppEvent.PROVIDER_AUTH_CHANGED, (event) => {
+                if (event.status === "ok") this.scheduleNext();
+            });
             this.queueEventsSubscribed = true;
         }
+
+        startDeezerAuthProbeLoop();
+        startAppleWrapperHoldProbeLoop();
 
         // The download queue is event-driven, not polled: it runs on app
         // startup, when items are added, and when the previous item finishes.
         await this.processQueue();
     }
 
-    async processQueue(): Promise<void> {
+    async processQueue(restartAdmission = true): Promise<void> {
         if (this.suspended) return;
+        await this.probeDeezerQueueAuth();
         return withSqliteWriteGate(() => {
+            if (restartAdmission) { this.admissionCursor = null; this.admissionEpoch++; }
             this.scheduleQueueWithWriteLock();
             this.armRetryWake();
         }, 'download:schedule');
+    }
+
+    /** One indexed read. The Deezer network probe runs only when a wait row exists and the last probe is stale. */
+    private async probeDeezerQueueAuth(): Promise<void> {
+        try {
+            const waiting = db.prepare(`
+                SELECT 1 AS present FROM DownloadQueue
+                WHERE command_id IS NULL AND lower(COALESCE(provider, '')) = 'deezer'
+                LIMIT 1
+            `).get();
+            if (!waiting) return;
+            await probeDeezerBeforeDownloadBatch();
+        } catch (error) {
+            console.error("[DOWNLOAD-PROCESSOR] Deezer auth probe failed:", error instanceof Error ? error.message : "unknown");
+        }
     }
 
     private scheduleQueueWithWriteLock(): void {
@@ -1581,28 +1969,19 @@ export class DownloadProcessor {
         // ── Import slot: imports run alongside downloads (Lidarr/Tidarr pattern) ──
         // Downloads and imports use separate slots so importing never blocks the
         // next download from starting. Import phases belong to download commands
-        // that finished downloading (this.pendingImports) — there is no separate
-        // ImportDownload queue row.
-        this.claimRecoveredImportHandoffs();
-        while (this.activeImports.size < MAX_CONCURRENT_IMPORTS && this.pendingImports.length > 0) {
-            const entry = this.pendingImports[0];
-            if (!entry) break;
-            if (this.activeImports.has(entry.commandId)) { this.pendingImports.shift(); continue; }
-            const owner = entry.workerId || this.attemptOwners.get(entry.commandId);
-            if (!owner || !CommandQueueManager.isExecutionOwner(entry.commandId, owner)) {
-                this.pendingImports.shift();
-                continue;
-            }
-            if (!CommandQueueManager.claimImportForExecution(entry.commandId, owner)) break;
-            this.pendingImports.shift();
-            this.dispatchImportPhase(entry);
-        }
+        // that finished downloading. The durable handoff, not this.pendingImports,
+        // decides what is waiting.
+        const now = new Date();
+        const importHandoffs = listImportPendingHandoffs();
+        this.reconcileImportHandoffs(importHandoffs, now);
+        this.dispatchReadyImports(now);
 
         // Pausing blocks new provider downloads, but a download that already
         // reached the safe import handoff may still import. Active imports also
         // finish. This keeps completed bytes from being stranded while the
         // provider-facing queue is paused.
         if (this.isPaused) {
+            this.admissionCursor = null;
             DownloadWaitQueue.releaseUnstartedClaims();
             return;
         }
@@ -1615,15 +1994,8 @@ export class DownloadProcessor {
         // otherwise fast downloads can strand dozens of finished albums behind
         // slow file moves and retags. Count queued handoffs too, so a worker
         // restart cannot bypass the limit by emptying the in-memory list.
-        const pendingImportCount = db.prepare(`
-            SELECT COUNT(*) AS count
-            FROM commands INDEXED BY idx_commands_status_name_started
-            WHERE status IN ('queued', 'started')
-              AND name IN (${DOWNLOAD_COMMAND_NAMES.map(() => '?').join(',')})
-              AND json_valid(payload)
-              AND json_extract(payload, '$.downloadState.state') = 'importPending'
-        `).get(...DOWNLOAD_COMMAND_NAMES) as { count: number };
-        if (pendingImportCount.count >= MAX_PENDING_IMPORTS) return;
+        if (importHandoffs.length >= MAX_PENDING_IMPORTS) return;
+        if (this.admissionVerificationRunning) return;
 
         // ── Download slots: up to MAX_CONCURRENT_DOWNLOADS in parallel, but at
         // most one per provider (same-provider downloads stay serialized). ──
@@ -1633,22 +2005,32 @@ export class DownloadProcessor {
         // only those claimed wait rows; never start a command with no wait row.
         while (this.activeDownloads.size < MAX_CONCURRENT_DOWNLOADS) {
             const activeProviders = new Set<string>();
+            for (const provider of providersNeedingReauth()) activeProviders.add(provider.toLowerCase());
             for (const entry of this.activeDownloads.values()) {
-                activeProviders.add(entry.provider);
+                activeProviders.add(entry.provider.toLowerCase());
             }
 
             const candidates = CommandQueueManager.getTopPendingJobsByTypes(DOWNLOAD_COMMAND_NAMES, 20);
             let job = candidates.find((candidate) => {
-                if (activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand))) {
+                if (activeProviders.has(this.resolvePayloadProvider(candidate.payload as DownloadCommand).toLowerCase())) {
                     return false;
                 }
                 return DownloadWaitQueue.getByCommandId(candidate.id) != null;
             });
 
             if (!job) {
-                const claimed = DownloadWaitQueue.claimNext(activeProviders);
+                const page = DownloadWaitQueue.claimNextPage(activeProviders, this.admissionCursor);
+                this.admissionCursor = page.nextCursor;
+                const claimed = page.claimed;
                 if (claimed) {
                     job = CommandQueueManager.get(claimed.commandId) ?? undefined;
+                } else if (page.verificationWait) {
+                    this.admissionVerificationRunning = true;
+                    const wait = page.verificationWait;
+                    const epoch = this.admissionEpoch;
+                    setImmediate(() => { void this.verifyWaitingFiles(wait.id, epoch, page.nextCursor); });
+                } else if (page.nextCursor) {
+                    this.scheduleNext(false);
                 }
             }
 
@@ -1660,6 +2042,36 @@ export class DownloadProcessor {
             }
 
             void this.dispatchDownloadPhase(job);
+        }
+    }
+
+    private importBackpressureReached(): boolean {
+        return listImportPendingHandoffs().length >= MAX_PENDING_IMPORTS;
+    }
+
+    private async verifyWaitingFiles(waitId:number, epoch:number, cursor:QueueRankRow|null):Promise<void> {
+        try {
+            const wait = DownloadWaitQueue.get(waitId);
+            if (!wait || wait.command_id != null || wait.plan_id == null) return;
+            const plan = evaluateWaitingAcquisitionPlan(db,wait.plan_id,wait.payload,wait.provider);
+            if (plan.status !== 'ready') return;
+            await withVerifiedAcquisitionFiles(db,plan.planId,wait.track_ids,async (verified,snapshotCurrent) => {
+                await withSqliteWriteGate(() => {
+                    if (this.suspended || this.isPaused || this.importBackpressureReached() || !snapshotCurrent()) return;
+                    const current = DownloadWaitQueue.get(waitId);
+                    if (!current || current.command_id != null || JSON.stringify(current.payload) !== JSON.stringify(wait.payload)
+                        || JSON.stringify(current.track_ids) !== JSON.stringify(wait.track_ids)) return;
+                    const currentPlan = evaluateWaitingAcquisitionPlan(db,current.plan_id ?? -1,current.payload,current.provider);
+                    if (currentPlan.status !== 'ready' || currentPlan.planId !== plan.planId) return;
+                    DownloadWaitQueue.claim(waitId,verified);
+                },'download:verified-file-admission');
+            });
+        } catch (error) {
+            console.warn('[DOWNLOAD-PROCESSOR] Imported files could not be verified:', error);
+        } finally {
+            this.admissionVerificationRunning = false;
+            if (epoch === this.admissionEpoch) this.admissionCursor = cursor;
+            this.scheduleNext(epoch !== this.admissionEpoch);
         }
     }
 
@@ -1953,6 +2365,15 @@ export class DownloadProcessor {
             // the import completes/fails. No separate ImportDownload row, so the UI
             // shows one row advancing by state instead of a download row vanishing
             // and an import row appearing.
+            // Network work (tag supplements, lyrics) happens here, in the download
+            // slot, so the disk-exclusive import slot only moves/tags files.
+            const prefetchedNetwork = await prefetchImportNetworkData({
+                type,
+                provider: entry.provider || payload.provider,
+                providerId: entry.providerId || payload.providerId || providerId,
+                trackOffers: resolvedTrackOffers as any,
+                downloadPath: entry.downloadPath,
+            });
             const importPayload: ImportDownloadCommand = {
                 // Source the provider identity from the offer that actually
                 // produced the files on disk. On a cross-provider fallback,
@@ -1992,6 +2413,7 @@ export class DownloadProcessor {
                 cover: payload.cover,
                 url: payload.url,
                 resolved,
+                ...prefetchedNetwork,
                 downloadState: {
                     outcome: completedDownloadState.outcome,
                     warningMessage: completedDownloadState.warningMessage,
@@ -2065,7 +2487,19 @@ export class DownloadProcessor {
 
             console.log(`[DOWNLOAD-PROCESSOR] Downloaded ${type} ${providerId} — queued import phase for command #${job.id}`);
         } catch (error: any) {
-            if (entry.cancelRequested && this.isPaused) {
+            const authError = asProviderAuthError(entry.provider, error);
+            if (authError && !(entry.cancelRequested && this.isPaused)) {
+                console.warn(`[DOWNLOAD-PROCESSOR] Holding job #${job.id}: ${authError.message}`);
+                try {
+                    await recordProviderAuthFailure(authError.provider, authError.message);
+                } catch (recordError) {
+                    console.error("[DOWNLOAD-PROCESSOR] Failed to record provider auth:", recordError instanceof Error ? recordError.message : "unknown");
+                }
+                await withSqliteWriteGate(() => {
+                    DownloadWaitQueue.releaseForAuthHold(job.id, authError.provider);
+                }, "download:auth-hold");
+                await this.cleanupDownloadSourcePath(entry.downloadPath);
+            } else if (entry.cancelRequested && this.isPaused) {
                 const current = CommandQueueManager.get(job.id);
                 if (current?.status === 'started' && current.worker_id === workerId) {
                     console.log(`[DOWNLOAD-PROCESSOR] Download job #${job.id} interrupted by pause; returning to queue`);
@@ -2190,9 +2624,12 @@ export class DownloadProcessor {
                 if (entry.cancelRequested || signal.aborted) {
                     throw new Error("Download cancelled");
                 }
+                if (providerNeedsReauth(activeProvider)) {
+                    throw new ProviderAuthError(activeProvider, queueHoldMessage(activeProvider));
+                }
 
                 if (String(activeProviderItemId).startsWith("acquisition-plan:")) {
-                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    const next = this.nextDownloadOffer(rankedAlternates, triedOffers);
                     if (!next) {
                         throw new Error(`Acquisition plan ${activeProviderItemId} has no downloadable track offers or fallback offers available`);
                     }
@@ -2209,7 +2646,7 @@ export class DownloadProcessor {
 
                 const backend = downloadBackendRegistry.resolve(activeProvider, capability);
                 if (!backend) {
-                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    const next = this.nextDownloadOffer(rankedAlternates, triedOffers);
                     if (!next) {
                         throw new Error(`No download backend found for provider ${activeProvider} with capability ${capability}`);
                     }
@@ -2280,6 +2717,9 @@ export class DownloadProcessor {
                         },
                         async () => {
                             await this.prepareProviderForDownload(activeProvider, downloadPath);
+                            if (providerNeedsReauth(activeProvider)) {
+                                throw new ProviderAuthError(activeProvider, queueHoldMessage(activeProvider));
+                            }
                             await backend.download({
                                 provider: activeProvider,
                                 entityType: type as "album" | "track" | "video",
@@ -2343,8 +2783,10 @@ export class DownloadProcessor {
                     if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
                         throw error;
                     }
+                    const authError = asProviderAuthError(activeProvider, error);
+                    if (authError) throw authError;
                     await this.recordUnavailableProviderResource(error);
-                    const next = nextOfferAfterTried(rankedAlternates, triedOffers);
+                    const next = this.nextDownloadOffer(rankedAlternates, triedOffers);
                     if (!next) {
                         throw error;
                     }
@@ -2369,6 +2811,19 @@ export class DownloadProcessor {
             }
         } finally {
             clearInterval(checkCancelInterval);
+        }
+    }
+
+    private nextDownloadOffer(
+        ranked: readonly RankedDownloadOffer[],
+        tried: ReadonlySet<string>,
+    ): RankedDownloadOffer | null {
+        const skipped = new Set(tried);
+        while (true) {
+            const next = nextOfferAfterTried(ranked, skipped);
+            if (!next) return null;
+            if (!providerNeedsReauth(next.provider)) return next;
+            skipped.add(makeOfferAttemptKey(next.provider, next.providerId));
         }
     }
 
@@ -2549,9 +3004,11 @@ export class DownloadProcessor {
             for (let index = 0; index < offers.length; index++) {
                 let offer = { ...offers[index] };
                 const tried = new Set<string>();
-                const ranked = listRankedTrackOffers({ trackMbid: offer.canonicalTrackMbid,
-                    recordingMbid: offer.canonicalRecordingMbid, librarySlot: slot })
-                    .filter(candidate => candidate.provider === defaultProvider);
+                const ranked = listRankedTrackOffers({
+                    trackMbid: offer.canonicalTrackMbid,
+                    recordingMbid: offer.canonicalRecordingMbid,
+                    librarySlot: slot,
+                }).filter((candidate) => candidate.provider === defaultProvider);
                 while (true) {
                     const provider = offer.provider || defaultProvider;
                     tried.add(makeOfferAttemptKey(provider, offer.providerTrackId));
@@ -2564,7 +3021,7 @@ export class DownloadProcessor {
                     } catch (error) {
                         if (!(error instanceof ProviderUnavailableError)) throw error;
                         await this.recordUnavailableProviderResource(error);
-                        const next = nextOfferAfterTried(ranked, tried);
+                        const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) throw error;
                         fallbackPrimary ||= provider;
                         fallbackUsed = next.provider;
@@ -2587,11 +3044,15 @@ export class DownloadProcessor {
                 const tried = new Set<string>([
                     makeOfferAttemptKey(primaryOfferProvider, offer.providerTrackId),
                 ]);
+                // Same-offer retries stay on this provider. The next offer must too,
+                // preserving exact same-provider fallback provenance for the subsequent
+                // importer. A whole-album fallback switches the command provider and
+                // remaps every offer; a per-track offer cannot change provider alone.
                 const ranked = listRankedTrackOffers({
                     trackMbid: offer.canonicalTrackMbid,
                     recordingMbid: offer.canonicalRecordingMbid,
                     librarySlot: slot,
-                }).filter(candidate => candidate.provider === defaultProvider);
+                }).filter((candidate) => candidate.provider === defaultProvider);
 
                 const trackIndex = resolveDownloadTrackOfferIndex(tracks, offer);
                 if (trackIndex < 0) {
@@ -2603,7 +3064,7 @@ export class DownloadProcessor {
                     const providerId = offer.provider || defaultProvider;
                     const backend = downloadBackendRegistry.resolve(providerId, capability);
                     if (!backend) {
-                        const next = nextOfferAfterTried(ranked, tried);
+                        const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) {
                             throw new Error(`No download backend found for provider ${providerId} with capability ${capability}`);
                         }
@@ -2725,8 +3186,10 @@ export class DownloadProcessor {
                         if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
                             throw error;
                         }
+                        const authError = asProviderAuthError(providerId, error);
+                        if (authError) throw authError;
                         await this.recordUnavailableProviderResource(error);
-                        const next = nextOfferAfterTried(ranked, tried);
+                        const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) {
                             throw error;
                         }
@@ -2898,9 +3361,21 @@ export class DownloadProcessor {
     async suspend(): Promise<void> {
         console.log('[DOWNLOAD-PROCESSOR] Suspending queue for shutdown...');
         this.suspended = true;
+        clearInterval(this.importAdmissionWatchdog);
+        this.importAdmissionWatchdog = undefined;
         clearTimeout(this.retryWakeTimer);
         this.retryWakeTimer = undefined;
         this.haltProcessing();
+        // Downloads were aborted above and are requeued on restart. Imports
+        // mutate the library, so let the running ones finish instead.
+        if (this.activeImports.size > 0) {
+            console.log(`[DOWNLOAD-PROCESSOR] Waiting up to ${Math.round(SHUTDOWN_IMPORT_DRAIN_MS / 1000)}s for ${this.activeImports.size} running import(s) to finish...`);
+            const unfinished = await drainActiveImports(this.activeImports, SHUTDOWN_IMPORT_DRAIN_MS);
+            if (unfinished.length > 0) {
+                console.warn(`[DOWNLOAD-PROCESSOR] Import(s) still running at shutdown: ${unfinished.map((id) => `#${id}`).join(', ')}`);
+            }
+        }
+        this.flushProgressBuffer();
         console.log('[DOWNLOAD-PROCESSOR] Queue suspended');
     }
 
@@ -2985,6 +3460,7 @@ function resolveDownloadWorkerSpawn(): { entry: string; workerData: Record<strin
         [DOWNLOAD_WORKER_MARKER]: true,
         ...sqliteWriteMutexWorkerData(),
         ...mediaFileLockWorkerData(),
+        ...diskAdmissionWorkerData(),
         ...providerRequestWorkerData(),
     };
 
@@ -3047,7 +3523,10 @@ export class DownloadProcessorWorkerProxy {
     /**
      * The dedicated worker can keep heartbeating while awaiting a provider or
      * importer promise that never resolves. Lease expiry catches a dead event
-     * loop; last-progress expiry catches that healthier-looking hang.
+     * loop. A fresh heartbeat with no sub-phase tick (artwork, lyrics, or
+     * per-file tag progress) is the same hang: last-progress expiry catches it.
+     * A tick at the start of each file renews last_progress_at and the lease
+     * even when the displayed percent does not move.
      */
     async runWatchdogOnce(now: Date = new Date()): Promise<boolean> {
         const worker = this.worker;
@@ -3113,6 +3592,10 @@ export class DownloadProcessorWorkerProxy {
         appEvents.on(AppEvent.COMMAND_UPDATED, (event: CommandEventPayload) => {
             if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
             if (event.status === 'queued' || event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') this.kickQueue();
+        });
+        appEvents.on(AppEvent.PROVIDER_AUTH_CHANGED, (event) => {
+            if (!this.initialized || process.env.DISCOGENIUS_DISABLE_DOWNLOADS === '1') return;
+            if (event.status === "ok") this.kickQueue();
         });
     }
 
@@ -3188,6 +3671,7 @@ export class DownloadProcessorWorkerProxy {
         const { entry, workerData } = resolveDownloadWorkerSpawn();
         const worker = new Worker(entry, { workerData });
         const mediaFileOwner = Number(workerData[MEDIA_FILE_LOCK_OWNER_KEY]) || 0;
+        const diskAdmissionOwner = Number(workerData[DISK_ADMISSION_OWNER_KEY]) || 0;
         superviseDownloadProcesses(worker);
         this.workerSqliteWriteMutexOwnerToken = Number(
             workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY],
@@ -3206,6 +3690,7 @@ export class DownloadProcessorWorkerProxy {
         });
         worker.on('exit', (code) => {
             releaseExitedMediaFileOwner(mediaFileOwner);
+            releaseExitedDiskAdmissionOwner(diskAdmissionOwner);
             if (this.worker !== worker) return;
             forceReleaseSqliteWriteMutexOwner(this.workerSqliteWriteMutexOwnerToken);
             this.workerSqliteWriteMutexOwnerToken = 0;
@@ -3400,3 +3885,4 @@ export const downloadProcessor = isMainThread
         ? new DownloadProcessor()
         : new DownloadProcessorCommandWorkerStub();
 import { mediaFileLockWorkerData, MEDIA_FILE_LOCK_OWNER_KEY, releaseExitedMediaFileOwner } from "../mediafiles/media-file-lock.js";
+import { diskAdmissionWorkerData, DISK_ADMISSION_OWNER_KEY, releaseExitedDiskAdmissionOwner } from "../commands/disk-admission.js";

@@ -46,6 +46,7 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM commands").run();
   dbModule.db.prepare("DELETE FROM runtime_controls").run();
   dbModule.db.prepare("DELETE FROM scheduled_tasks").run();
+  dbModule.db.prepare("DELETE FROM ProviderAuthState").run();
   dbModule.db.prepare(`
     INSERT OR REPLACE INTO AlbumLibraryProjectionState (singleton_id, row_count, updated_at)
     VALUES (1, 0, CURRENT_TIMESTAMP)
@@ -69,6 +70,22 @@ test("lightweight diagnostics tolerate collection before schema initialization",
   assert.equal(bootstrapSnapshot.subsystems.database.lastDeepResult, null);
   assert.ok(bootstrapSnapshot.subsystems.commandQueue);
   assert.ok(bootstrapSnapshot.subsystems.scheduledTasks);
+  assert.equal(bootstrapSnapshot.subsystems.providerAuth.status, "ok");
+  assert.deepEqual(bootstrapSnapshot.providerAuth, []);
+  assert.equal(bootstrapSnapshot.issues.some((issue) => issue.scope === "providers.auth"), false);
+});
+
+test("a provider that needs re-login warns without making health unhealthy", async () => {
+  const auth = await import("../providers/provider-auth-state.js");
+  await auth.recordProviderAuthFailure("deezer", "Deezer ARL is invalid or expired.");
+  const snapshot = healthModule.collectHealthDiagnosticsSnapshot();
+  assert.equal(snapshot.subsystems.providerAuth.status, "warning");
+  assert.equal(snapshot.providerAuth[0]?.provider, "deezer");
+  assert.equal(snapshot.providerAuth[0]?.status, "needs_reauth");
+  assert.equal(snapshot.providerAuth[0]?.banner, "Deezer opnieuw koppelen");
+  assert.notEqual(snapshot.status, "unhealthy");
+  const issue = snapshot.issues.find((item) => item.scope === "providers.auth");
+  assert.equal(issue?.status, "warning");
 });
 
 test("lightweight diagnostics expose schema, WAL, storage, queue, and configured connectivity", () => {
@@ -82,6 +99,8 @@ test("lightweight diagnostics expose schema, WAL, storage, queue, and configured
   assert.equal(snapshot.subsystems.scheduledTasks.status, "ok");
   assert.equal(snapshot.subsystems.imports.status, "ok");
   assert.equal(snapshot.subsystems.statistics.status, "ok");
+  assert.equal(snapshot.subsystems.providerAuth.status, "ok");
+  assert.deepEqual(snapshot.providerAuth, []);
   assert.equal(snapshot.subsystems.catalog.details?.connectivity, "unknown");
   assert.match(
     String(snapshot.subsystems.catalog.details?.connectivityPolicy),

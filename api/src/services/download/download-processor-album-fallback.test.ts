@@ -18,6 +18,7 @@ const {
   remapAlbumTrackOffersForFallback,
   resolveFallbackProvenance,
 } = await import("./download-processor.js");
+const { PROVIDER_TRACK_MATCHER_VERSION } = await import("../music/provider-track-matcher.js");
 
 beforeEach(() => {
   db.prepare("DELETE FROM ProviderTrackMatches").run();
@@ -103,9 +104,9 @@ function addTrackMatch(
       match_state, decision_source, confidence, method, matcher_version
     ) VALUES (
       (SELECT member_item_id FROM ProviderEditionMembers WHERE id = ?),
-      ?, ?, ?, ?, ?, 'automatic', 0.99, 'test_fixture', 1
+      ?, ?, ?, ?, ?, 'automatic', 0.99, 'test_fixture', ?
     )
-  `).run(memberId, memberId, releaseMatchId, trackId, recordingId, matchState);
+  `).run(memberId, memberId, releaseMatchId, trackId, recordingId, matchState, PROVIDER_TRACK_MATCHER_VERSION);
 }
 
 test("fallback tracklist takes numbers from the accepted canonical track", () => {

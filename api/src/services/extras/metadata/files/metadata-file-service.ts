@@ -22,7 +22,7 @@ export function getMetadataType(input: Pick<ExtraFileUpsertInput,
   const isAlbumScoped = Boolean(input.canonicalReleaseGroupMbid || input.canonicalReleaseMbid || providerEntityType === "album");
   const isTrackScoped = Boolean(input.canonicalTrackMbid || input.canonicalRecordingMbid || providerEntityType === "track" || providerEntityType === "video");
 
-  if (input.fileType === "cover") {
+  if (input.fileType === "cover" || input.fileType === "artwork") {
     return isAlbumScoped ? "AlbumImage" : "ArtistImage";
   }
 

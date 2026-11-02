@@ -15,6 +15,7 @@ import {
 } from "../extras/lyrics/lyric-sidecar.js";
 import { LibraryFilesService } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
 type TrackLyricsRow = {
   id: number;
@@ -96,7 +97,6 @@ async function removeUnsyncedLyricSidecar(
 function trackRowsForFileIds(fileIds: number[]): TrackLyricsRow[] {
   const uniqueIds = Array.from(new Set(fileIds.filter((id) => Number.isInteger(id) && id > 0)));
   if (uniqueIds.length === 0) return [];
-  const placeholders = uniqueIds.map(() => "?").join(",");
   return db.prepare(`
     SELECT
       id,
@@ -117,9 +117,9 @@ function trackRowsForFileIds(fileIds: number[]): TrackLyricsRow[] {
       canonical_recording_mbid
     FROM TrackFiles
     WHERE file_type = 'track'
-      AND id IN (${placeholders})
+      AND id IN ${SQL_JSON_LIST}
     ORDER BY id ASC
-  `).all(...uniqueIds) as TrackLyricsRow[];
+  `).all(jsonList(uniqueIds)) as TrackLyricsRow[];
 }
 
 function trackRowsForMediaIds(
@@ -204,6 +204,8 @@ export class TrackLyricsMaterializer {
   static async materializeForFileIds(
     fileIds: number[],
     requestedProvider?: string | null,
+    prefetched?: Record<string, ResolvedLyrics | null>,
+    onFileStart?: (index: number, total: number) => void,
   ): Promise<TrackLyricsMaterializeResult> {
     const metadata = getConfigSection("metadata");
     const quality = getConfigSection("quality");
@@ -215,12 +217,14 @@ export class TrackLyricsMaterializer {
         missing: 0,
       };
     }
-    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider);
+    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider, prefetched, onFileStart);
   }
 
   private static async materializeRows(
     rows: TrackLyricsRow[],
     requestedProvider?: string | null,
+    prefetched?: Record<string, ResolvedLyrics | null>,
+    onFileStart?: (index: number, total: number) => void,
   ): Promise<TrackLyricsMaterializeResult> {
     const result: TrackLyricsMaterializeResult = {
       lyricsByProviderMedia: new Map(),
@@ -261,7 +265,9 @@ export class TrackLyricsMaterializer {
         );
         resolution = (existingHasSync
           ? Promise.resolve(existingSidecar?.lyrics ?? null)
-          : getLyricsForProviderMedia(providerId, provider)
+          : (prefetched && Object.hasOwn(prefetched, key)
+            ? Promise.resolve(prefetched[key] ?? null)
+            : getLyricsForProviderMedia(providerId, provider))
             .then((apiLyrics) => apiLyrics || existingSidecar?.lyrics || null)
         ).catch((error) => {
           console.warn(`[Lyrics] Failed to resolve ${provider} track ${providerId}:`, error);
@@ -336,13 +342,87 @@ export class TrackLyricsMaterializer {
     };
 
     const pending = [...rows];
+    let started = 0;
     const worker = async () => {
       while (pending.length > 0) {
         const row = pending.shift();
-        if (row) await resolveRow(row);
+        if (!row) continue;
+        started += 1;
+        onFileStart?.(started, rows.length);
+        await resolveRow(row);
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, rows.length) }, () => worker()));
     return result;
   }
+}
+
+/**
+ * Provider track ids whose downloader already delivered synchronized lyrics
+ * in the download workspace (tiddl names files by track id and writes the
+ * TIDAL lyrics as an adjacent .lrc). The import reads that sidecar, so
+ * fetching the same lyrics again from the provider API only adds requests.
+ */
+export function trackIdsWithDeliveredSyncedLyrics(downloadPath: string | null | undefined, providerTrackIds: string[]): Set<string> {
+  const delivered = new Set<string>();
+  const wanted = new Set(providerTrackIds.map((id) => String(id).trim()).filter(Boolean));
+  if (!downloadPath || wanted.size === 0) return delivered;
+  const pending = [downloadPath];
+  while (pending.length > 0) {
+    const dir = pending.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(full);
+        continue;
+      }
+      const extension = path.extname(entry.name).toLowerCase();
+      if (extension === ".lrc" || extension === ".txt") continue;
+      const id = path.basename(entry.name, path.extname(entry.name));
+      if (!wanted.has(id) || delivered.has(id)) continue;
+      if (findAdjacentLyricSidecar(full)?.synchronized) delivered.add(id);
+    }
+  }
+  return delivered;
+}
+
+/**
+ * Fetch provider lyrics for the given provider track ids without touching the
+ * library. Download completion calls this so the disk-exclusive import slot
+ * never waits on lyric APIs. Failures resolve to "not prefetched" (absent key),
+ * so the import falls back to its normal lookup. Tracks whose downloader
+ * already delivered synchronized lyrics are skipped.
+ */
+export async function prefetchProviderLyrics(
+  provider: string,
+  providerTrackIds: string[],
+  concurrency = 4,
+  downloadPath?: string | null,
+): Promise<Record<string, ResolvedLyrics | null>> {
+  const metadata = getConfigSection("metadata");
+  const quality = getConfigSection("quality");
+  const out: Record<string, ResolvedLyrics | null> = {};
+  if (!provider || (!metadata.save_lyrics && !quality.embed_lyrics)) return out;
+  const delivered = trackIdsWithDeliveredSyncedLyrics(downloadPath, providerTrackIds);
+  const ids = Array.from(new Set(providerTrackIds.map((id) => String(id).trim()).filter(Boolean)))
+    .filter((id) => !delivered.has(id));
+  let next = 0;
+  const worker = async () => {
+    while (next < ids.length) {
+      const id = ids[next++];
+      try {
+        out[providerMediaLyricsKey(provider, id)] = await getLyricsForProviderMedia(id, provider);
+      } catch {
+        /* leave absent: import retries the lookup itself */
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));
+  return out;
 }

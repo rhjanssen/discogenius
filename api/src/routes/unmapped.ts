@@ -4,6 +4,7 @@ import { withDbWrite } from "../database.js";
 import { CommandNames } from "../services/commands/command-names.js";
 import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 import { UnmappedFilesService } from "../services/mediafiles/unmapped-files.js";
+import { moveToUnmapped } from "../services/mediafiles/duplicate-track-files.js";
 import {
     getEnumValue,
     getObjectBody,
@@ -279,9 +280,10 @@ router.post("/identify", async (req, res) => {
 /**
  * POST /api/unmapped/auto-import
  * Body: { ids: number[], dryRun?: boolean }
- * Matches each folder like Lidarr (release id, then tag distance against
- * official catalog releases). dryRun reports the planned monitor, rename,
- * retag, and cover actions and does not queue work or touch files.
+ * Groups the files by folder and imports each folder whose tags prove one
+ * catalog release (docs/PRODUCT_VISION.md ADR-2). dryRun reports the planned
+ * monitor, rename, retag, and cover actions and does not queue work, write
+ * catalog rows, or touch files.
  */
 router.post("/auto-import", async (req, res) => {
     try {
@@ -299,6 +301,23 @@ router.post("/auto-import", async (req, res) => {
         }
         console.error("[Unmapped API] Error auto-importing files:", error);
         res.status(500).json({ error: error.message || "Failed to auto-import files" });
+    }
+});
+
+/**
+ * POST /api/unmapped/unlink
+ * Release linked track files back to unmapped so they can be re-matched. Only
+ * the database link changes; the files stay where they are (reversible).
+ */
+router.post("/unlink", async (req, res) => {
+    try {
+        const body = getObjectBody(req.body);
+        const ids = getRequiredIntegerArray(body, "trackFileIds");
+        const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : "Unlinked for re-matching";
+        const unlinked = await withDbWrite(() => ids.filter((id) => moveToUnmapped(id, reason)));
+        res.json({ unlinked });
+    } catch (error: any) {
+        res.status(400).json({ error: error.message || "Failed to unlink track files" });
     }
 });
 

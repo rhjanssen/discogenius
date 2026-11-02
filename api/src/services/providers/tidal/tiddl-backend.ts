@@ -14,7 +14,7 @@ import {
     syncTiddlSettings,
 } from "./tiddl.js";
 import { isSpatialAudioQuality } from "../../../utils/spatial-audio.js";
-import { syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
+import { adoptTiddlRefreshedToken, prepareTidalTokenForDownloader } from "./tidal-auth.js";
 
 export { TIDDL_CONFIG_DIR, TIDDL_AUTH_FILE, getTiddlCapabilitySnapshot } from "./tiddl.js";
 
@@ -239,18 +239,22 @@ export class TiddlBackend implements DownloadBackend {
         }
 
         await this.preflight(request, options);
-        await syncStoredTidalTokenToDownloaders().catch((err) => {
-            console.warn("[TIDDL-BACKEND] Warning syncing stored token before download:", err);
-        });
+        await prepareTidalTokenForDownloader();
         syncTiddlSettings();
 
-        for (let index = 0; index < providerIds.length; index++) {
-            if (options.signal?.aborted) {
-                throw new Error("Download aborted");
+        try {
+            for (let index = 0; index < providerIds.length; index++) {
+                if (options.signal?.aborted) {
+                    throw new Error("Download aborted");
+                }
+                await this.downloadOne(providerIds[index], request, options, {
+                    completed: index,
+                    total: providerIds.length,
+                });
             }
-            await this.downloadOne(providerIds[index], request, options, {
-                completed: index,
-                total: providerIds.length,
+        } finally {
+            await adoptTiddlRefreshedToken().catch((err) => {
+                console.warn("[TIDDL-BACKEND] Could not adopt tiddl's refreshed token:", err instanceof Error ? err.message : "unknown");
             });
         }
     }

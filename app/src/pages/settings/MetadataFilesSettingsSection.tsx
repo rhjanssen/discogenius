@@ -1,11 +1,13 @@
 import {
+    Button,
     Select,
     Switch,
     Text,
     makeStyles,
     tokens,
 } from "@fluentui/react-components";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { api } from "@/services/api";
 import { SettingsCard } from "@/components/settings/SettingsCard";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import type { MetadataConfigContract } from "@contracts/config";
@@ -72,11 +74,24 @@ export const MetadataFilesSettingsSection = ({
     onEmbedCoverChange,
 }: MetadataFilesSettingsSectionProps) => {
     const styles = useStyles();
+    const [cacheBusy,setCacheBusy]=useState(false);
+    const [cacheMessage,setCacheMessage]=useState("");
+    const cleanCache=async()=>{
+        setCacheBusy(true);setCacheMessage("");
+        try {
+            await api.cleanupArtworkCache();
+            setCacheMessage("Cleanup queued. Follow its progress in Activity.");
+        } catch(error) {
+            setCacheMessage(error instanceof Error ? error.message : "Could not queue artwork cleanup.");
+        } finally {setCacheBusy(false);}
+    };
     // `sync` used to couple metadata refresh to a filesystem rewrite. Keep
     // accepting that stored value as the equivalent import policy, but do not
     // expose a command-domain promise the app no longer makes.
     const storedWriteAudioTagsPolicy = metadataSettings?.write_audio_tags_policy ?? "no";
     const writeAudioTagsPolicy = storedWriteAudioTagsPolicy === "sync" ? "all_files" : storedWriteAudioTagsPolicy;
+    const albumArtistMode = metadataSettings?.album_artist_mode
+        ?? (metadataSettings?.full_album_artist_credit === true ? "picard" : "plex_jellyfin");
 
     const renderToggleRow = (options: {
         title: string;
@@ -103,6 +118,16 @@ export const MetadataFilesSettingsSection = ({
             className={styles.section}
         >
             <SettingsCard>
+                <div className={styles.row}>
+                    <div className={styles.rowContent}>
+                        <Text weight="semibold">Artwork cache</Text>
+                        <Text size={200} className={styles.mutedText}>Keep small preview images. Remove cached originals after verifying their source and, for imported items, their full-resolution library copy.</Text>
+                        {cacheMessage && <Text size={200} role="status">{cacheMessage}</Text>}
+                    </div>
+                    <div className={styles.rowControl}>
+                        <Button disabled={cacheBusy} onClick={()=>void cleanCache()}>Clean artwork cache</Button>
+                    </div>
+                </div>
                 <div className={styles.row}>
                     <div className={styles.rowContent}>
                         <Text weight="semibold">Write media tags</Text>
@@ -132,6 +157,27 @@ export const MetadataFilesSettingsSection = ({
                     checked: metadataSettings?.scrub_audio_tags === true,
                     onChange: (checked) => void updateMetadataSettings({ scrub_audio_tags: checked }),
                 })}
+                <div className={styles.row}>
+                    <div className={styles.rowContent}>
+                        <Text weight="semibold">Album artist tag</Text>
+                        <Text size={200} className={styles.mutedText}>
+                            Plex and Jellyfin keep one artist per album: the primary MusicBrainz name, or Various Artists on compilations. The full credit stays in ALBUMARTISTS. Picard writes the release credit with join phrases, such as &quot;A &amp; B&quot;. Navidrome reads that full credit. Other tags are the same in both modes.
+                        </Text>
+                    </div>
+                    <div className={styles.rowControl}>
+                        <Select
+                            aria-label="Album artist tag"
+                            value={albumArtistMode}
+                            onChange={(_, data) => void updateMetadataSettings({
+                                album_artist_mode: data.value as "plex_jellyfin" | "picard",
+                            })}
+                            className={styles.control}
+                        >
+                            <option value="plex_jellyfin">Plex and Jellyfin (primary artist)</option>
+                            <option value="picard">Picard (full credit)</option>
+                        </Select>
+                    </div>
+                </div>
                 {renderToggleRow({
                     title: "Embed album covers",
                     description: "Write cover art into audio files when tags are written.",

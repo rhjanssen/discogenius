@@ -66,6 +66,34 @@ export interface CommandDefinition {
    * overrides `maxConcurrent` at scheduling time.
    */
   resolveMaxConcurrent?: () => number;
+  /**
+   * Durable per-file checkpoint. A process restart requeues the same command
+   * and continues from settled rows. This is the type-level resume switch:
+   * recovery reads it instead of a command-name list.
+   * - `retag` stores the plan in CommandFileWork.
+   * - `rename` stores the plan in CommandRenameWork.
+   */
+  fileWorkCheckpoint?: "retag" | "rename";
+  /**
+   * How this command shares the disk.
+   * - `global`: one at a time against every other disk command (backup, cleanup, move artist).
+   * - `folder`: per-album locks plus the HDD I/O permit. Runs beside other folder-scoped commands.
+   * - `none`: no disk admission.
+   * Omitted means `global` when `requiresDiskAccess` is set, otherwise `none`.
+   */
+  diskScope?: "global" | "folder" | "none";
+}
+
+export type CommandDiskScope = "global" | "folder" | "none";
+
+export function commandDiskScope(definition: Pick<CommandDefinition, "requiresDiskAccess" | "diskScope">): CommandDiskScope {
+  if (definition.diskScope) return definition.diskScope;
+  return definition.requiresDiskAccess ? "global" : "none";
+}
+
+/** True for both the global disk slot and per-album folder work. */
+export function commandWritesLibraryFiles(definition: Pick<CommandDefinition, "requiresDiskAccess" | "diskScope">): boolean {
+  return commandDiskScope(definition) !== "none";
 }
 
 export interface SystemTaskDefinition {
@@ -180,6 +208,14 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: false,
   },
+  [CommandNames.CleanupLibrary]: {
+    type: CommandNames.CleanupLibrary,
+    name: "Clean Library",
+    requiresDiskAccess: true,
+    isTypeExclusive: true,
+    isExclusive: true,
+    isLongRunning: true,
+  },
   [CommandNames.UpdateLibraryMetadata]: {
     type: CommandNames.UpdateLibraryMetadata,
     name: "Update Library Metadata",
@@ -199,7 +235,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.ImportUnmappedFiles]: {
     type: CommandNames.ImportUnmappedFiles,
     name: "Import Unmapped Files",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: true,
@@ -333,7 +370,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.ImportDownload]: {
     type: CommandNames.ImportDownload,
     name: "Import Download",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: false,
     isExclusive: false,
     isLongRunning: false,
@@ -341,7 +379,8 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.RescanFolders]: {
     type: CommandNames.RescanFolders,
     name: "Rescan Folders",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: false,
     isExclusive: false,
     isPerRefExclusive: true,
@@ -352,7 +391,7 @@ export const COMMAND_DEFINITIONS = {
     name: "Prune Configuration",
     requiresDiskAccess: true,
     isTypeExclusive: true,
-    isExclusive: false,
+    isExclusive: true,
     isLongRunning: true,
   },
   [CommandNames.MoveArtist]: {
@@ -367,34 +406,42 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.RenameFiles]: {
     type: CommandNames.RenameFiles,
     name: "Rename Files",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+    fileWorkCheckpoint: "rename",
   },
   [CommandNames.RenameArtist]: {
     type: CommandNames.RenameArtist,
     name: "Rename Artist",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+    fileWorkCheckpoint: "rename",
   },
   [CommandNames.RetagFiles]: {
     type: CommandNames.RetagFiles,
     name: "Retag Files",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+    fileWorkCheckpoint: "retag",
   },
   [CommandNames.RetagArtist]: {
     type: CommandNames.RetagArtist,
     name: "Retag Artist",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
+    diskScope: "folder",
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,
+    fileWorkCheckpoint: "retag",
   },
 } satisfies Record<string, CommandDefinition>;
 
@@ -497,10 +544,10 @@ const SYSTEM_TASK_DEFINITIONS = [
   },
   {
     id: "check-upgrades",
-    kind: "manual",
+    kind: "scheduled",
     commandName: "CheckUpgrades",
     name: "Check Upgrades",
-    description: "Scan the library for monitored items that can be upgraded.",
+    description: "Upgrade files below the audio/video quality setting using the quality providers really deliver. Scheduled runs queue a small batch at a time; Run now scans everything.",
     taskName: CommandNames.CheckUpgrades,
     category: "downloads",
     riskLevel: "medium",
@@ -595,6 +642,11 @@ const SYSTEM_TASK_DEFINITIONS = [
 
 function normalizeCommandName(value: string): string {
   return String(value || "").trim().toLowerCase();
+}
+
+/** True when a process restart must continue this command from its file plan. */
+export function commandResumesFromFileCheckpoint(jobType: string): boolean {
+  return getCommandDefinition(jobType).fileWorkCheckpoint != null;
 }
 
 export function getCommandDefinition(jobType: string): CommandDefinition {

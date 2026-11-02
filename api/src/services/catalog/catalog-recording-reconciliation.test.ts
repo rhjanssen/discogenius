@@ -1,0 +1,257 @@
+import assert from "node:assert/strict";
+import {after,test} from "node:test";
+import {prepareActiveSchemaEnv,openActiveSchemaDb,closeActiveSchemaDb} from "../../test-support/active-schema-fixture.js";
+import {seedTestLibrary} from "../../test-support/library-fixtures.js";
+import {isPreservedCatalogIdentityConflict,reconcileRecordingRedirects,RECORDING_OWNERS} from "./catalog-recording-reconciliation.js";
+import {reconcileEditionTrackIdentities} from "./catalog-track-reconciliation.js";
+const {tempDir}=prepareActiveSchemaEnv('recording-reconciliation');
+const {db,dbModule}=await openActiveSchemaDb();
+const library=seedTestLibrary(db,{name:'Recording merge',rootPath:tempDir});
+after(()=>closeActiveSchemaDb(dbModule,tempDir));
+const incoming=[{Id:'track',RecordingId:'new',OldRecordingIds:['old'],TrackName:'New title',TrackNumber:'1',TrackPosition:1,MediumNumber:1,DurationMs:1000}];
+function fixture(run:()=>void){db.exec('BEGIN IMMEDIATE');try{
+    db.exec(`INSERT INTO ArtistMetadata(id,mbid,name) VALUES(1,'artist','Artist');
+        INSERT INTO Albums(id,mbid,artist_mbid,title) VALUES(1,'group','artist','Group');
+        INSERT INTO AlbumEditions(id,mbid,release_group_mbid,artist_mbid,title) VALUES(1,'release','group','artist','Edition');
+        INSERT INTO Recordings(id,mbid,title) VALUES(1,'old','Old title'),(2,'new','New title'),(3,'other','Other');
+        INSERT INTO Tracks(id,mbid,release_mbid,recording_mbid,medium_position,position,title) VALUES(1,'track','release','old',1,1,'Track');
+        INSERT INTO ProviderItems(id,provider,entity_type,provider_id) VALUES(1,'tidal','release','album'),(2,'tidal','track','track');
+        INSERT INTO ProviderEditionMembers(id,provider_edition_item_id,member_item_id,medium_position,position) VALUES(1,1,2,1,1);
+        INSERT INTO ProviderEditionMatches(id,provider_edition_item_id,edition_id,relation,match_state,decision_source,confidence,method,matcher_version) VALUES(1,1,1,'exact','accepted','manual',1,'test',1);
+        INSERT INTO ProviderTrackMatches(id,provider_track_item_id,provider_edition_member_id,provider_edition_match_id,track_id,recording_id,match_state,decision_source,confidence,method,matcher_version) VALUES(1,2,1,1,1,1,'accepted','manual',1,'test',1);
+        INSERT INTO ProviderItemAudioVariants(id,provider_item_id,variant_key,quality_class) VALUES(1,2,'lossless','lossless');
+        INSERT INTO RecordingArtistCredits(recording_id,artist_id,ordinal,credited_name) VALUES(1,1,0,'Artist');
+        INSERT INTO RecordingRelations(source_recording_id,target_recording_id,source_foreign_recording_id,target_foreign_recording_id,relation_type) VALUES(1,3,'old','other','version');
+        INSERT INTO ArtistTopTracks(artist_metadata_id,track_id,recording_id,rank) VALUES(1,1,1,1);
+        INSERT INTO TrackLibraryIndex(track_id,album_edition_id,recording_id) VALUES(1,1,1);`);
+    db.prepare(`INSERT INTO TrackFiles(id,library_id,artist_metadata_id,track_id,recording_id,album_edition_id,canonical_track_mbid,canonical_recording_mbid,file_path,relative_path,filename,extension,library_root,file_type,quality,codec,file_size)
+        VALUES(1,?,1,1,1,1,'track','old','/music/audio.flac','audio.flac','audio.flac','flac','music','track','LOSSLESS','flac',123)`).run(library);
+    for(const table of ['MetadataFiles','LyricFiles','ExtraFiles']){
+        db.prepare(`INSERT INTO ${table}(artist_id,track_file_id,file_path,relative_path,library_root,extension,canonical_recording_mbid${table==='ExtraFiles'?',file_type':table==='MetadataFiles'?',type,file_type':''})
+            VALUES('artist',1,?,?, 'music','jpg','old'${table==='ExtraFiles'?",'cover'":table==='MetadataFiles'?",'cover','cover'":''})`).run('/music/'+table+'.jpg',table+'.jpg');
+    }
+    run();
+}finally{db.exec('ROLLBACK');}}
+function plan(){const id=Number(db.prepare(`INSERT INTO AcquisitionPlans(library_id,edition_id,provider,composition,download_mode,state,plan_key,coverage,target_track_count,planner_version,policy_hash,computed_at)
+    VALUES(?,1,'tidal','single_source','album','current','chosen',1,1,1,'policy',CURRENT_TIMESTAMP)`).run(library).lastInsertRowid);
+    const source=Number(db.prepare("INSERT INTO AcquisitionPlanSources(plan_id,provider_edition_match_id,role,sort_order) VALUES(?,1,'primary',0)").run(id).lastInsertRowid);
+    db.prepare("INSERT INTO AcquisitionPlanTracks(plan_id,track_id,source_id,provider_track_match_id,provider_audio_variant_id,source_quality_snapshot) VALUES(?,1,?,1,1,'{\"quality\":\"lossless\"}')").run(id,source);
+    db.prepare("INSERT INTO LibraryEditions(library_id,edition_id,selection_mode,preferred_plan_key,curation_version) VALUES(?,1,'manual','chosen',1)").run(library);
+    return id;}
+function snapshot(){return JSON.stringify(['Recordings','Tracks','TrackFiles','MetadataFiles','LyricFiles','ExtraFiles','ProviderTrackMatches','RecordingArtistCredits','RecordingRelations','ArtistTopTracks','TrackLibraryIndex','AcquisitionPlans','AcquisitionPlanTracks','LibraryEditions','DownloadQueue'].map(t=>db.prepare(`SELECT * FROM ${t}`).all()));}
+
+test('unique same-edition recording occurrence retains every integer track owner and waiting selection',()=>fixture(()=>{
+    const id=plan();db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,'{}',1)").run(id);
+    db.exec("UPDATE MetadataFiles SET canonical_track_mbid='track'; UPDATE LyricFiles SET canonical_track_mbid='track'; UPDATE ExtraFiles SET canonical_track_mbid='track'");
+    const replacement=[{...incoming[0],Id:'track-next',RecordingId:'old',OldRecordingIds:undefined,TrackPosition:9}];
+    assert.equal(reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next'])),1);
+    assert.deepEqual(db.prepare('SELECT id,mbid FROM Tracks').get(),{id:1,mbid:'track-next'});
+    assert.deepEqual(db.prepare('SELECT id,track_id,canonical_track_mbid,file_path,codec,file_size FROM TrackFiles').get(),{id:1,track_id:1,canonical_track_mbid:'track-next',file_path:'/music/audio.flac',codec:'flac',file_size:123});
+    for(const table of ['MetadataFiles','LyricFiles','ExtraFiles']) assert.deepEqual(db.prepare(`SELECT track_file_id,canonical_track_mbid FROM ${table}`).get(),{track_file_id:1,canonical_track_mbid:'track-next'});
+    assert.equal((db.prepare('SELECT track_id FROM ProviderTrackMatches').get() as {track_id:number}).track_id,1);
+    const key=(db.prepare('SELECT plan_key FROM AcquisitionPlans WHERE id=?').get(id) as {plan_key:string}).plan_key;
+    assert.notEqual(key,'chosen');assert.equal((db.prepare('SELECT preferred_plan_key FROM LibraryEditions').get() as {preferred_plan_key:string}).preferred_plan_key,key);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+    assert.equal(reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next'])),0);
+}));
+test('recording redirect then occurrence replacement recanonicalizes an intact stale choice',()=>fixture(()=>{
+    const id=plan();const replacement=[{...incoming[0],Id:'track-next'}];
+    reconcileRecordingRedirects(db,replacement);
+    const intermediate=(db.prepare('SELECT plan_key FROM AcquisitionPlans WHERE id=?').get(id) as {plan_key:string}).plan_key;
+    reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next']));
+    const key=(db.prepare('SELECT plan_key FROM AcquisitionPlans WHERE id=?').get(id) as {plan_key:string}).plan_key;
+    assert.notEqual(key,intermediate);assert.equal((db.prepare('SELECT preferred_plan_key FROM LibraryEditions').get() as {preferred_plan_key:string}).preferred_plan_key,key);
+}));
+test('repeated recording occurrences require explicit aliases instead of position or title guesses',()=>fixture(()=>{
+    db.exec("INSERT INTO Tracks(id,mbid,release_mbid,recording_mbid,medium_position,position,title) VALUES(2,'repeat','release','old',1,2,'Track')");
+    const replacement=[{...incoming[0],Id:'track-next',RecordingId:'old',OldRecordingIds:undefined}];
+    const before=snapshot();assert.equal(reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next'])),0);assert.equal(snapshot(),before);
+    replacement[0]=Object.assign(replacement[0],{OldIds:['track']});
+    assert.equal(reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next'])),1);
+    assert.equal((db.prepare('SELECT mbid FROM Tracks WHERE id=1').get() as {mbid:string}).mbid,'track-next');
+    assert.equal((db.prepare('SELECT mbid FROM Tracks WHERE id=2').get() as {mbid:string}).mbid,'repeat');
+}));
+test('track replacements protect active, standalone and contradictory file/sidecar ownership',()=>fixture(()=>{
+    const replacement=[{...incoming[0],Id:'track-next',RecordingId:'old',OldRecordingIds:undefined}];
+    const run=()=>reconcileEditionTrackIdentities(db,'release',replacement,new Set(['track-next']));
+    db.exec("INSERT INTO commands(name,payload,status) VALUES('DownloadTrack','{\"canonicalTrackId\":1}','started')");
+    let before=snapshot();assert.throws(run,/executing media snapshot/);assert.equal(snapshot(),before);
+    db.exec("DELETE FROM commands; INSERT INTO DownloadQueue(ref_key,media_kind,command_name,payload,queue_order) VALUES('standalone','track','DownloadTrack','{\"canonicalTrackId\":\"1\"}',1)");
+    before=snapshot();assert.throws(run,/standalone waiting/);assert.equal(snapshot(),before);
+    db.exec('DELETE FROM DownloadQueue; UPDATE TrackFiles SET recording_id=3');
+    before=snapshot();assert.throws(run,/recording or edition file scope/);assert.equal(snapshot(),before);
+    db.exec("UPDATE TrackFiles SET recording_id=1; UPDATE MetadataFiles SET canonical_track_mbid='track',canonical_recording_mbid='other'");
+    before=snapshot();assert.throws(run,/sidecar recording scope/);assert.equal(snapshot(),before);
+}));
+
+test('standalone recording intent uses its partial expression index',()=>{
+    const plan=db.prepare("EXPLAIN QUERY PLAN SELECT id FROM DownloadQueue WHERE plan_id IS NULL AND json_extract(payload,'$.canonicalRecordingMbid')=? LIMIT 1").all('old') as {detail:string}[];
+    assert.ok(plan.some(row=>row.detail.includes('idx_download_queue_standalone_recording')));
+    const byId=db.prepare("EXPLAIN QUERY PLAN SELECT id FROM DownloadQueue WHERE plan_id IS NULL AND CAST(json_extract(payload,'$.canonicalRecordingId') AS TEXT)=? LIMIT 1").all('1') as {detail:string}[];
+    assert.ok(byId.some(row=>row.detail.includes('idx_download_queue_standalone_recording_id')));
+});
+test('integer-only standalone and active recording snapshots are retained',()=>fixture(()=>{
+    db.exec("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,payload,queue_order) VALUES('video','video','DownloadVideo','{\"canonicalRecordingId\":1}',1)");
+    const before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/standalone waiting/);assert.equal(snapshot(),before);
+    db.exec("DELETE FROM DownloadQueue; INSERT INTO commands(name,payload,status) VALUES('ImportDownload','{\"resolved\":{\"canonicalRecordingId\":\"1\"}}','started')");
+    const active=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/executing media snapshot/);assert.equal(snapshot(),active);
+}));
+test('recording reconciliation requires caller transaction ownership',()=>{
+    assert.throws(()=>reconcileRecordingRedirects(db,incoming),/active transaction/);
+});
+test('active media commands retain the entire pre-merge database snapshot',()=>fixture(()=>{
+    plan();
+    db.exec("INSERT INTO commands(name,payload,status) VALUES('DownloadTrack','{\"canonicalRecordingMbid\":\"old\"}','started')");
+    const before=snapshot();
+    assert.throws(()=>reconcileRecordingRedirects(db,incoming),/executing media snapshot/);
+    assert.equal(snapshot(),before);
+}));
+test('a later caller failure rolls back the completed recording merge',()=>fixture(()=>{
+    const before=snapshot();
+    assert.throws(()=>db.transaction(()=>{reconcileRecordingRedirects(db,incoming);throw new Error('later edition failure');})(),/later edition failure/);
+    assert.equal(snapshot(),before);
+}));
+test('redirects retain canonical target facts and only fill supplemental holes',()=>fixture(()=>{
+    db.exec("UPDATE Recordings SET cover_image_url='old-cover',copyright='old-rights' WHERE id=1; UPDATE Recordings SET cover_image_url='selected-cover' WHERE id=2");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare('SELECT title,cover_image_url,copyright FROM Recordings WHERE id=2').get(),{title:'New title',cover_image_url:'selected-cover',copyright:'old-rights'});
+}));
+test('audio/video identity changes refuse all owner mutations',()=>fixture(()=>{
+    db.exec('UPDATE Recordings SET is_video=1 WHERE id=2');
+    const before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/presentation identity/);assert.equal(snapshot(),before);
+}));
+test('identical credits consolidate without choosing between conflicting facts',()=>fixture(()=>{
+    db.exec("INSERT INTO RecordingArtistCredits(recording_id,artist_id,ordinal,credited_name) VALUES(2,1,0,'Artist')");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare('SELECT recording_id,artist_id,ordinal,credited_name FROM RecordingArtistCredits').all(),[{recording_id:2,artist_id:1,ordinal:0,credited_name:'Artist'}]);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+test('recording redirect re-keys video artwork onto the surviving recording',()=>fixture(()=>{
+    db.exec("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url,content_hash) VALUES('Video','1','cover','https://example.test/source.jpg','hash-old')");
+    db.exec("INSERT INTO ArtworkLibraryLinks(cover_entity,entity_id,cover_type,file_path,content_hash) VALUES('Video','1','cover','/music/MetadataFiles.jpg','hash-old')");
+    db.exec("INSERT INTO ArtworkProxyVariants(cover_entity,entity_id,cover_type,height,source_hash,content_hash,byte_size) VALUES('Video','1','cover',250,'hash-old','proxy-old',12)");
+    db.exec("INSERT INTO ArtworkMutationJournal(id,cover_entity,entity_id,cover_type,destination_path,staged_path,backup_path,replacement_identity,database_snapshot) VALUES('intent','Video','1','cover','/music/MetadataFiles.jpg','/music/.staged.jpg','/music/.backup.jpg','{\"hash\":\"next\"}','{\"source\":{\"entity_id\":\"1\"},\"links\":[{\"entity_id\":\"1\"}],\"file\":null}')");
+    assert.equal(reconcileRecordingRedirects(db,incoming),1);
+    assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid='old'").get(),undefined);
+    assert.deepEqual(db.prepare("SELECT entity_id,source_url,content_hash FROM ArtworkSources WHERE cover_entity='Video'").get(),{entity_id:'2',source_url:'https://example.test/source.jpg',content_hash:'hash-old'});
+    assert.deepEqual(db.prepare("SELECT entity_id,file_path,content_hash FROM ArtworkLibraryLinks WHERE cover_entity='Video'").get(),{entity_id:'2',file_path:'/music/MetadataFiles.jpg',content_hash:'hash-old'});
+    assert.deepEqual(db.prepare("SELECT entity_id,height FROM ArtworkProxyVariants").get(),{entity_id:'2',height:250});
+    assert.deepEqual(db.prepare("SELECT entity_id FROM ArtworkMutationJournal").get(),{entity_id:'2'});
+    const snapshot=JSON.parse((db.prepare("SELECT database_snapshot FROM ArtworkMutationJournal").get() as {database_snapshot:string}).database_snapshot);
+    assert.equal(snapshot.source.entity_id,'2');
+    assert.equal(snapshot.links[0].entity_id,'2');
+    assert.equal(db.prepare("SELECT 1 FROM ArtworkSources WHERE entity_id IN ('1','old')").get(),undefined);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+test('recording redirect keeps the target artwork source and transfers a unique library link',()=>fixture(()=>{
+    db.exec("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url,content_hash) VALUES('Video','1','cover','https://example.test/old.jpg','hash-old'),('Video','2','cover','https://example.test/new.jpg','hash-new')");
+    db.exec("INSERT INTO ArtworkLibraryLinks(cover_entity,entity_id,cover_type,file_path,content_hash) VALUES('Video','1','cover','/music/old-cover.jpg','hash-old'),('Video','2','cover','/music/new-cover.jpg','hash-new')");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare("SELECT entity_id,source_url,content_hash FROM ArtworkSources WHERE cover_entity='Video'").get(),{entity_id:'2',source_url:'https://example.test/new.jpg',content_hash:'hash-new'});
+    assert.deepEqual(db.prepare("SELECT entity_id,file_path FROM ArtworkLibraryLinks ORDER BY file_path").all(),[
+        {entity_id:'2',file_path:'/music/new-cover.jpg'},
+        {entity_id:'2',file_path:'/music/old-cover.jpg'},
+    ]);
+    assert.equal(db.prepare("SELECT 1 FROM ArtworkSources WHERE entity_id='1'").get(),undefined);
+}));
+test('recording redirect keyed by recording MBID still lands on the integer URL identity',()=>fixture(()=>{
+    db.exec("INSERT INTO ArtworkSources(cover_entity,entity_id,cover_type,source_url) VALUES('Video','old','cover','https://example.test/mbid.jpg')");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare("SELECT entity_id,source_url FROM ArtworkSources WHERE cover_entity='Video'").get(),{entity_id:'2',source_url:'https://example.test/mbid.jpg'});
+}));
+test('video redirects preserve exact provider decision and manual placement',()=>fixture(()=>{
+    db.exec("DELETE FROM ProviderTrackMatches; UPDATE Recordings SET is_video=1 WHERE id IN (1,2); INSERT INTO ProviderItems(id,provider,entity_type,provider_id) VALUES(3,'tidal','video','video'); INSERT INTO ProviderVideoMatches(id,provider_video_item_id,recording_id,match_state,decision_source,confidence,method,matcher_version) VALUES(1,3,1,'accepted','manual',1,'test',1)");
+    db.prepare("INSERT INTO LibraryVideos(id,library_id,video_recording_id,preferred_offer_key,selection_mode,placement_mode,placement_library_id,inline_track_id,inline_slot,placement_selection_mode) VALUES(1,?,1,'[\"tidal\",\"video\"]','manual','inline',?,1,'video','manual')").run(library,library);
+    db.exec("UPDATE Recordings SET youtube_video_id='abcdefghijk' WHERE id=1");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare('SELECT id,recording_id,decision_source FROM ProviderVideoMatches').get(),{id:1,recording_id:2,decision_source:'manual'});
+    assert.deepEqual(db.prepare('SELECT id,video_recording_id,preferred_offer_key,inline_track_id,placement_selection_mode FROM LibraryVideos').get(),{id:1,video_recording_id:2,preferred_offer_key:'["tidal","video"]',inline_track_id:1,placement_selection_mode:'manual'});
+    assert.equal((db.prepare('SELECT youtube_video_id FROM Recordings WHERE id=2').get() as {youtube_video_id:string}).youtube_video_id,'abcdefghijk');
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+
+test('a refresh may skip a preserved identity collision and must still fail other errors',()=>{
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: RecordingArtistCredits.recording_id, RecordingArtistCredits.ordinal')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: RecordingRelations.source_recording_id, RecordingRelations.target_recording_id, RecordingRelations.relation_type')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: ProviderVideoMatches.provider_video_item_id, ProviderVideoMatches.recording_id')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('Conflicting recording presentation identity for 4ed0911c-48be-45e6-9526-edaf0b995b22')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('test edition write failure')),false);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: RecordingWorks.recording_id, RecordingWorks.work_mbid')),true);
+    assert.equal(isPreservedCatalogIdentityConflict(new Error('UNIQUE constraint failed: Tracks.mbid')),false);
+});
+
+test('recording redirect keeps the target work and moves a unique work and its credit',()=>fixture(()=>{
+    db.exec(`INSERT INTO RecordingWorks(recording_id,work_mbid,work_title,link_order,instrumental)
+        VALUES(1,'shared','Old title',1,0),(2,'shared','New title',2,1),(1,'only-old','Source work',3,0);
+        INSERT INTO CatalogRelationshipCredits(scope,recording_id,role,artist_mbid,credited_name,credit_order)
+        VALUES('recording',1,'composer','artist','Old Composer',1);`);
+    assert.equal(reconcileRecordingRedirects(db,incoming),1);
+    assert.deepEqual(db.prepare('SELECT recording_id,work_mbid,work_title FROM RecordingWorks ORDER BY work_mbid').all(),[
+        {recording_id:2,work_mbid:'only-old',work_title:'Source work'},
+        {recording_id:2,work_mbid:'shared',work_title:'New title'},
+    ]);
+    assert.deepEqual(db.prepare('SELECT recording_id,credited_name FROM CatalogRelationshipCredits').get(),{recording_id:2,credited_name:'Old Composer'});
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+test('recording owners cover every active runtime recording foreign key',()=>{
+    const expected=new Set(RECORDING_OWNERS.map(([table,col])=>table+'.'+col));
+    const actual=new Set<string>();
+    for(const {name} of db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]){
+        for(const fk of db.prepare(`PRAGMA foreign_key_list("${name}")`).all() as {table:string;from:string;to:string}[]){
+            if(fk.table==='Recordings' && fk.to==='id') actual.add(name+'.'+fk.from);
+        }
+    }
+    assert.deepEqual([...actual].sort(),[...expected].sort());
+});
+test('authoritative merge retains media, sidecar links, decisions, credits and projections',()=>fixture(()=>{
+    assert.equal(reconcileRecordingRedirects(db,incoming),1);
+    assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid='old'").get(),undefined);
+    assert.deepEqual(db.prepare('SELECT recording_id,recording_mbid FROM Tracks WHERE id=1').get(),{recording_id:2,recording_mbid:'new'});
+    assert.deepEqual(db.prepare('SELECT id,file_path,codec,file_size,recording_id,canonical_recording_mbid FROM TrackFiles WHERE id=1').get(),{id:1,file_path:'/music/audio.flac',codec:'flac',file_size:123,recording_id:2,canonical_recording_mbid:'new'});
+    for(const table of ['MetadataFiles','LyricFiles','ExtraFiles']) assert.deepEqual(db.prepare(`SELECT track_file_id,canonical_recording_mbid FROM ${table}`).get(),{track_file_id:1,canonical_recording_mbid:'new'});
+    assert.deepEqual(db.prepare('SELECT track_id,recording_id,decision_source FROM ProviderTrackMatches WHERE id=1').get(),{track_id:1,recording_id:2,decision_source:'manual'});
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+    assert.equal(reconcileRecordingRedirects(db,incoming),0);
+}));
+test('selected waiting plans retain their source and follow the recanonicalized key',()=>fixture(()=>{
+    const id=plan();db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,'{}',1)").run(id);
+    reconcileRecordingRedirects(db,incoming);
+    const p=db.prepare('SELECT state,plan_key FROM AcquisitionPlans WHERE id=?').get(id) as {state:string;plan_key:string};
+    assert.equal(p.state,'stale');assert.notEqual(p.plan_key,'chosen');
+    assert.equal((db.prepare('SELECT preferred_plan_key FROM LibraryEditions').get() as any).preferred_plan_key,p.plan_key);
+    assert.equal((db.prepare('SELECT provider_track_match_id FROM AcquisitionPlanTracks WHERE plan_id=?').get(id) as any).provider_track_match_id,1);
+    assert.equal((db.prepare('SELECT plan_id FROM DownloadQueue').get() as any).plan_id,id);
+}));
+test('claimed plans leave all ownership and waiting payloads unchanged',()=>fixture(()=>{
+    const id=plan();db.prepare("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,plan_id,command_id,payload,queue_order) VALUES('waiting','album','DownloadAlbum',?,123,'{}',1)").run(id);
+    const before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/owned by a download/);assert.equal(snapshot(),before);
+}));
+test('differing derived credits keep the canonical target credit list instead of blocking the merge',()=>fixture(()=>{
+    db.exec("INSERT INTO RecordingArtistCredits(recording_id,artist_id,ordinal,credited_name,join_phrase) VALUES(2,1,0,'Target credit',' & ')");
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare('SELECT recording_id,artist_id,ordinal,credited_name,join_phrase FROM RecordingArtistCredits').all(),[{recording_id:2,artist_id:1,ordinal:0,credited_name:'Target credit',join_phrase:' & '}]);
+    assert.deepEqual(db.prepare("SELECT recording_id FROM Tracks WHERE id=1").get(),{recording_id:2});
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+test('a target without credits inherits the merged recording credits',()=>fixture(()=>{
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare('SELECT recording_id,artist_id,ordinal,credited_name FROM RecordingArtistCredits').all(),[{recording_id:2,artist_id:1,ordinal:0,credited_name:'Artist'}]);
+}));
+test('a uniqueness collision rolls back earlier owner transfers even when caught by caller',()=>fixture(()=>{
+    db.exec("INSERT INTO RecordingRelations(source_recording_id,target_recording_id,source_foreign_recording_id,target_foreign_recording_id,relation_type) VALUES(2,3,'new','other','version')");
+    const before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/UNIQUE/);assert.equal(snapshot(),before);
+}));
+test('standalone waiting intent and inconsistent file identities are preserved for reconciliation',()=>fixture(()=>{
+    db.exec("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,payload,queue_order) VALUES('standalone','track','DownloadTrack','{\"canonicalRecordingMbid\":\"old\"}',1)");
+    let before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/standalone waiting/);assert.equal(snapshot(),before);
+    db.exec("DELETE FROM DownloadQueue; UPDATE TrackFiles SET canonical_recording_mbid='other'");
+    before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/conflicting file identity/);assert.equal(snapshot(),before);
+    db.exec("UPDATE TrackFiles SET recording_id=3,canonical_recording_mbid='old'");
+    before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/conflicting file identity/);assert.equal(snapshot(),before);
+}));
+test('an exact soft recording owner acquires the canonical FK without altering its media facts',()=>fixture(()=>{
+    db.exec('UPDATE TrackFiles SET recording_id=NULL');
+    reconcileRecordingRedirects(db,incoming);
+    assert.deepEqual(db.prepare('SELECT id,recording_id,canonical_recording_mbid,file_size FROM TrackFiles').get(),{id:1,recording_id:2,canonical_recording_mbid:'new',file_size:123});
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));

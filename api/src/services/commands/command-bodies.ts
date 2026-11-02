@@ -98,6 +98,9 @@ export interface ResolvedDownloadMetadata {
 
 export interface RetagWorkCheckpoint {
   version: 1;
+  /** Files re-planned after a concurrent identity change (capped list + total). */
+  identityChanged?: number[];
+  identityChangedCount?: number;
 }
 
 export interface ScanWorkCheckpoint {
@@ -108,24 +111,43 @@ export interface ScanWorkCheckpoint {
   result: { artists: number; orphansRemoved: number; filesIndexed: number; filesUpdated: number;
     downloadFlagsReset: number; unmappedOrphans: number };
   cleanupDone: boolean;
+  discovery?: import("../mediafiles/library-scan.js").DiscoveryResult;
 }
 
 export interface RootInventoryCheckpoint {
   version: 1;
   roots: Array<{ key: "music" | "spatial" | "videos"; path: string }>;
+  rootIdentities?: Array<{ dev: string; ino: string } | null>;
   pending: Array<{ root: number; directory: string }>;
-  current: { root: number; directory: string; files: string[]; cursor: number } | null;
+  current: { root: number; directory: string; files: string[]; cursor: number;
+    identity?: { dev: string; ino: string } } | null;
   directories: number;
   files: number;
   reviewFiles: number;
+  sidecarFiles?: number;
+  cleanupPlanVersion?: 1;
   missingRoots: string[];
   complete: boolean;
 }
 
+/** Written when startup or watchdog recovery continues a file checkpoint. */
+export interface FileWorkRestartResume {
+  version: 1;
+  reason: string;
+  settled: number;
+  total: number;
+  skippedFiles: number;
+  /** Consecutive resumes that did not advance `settled`. Zero after progress. */
+  count: number;
+}
+
 export interface CommandBodyCommon {
+  artworkCacheWork?: { version: 1; stage?: "adopt" | "retire"; root: string; rootIdentity: string; family: number; after: string;
+    current?: {name:string;after:string}; directories?:number };
   cancelRequested?: boolean;
   retagWork?: RetagWorkCheckpoint;
   renameWork?: { version: 1 };
+  restartResume?: FileWorkRestartResume;
   scanWork?: ScanWorkCheckpoint;
   rootInventory?: RootInventoryCheckpoint;
   id?: string;
@@ -250,7 +272,12 @@ export interface DownloadMissingCommand extends CommandBodyCommon {
   artistIds?: string[];
 }
 
-export type CheckUpgradesCommand = CommandBodyCommon;
+export interface CheckUpgradesCommand extends CommandBodyCommon {
+  /** "manual": full scan, upgrades even when automatic upgrades are off.
+   * "settings": a quality target changed; full scan, honours the upgrade toggle.
+   * "scheduled": paced scan with a small queue budget, honours the toggle. */
+  mode?: "manual" | "settings" | "scheduled";
+}
 
 export type HousekeepingCommand = CommandBodyCommon;
 
@@ -301,6 +328,10 @@ export interface RescanFoldersCommand extends CommandBodyCommon {
 }
 
 export interface ImportDownloadCommand extends CommandBodyCommon {
+  /** Lyrics fetched while the download slot still owned the network work,
+   * keyed by providerMediaLyricsKey. Import uses these instead of calling the
+   * provider while it holds the disk-exclusive import slot. */
+  prefetchedLyrics?: Record<string, { text?: string | null; subtitles?: string | null; [key: string]: unknown } | null>;
   type: DownloadMediaType;
   provider: string;
   providerId: string;
@@ -314,10 +345,15 @@ export interface ImportDownloadCommand extends CommandBodyCommon {
 
 export interface ConfigPruneCommand extends CommandBodyCommon {
   /**
-   * Preference changes first refresh every canonical MediaCover cache entry,
-   * then run the same sidecar/embed reconciliation as an ordinary config prune.
+   * Explicit library artwork replacement; ordinary repair remains missing-only.
    */
   refreshArtworkPreference?: boolean;
+  /**
+   * Limit the artwork replacement to these artists (catalog ids or mbids).
+   * Absent means the whole library, as after an artwork preference change.
+   */
+  artistIds?: string[];
+  cleanupArtworkCache?: boolean;
 }
 
 export interface MoveArtistCommand extends CommandBodyCommon {
@@ -358,6 +394,12 @@ export type CompactDatabaseCommand = CommandBodyCommon;
 export type BackupDatabaseCommand = CommandBodyCommon;
 
 export type CleanupTempFilesCommand = CommandBodyCommon;
+export interface CleanupLibraryCommand extends CommandBodyCommon {
+  inventoryCommandId: number;
+  pruneEmptyFolders?: boolean;
+  cleanupCursor?: string;
+  cleanupStats?: { deleted:number;protected:number;refused:number;alreadyRemoved:number;pruned:number };
+}
 
 export type UpdateLibraryMetadataCommand = CommandBodyCommon;
 

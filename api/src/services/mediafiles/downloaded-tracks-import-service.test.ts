@@ -152,13 +152,58 @@ test("album-mode imports with provenance offers do not hard-fail a shortfall", (
     acquisitionMode: "trackOffers",
     processedCount: 23,
     trackOfferCount: 24,
-  }), true);
+  }), false);
 });
 
 test("YouTube album imports reconcile the exact downloaded plan instead of provider album membership", () => {
   const trackOffers = Array.from({ length: 12 }, (_, index) => ({ provider: 'youtube-music', providerTrackId: String(index) }));
   assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'album', provider: 'youtube-music', trackOffers }, 22), 12);
-  assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 11, trackOfferCount: 12 }), true);
+  assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 11, trackOfferCount: 12 }), false);
   assert.equal(importModule.shouldHardFailIncompleteAlbumImport({ type: 'album', acquisitionMode: 'album', provider: 'youtube-music', processedCount: 12, trackOfferCount: 12 }), false);
   assert.equal(importModule.expectedImportedTrackCount({ acquisitionMode: 'album', provider: 'youtube-music' }, 22), 22);
+});
+
+test("post-import catalog helpers bind multi-file id lists as one JSON parameter", async () => {
+  // Regression: 979ad8b2 spread the ids into a single-parameter json_each()
+  // statement, failing every multi-track import with "Too many parameter values".
+  const ids = Array.from({ length: 40 }, (_, index) => index + 1);
+  await assert.doesNotReject(() => importModule.ensureAlbumCatalogGenresForFileIds(ids));
+  await assert.doesNotReject(() => importModule.ensureDestAlbumArtworkForFileIds(ids));
+});
+
+test("hybrid import names each offered track the organizer did not place", async () => {
+    const { describeUnorganizedTrackOffers } = await import("./downloaded-tracks-import-service.js");
+    const missing = describeUnorganizedTrackOffers([
+        { provider: "tidal", providerTrackId: "1", title: "Kept", trackNum: 1, volumeNum: 1 },
+        { provider: "deezer", providerTrackId: "2", title: "Lost", trackNum: 7, volumeNum: 2 },
+        { provider: "deezer", providerTrackId: "2", title: "Lost", trackNum: 7, volumeNum: 2 },
+    ], ["1"]);
+    assert.deepEqual(missing, ['2-7 "Lost" (deezer:2)']);
+    const { listUnorganizedTrackGaps, shouldHardFailIncompleteAlbumImport } = await import("./downloaded-tracks-import-service.js");
+    assert.equal(shouldHardFailIncompleteAlbumImport({
+        type: "album",
+        acquisitionMode: "trackOffers",
+        provider: "youtube-music",
+        processedCount: 11,
+        trackOfferCount: 12,
+    }), false);
+    assert.deepEqual(listUnorganizedTrackGaps([
+        { provider: "tidal", providerTrackId: "1", title: "Kept", trackNum: 1, volumeNum: 1 },
+        { provider: "deezer", providerTrackId: "2", title: "Lost", trackNum: 7, volumeNum: 2 },
+    ], ["1"]), [{
+        position: "2-7",
+        title: "Lost",
+        providerId: "deezer:2",
+        cause: "not organized",
+    }]);
+});
+
+test("import gaps keep the organizer cause for a path-too-long offered track", async () => {
+    const { listUnorganizedTrackGaps } = await import("./downloaded-tracks-import-service.js");
+    const missing = listUnorganizedTrackGaps([
+        { provider: "tidal", providerTrackId: "108", title: "Firebird", trackNum: 108, volumeNum: 1 },
+    ], [], "path component too long (276 bytes): 108 - Firebird.flac");
+    assert.equal(missing[0].cause.startsWith("path component too long"), true);
+    assert.equal(missing[0].providerId, "tidal:108");
+    assert.equal(missing[0].position, "1-108");
 });

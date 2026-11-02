@@ -54,12 +54,15 @@ export interface MbArtist {
 
 export interface MbTrack {
   id?: string;
+  /** Local PostgreSQL mirror redirect evidence, not a WS/2 inferred identity. */
+  oldIds?: string[];
   number?: string;
   position?: number;
   title?: string;
   length?: number | null;
   recording?: {
     id?: string;
+    oldIds?: string[];
     title?: string;
     length?: number | null;
     video?: boolean;
@@ -85,7 +88,10 @@ export interface MbRelease {
   barcode?: string | null;
   date?: string | null;
   disambiguation?: string | null;
-  "label-info"?: Array<{ label?: { name?: string } }>;
+  "label-info"?: Array<{ label?: { name?: string }; catalog_number?: string | null }>;
+  asin?: string | null;
+  script?: string | null;
+  language?: string | null;
   relations?: Array<{ type?: string; url?: { resource?: string | null } | null }>;
   "release-group"?: MbReleaseGroupStub & { "artist-credit"?: MbArtistCreditName[] };
   media?: MbMedium[];
@@ -173,6 +179,8 @@ export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): Lidarr
   return {
     Id: String(track.id ?? ""),
     RecordingId: String(recording?.id ?? ""),
+    ...(track.oldIds ? { OldIds: track.oldIds } : {}),
+    ...(recording?.oldIds ? { OldRecordingIds: recording.oldIds } : {}),
     TrackName: bestTitle,
     TrackNumber: String(track.number ?? track.position ?? ""),
     TrackPosition: Number(track.position ?? 0),
@@ -182,6 +190,17 @@ export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): Lidarr
     RecordingDisambiguation: recording?.disambiguation || null,
     IsVideo: recording?.video === true,
   };
+}
+
+function carriedMbText(
+  release: MbRelease,
+  sourceKey: "asin" | "script" | "language",
+  targetKey: "Asin" | "Script" | "Language",
+): Partial<Pick<LidarrRelease, "Asin" | "Script" | "Language">> {
+  if (!Object.prototype.hasOwnProperty.call(release, sourceKey)) return {};
+  const raw = release[sourceKey];
+  const value = raw == null ? null : String(raw).trim() || null;
+  return { [targetKey]: value };
 }
 
 export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
@@ -197,6 +216,14 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
   const labels = (release["label-info"] || [])
     .map((info) => String(info.label?.name || "").trim())
     .filter(Boolean);
+  const catalogNumbers: string[] = [];
+  const seenCatalogs = new Set<string>();
+  for (const info of release["label-info"] || []) {
+    const catalog = String(info.catalog_number || "").trim();
+    if (!catalog || seenCatalogs.has(catalog)) continue;
+    seenCatalogs.add(catalog);
+    catalogNumbers.push(catalog);
+  }
   // Prefer every ISO code we know about. Postgres bulk hydration joins them
   // with commas; WS payloads may only have the primary `country` field.
   // release-events (when present) are the full multi-territory truth.
@@ -225,6 +252,13 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
     Country: [...countries].sort(),
     Barcode: release.barcode ?? undefined,
     Label: labels,
+    // A present `label-info` array is the catalog-number field, even when every
+    // number is blank. Omitting the key is reserved for payloads that never
+    // asked for labels (WS without that include).
+    ...(Array.isArray(release["label-info"]) ? { CatalogNumbers: catalogNumbers } : {}),
+    ...carriedMbText(release, "asin", "Asin"),
+    ...carriedMbText(release, "script", "Script"),
+    ...carriedMbText(release, "language", "Language"),
     Media: media.map((medium) => ({
       Position: Number(medium.position ?? 1),
       Format: medium.format ?? "",

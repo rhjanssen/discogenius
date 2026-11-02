@@ -11,6 +11,7 @@ import { persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
 import { matchAudioFileByMetadata, matchVideoFileByMetadata, resolveCatalogTrackFromEmbeddedMbids, videoStemComparableTitle } from "./library-scan-metadata-match.js";
 import { extractNamingMbid } from "./import-discovery.js";
+import { normalizeTitle } from "./import-matching-utils.js";
 import { DUPLICATE_EXTRA_FILE_TYPE } from "../extras/files/extra-file-service.js";
 import {
     PROVIDER_RESOLVED_ALBUM_ID_SQL,
@@ -86,13 +87,70 @@ function shouldSkipScanFile(name: string): boolean {
     return normalized.startsWith('._') || isMediaRewriteTemporaryName(normalized) || IGNORED_SCAN_FILES.has(normalized);
 }
 
+function listChildDirectoryNames(dir: string): string[] {
+    try {
+        return fs.readdirSync(dir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && !shouldSkipScanDirectory(entry.name))
+            .map((entry) => entry.name);
+    } catch {
+        return [];
+    }
+}
+
+function comparableAlbumFolderTitle(name: string): string {
+    const withoutToken = String(name || "").replace(/\s*\{[^}]+\}\s*$/g, "");
+    const withoutYear = withoutToken.replace(/\s*\(\d{4}\)\s*$/g, "").trim();
+    return normalizeTitle(withoutYear);
+}
+
+/**
+ * Several catalog artists can share a folder name. The child album folders
+ * decide it when exactly one of those artists owns a matching album. Two
+ * matches, or none, stay unresolved.
+ */
+function disambiguateArtistsByChildAlbums(
+    named: Array<{ id: number; name: string; mbid: string }>,
+    childFolderNames: readonly string[],
+): { id: number; name: string; mbid: string } | null {
+    const childKeys = new Set(
+        childFolderNames.map(comparableAlbumFolderTitle).filter((key) => key.length > 0),
+    );
+    if (childKeys.size === 0 || named.length === 0) return null;
+    const ids = named.map((artist) => artist.id);
+    const marks = ids.map(() => "?").join(",");
+    const rows = db.prepare(`
+        SELECT artist_metadata_id AS artist_id, title
+        FROM Albums
+        WHERE artist_metadata_id IN (${marks})
+        UNION ALL
+        SELECT artist_metadata_id AS artist_id, title
+        FROM AlbumEditions
+        WHERE artist_metadata_id IN (${marks})
+    `).all(...ids, ...ids) as Array<{ artist_id: number; title: string | null }>;
+    const matched = new Set<number>();
+    for (const row of rows) {
+        const key = normalizeTitle(row.title || "");
+        if (key && childKeys.has(key)) matched.add(Number(row.artist_id));
+    }
+    if (matched.size !== 1) return null;
+    const winnerId = [...matched][0];
+    return named.find((artist) => artist.id === winnerId) ?? null;
+}
+
 /**
  * Map a top-level library folder onto an existing catalog artist. Discogenius
  * writes `{mbid-…}` into artist folders, so a Marshmello credited-scope download
  * sitting next to monitored Bastille is catalog we already know — not an
  * unknown artist for Unmapped / Manual Import.
+ *
+ * `childFolderNames` is how a shared name such as Bastille is resolved: the
+ * album directories inside the folder identify the band when only one catalog
+ * artist owns them.
  */
-export function resolveCatalogArtistFromFolderName(folderName: string): {
+export function resolveCatalogArtistFromFolderName(
+    folderName: string,
+    childFolderNames?: readonly string[],
+): {
     id: number;
     name: string;
     mbid: string;
@@ -114,9 +172,9 @@ export function resolveCatalogArtistFromFolderName(folderName: string): {
     }
 
     const named = db.prepare(`SELECT id, name, mbid FROM ArtistMetadata
-        WHERE name = ? COLLATE NOCASE LIMIT 2`).all(trimmed) as Array<{ id: number; name: string; mbid: string }>;
+        WHERE name = ? COLLATE NOCASE`).all(trimmed) as Array<{ id: number; name: string; mbid: string }>;
     if (named.length === 1) return named[0];
-    if (named.length > 1) return null;
+    if (named.length > 1) return disambiguateArtistsByChildAlbums(named, childFolderNames ?? []);
 
     const artists = db.prepare(`
         SELECT
@@ -161,7 +219,10 @@ function collectOnDiskCatalogArtists(roots: Array<string | null | undefined>): A
         }
         for (const entry of entries) {
             if (!entry.isDirectory() || shouldSkipScanDirectory(entry.name)) continue;
-            const artist = resolveCatalogArtistFromFolderName(entry.name);
+            const artist = resolveCatalogArtistFromFolderName(
+                entry.name,
+                listChildDirectoryNames(path.join(root, entry.name)),
+            );
             if (artist) byId.set(artist.id, artist);
         }
     }
@@ -181,6 +242,8 @@ export interface DiskScanResult {
 export type { MetadataFillResult } from "./library-metadata-backfill.js";
 
 export interface DiscoveryResult {
+    /** New review rows persisted during discovery, excluding existing entries. */
+    reviewFilesAdded?: number;
     /** Folder names that matched existing DB artists (already managed) */
     knownFolders: number;
     /** New artists discovered from scanned files or TIDAL search */
@@ -455,7 +518,12 @@ export class DiskScanService {
                 const batch = missing.slice(start, start + 25);
                 unmappedOrphans += await withSqliteWriteGate(() => db.transaction(() => {
                     let removed = 0;
-                    for (const row of batch) removed += remove.run(row.id, row.file_path).changes;
+                    for (const row of batch) {
+                        if (isMissingLibraryFile({ filePath: row.file_path,
+                            relativePath: row.relative_path, libraryRoot: row.library_root })) {
+                            removed += remove.run(row.id, row.file_path).changes;
+                        }
+                    }
                     return removed;
                 })(), "scan:unmapped-cleanup");
             }
@@ -899,9 +967,13 @@ export class DiskScanService {
             if (!isMissingLibraryFile({ filePath: row.file_path, libraryRoot: row.library_root, relativePath: row.relative_path })) continue;
 
             // File is gone — remove DB record
-            const changed = await withSqliteWriteGate(() => db.prepare(`
-                DELETE FROM TrackFiles WHERE id = ? AND artist_metadata_id = ? AND file_path = ?
-            `).run(row.id, artistId, row.file_path).changes, "scan:orphaned-file");
+            const changed = await withSqliteWriteGate(() => {
+                if (!isMissingLibraryFile({ filePath: row.file_path, libraryRoot: row.library_root,
+                    relativePath: row.relative_path })) return 0;
+                return db.prepare(`
+                    DELETE FROM TrackFiles WHERE id = ? AND artist_metadata_id = ? AND file_path = ?
+                `).run(row.id, artistId, row.file_path).changes;
+            }, "scan:orphaned-file");
             if (!changed) continue;
             LibraryFilesService.emitFileDeleted({
                 libraryFileId: row.id,
@@ -966,7 +1038,7 @@ export class DiskScanService {
             const artistPicName = metadataConfig.artist_picture_name || "folder.jpg";
 
             for (const folder of folders) {
-                if (wantPicture) {
+                if (wantPicture && !fs.existsSync(path.join(folder, artistPicName))) {
                     const picPath = path.join(folder, artistPicName);
                     try {
                         syncCachedMediaCoverToFile({
@@ -1068,16 +1140,23 @@ export class DiskScanService {
         }
 
         // Manually copied music can still live beside the managed MBID folder.
-        // Only add a plain-name sibling when its name resolves unambiguously to
-        // this artist. The normal matcher still decides every file's identity.
+        // A shared artist name is resolved from the album folders inside that
+        // plain directory. The normal matcher still decides every file's identity.
         const plainName = artist.name;
-        if (plainName && path.basename(plainName) === plainName && plainName !== "." && plainName !== ".."
-            && resolveCatalogArtistFromFolderName(plainName)?.id === artist.id) {
-            for (const { key, dir } of [...roots]) {
+        if (plainName && path.basename(plainName) === plainName && plainName !== "." && plainName !== "..") {
+            const plainChildNames = roots.flatMap(({ key }) => {
                 const root = key === "music" ? Config.getMusicPath()
                     : key === "spatial" ? Config.getSpatialPath() : Config.getVideoPath();
-                const sibling = path.join(root, plainName);
-                if (sibling !== dir) roots.push({ key, dir: sibling });
+                return root ? listChildDirectoryNames(path.join(root, plainName)) : [];
+            });
+            if (resolveCatalogArtistFromFolderName(plainName, plainChildNames)?.id === artist.id) {
+                for (const { key, dir } of [...roots]) {
+                    const root = key === "music" ? Config.getMusicPath()
+                        : key === "spatial" ? Config.getSpatialPath() : Config.getVideoPath();
+                    if (!root) continue;
+                    const sibling = path.join(root, plainName);
+                    if (sibling !== dir) roots.push({ key, dir: sibling });
+                }
             }
         }
 
@@ -1253,6 +1332,7 @@ export class DiskScanService {
                                         bitsPerSample: merged.bitDepth,
                                         numberOfChannels: merged.channels,
                                         codec: merged.codec,
+                                        codecProfile: merged.codecProfile,
                                     }, ext);
                                 }
                                 if (!metrics.duration) {
@@ -1358,6 +1438,7 @@ export class DiskScanService {
                                                 sampleRate: metrics.sampleRate ?? undefined,
                                                 bitrate: metrics.bitrate ?? undefined,
                                                 codec: metrics.codec ?? undefined,
+                                                codecProfile: metrics.codecProfile ?? undefined,
                                                 channels: metrics.channels ?? undefined,
                                                 duration: metrics.duration ?? undefined,
                                             });
@@ -1693,7 +1774,7 @@ export class DiskScanService {
      *
      * @param onProgress Optional callback for progress reporting (SSE etc.)
      */
-    private static async discoverNewArtists(
+    static async discoverNewArtists(
         onProgress?: (event: DiscoveryProgress) => void,
         options?: { monitorArtist?: boolean; fullProcessing?: boolean; trigger?: number },
     ): Promise<DiscoveryResult> {
@@ -1779,7 +1860,11 @@ export class DiskScanService {
         // Check each folder against known artists
         const unknownFolders: string[] = [];
         for (const [lower, originalName] of seenFolders) {
-            if (knownFolderToArtistId.has(lower) || resolveCatalogArtistFromFolderName(originalName)) {
+            const childNames: string[] = [];
+            for (const root of roots) {
+                childNames.push(...listChildDirectoryNames(path.join(root, originalName)));
+            }
+            if (knownFolderToArtistId.has(lower) || resolveCatalogArtistFromFolderName(originalName, childNames)) {
                 result.knownFolders++;
             } else {
                 unknownFolders.push(originalName);
@@ -1825,7 +1910,7 @@ export class DiskScanService {
                 });
             },
         });
-        await persistRootReviewCandidates(reviewCandidates);
+        result.reviewFilesAdded = await persistRootReviewCandidates(reviewCandidates);
         const autoImported = importer.getAutoImported();
         onProgress?.({
             phase: "import",
@@ -1948,6 +2033,9 @@ export class DiskScanService {
         artistId: string,
         libraryRoot: LibraryRootKey,
     ): { albumId: string | null; mediaId: string | null; fileType: string; quality: string | null } | null {
+        const artistMetadataId = resolveArtistMetadataId(artistId);
+        if (artistMetadataId == null) return null;
+        artistId = String(artistMetadataId);
         // The scanned root is the only trustworthy statement about which library
         // this file belongs to; provider audio variants describe source
         // capability, not what is on disk, so they never decide it.

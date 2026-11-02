@@ -15,10 +15,9 @@ const router = Router();
 
 router.get("/", (_req, res) => {
   try {
-    // Compose the import diagnostics here rather than inside
-    // collectHealthDiagnosticsSnapshot: the same snapshot backs the container's
-    // /health probe, which should stay a pure liveness check without catalog
-    // queries.
+    // Import counts stay off the diagnostic snapshot. GET /health is liveness
+    // (HTTP 200, status "ok") and must not run catalog queries. Provider auth
+    // on that snapshot is a warning, never unhealthy.
     res.json({
       ...collectHealthDiagnosticsSnapshot(),
       imports: {

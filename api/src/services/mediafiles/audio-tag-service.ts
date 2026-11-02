@@ -1,3 +1,10 @@
+import { createHash } from "node:crypto";
+import {
+  getArtistNameTranslationOptions,
+  translateStoredArtistName,
+  type ArtistNameTranslationOptions,
+} from "../metadata/artist-locale-names.js";
+export { getArtistNameTranslationOptions };
 import fs from "fs";
 import { nativeMediaTagKeys, releaseTypeTokens } from "./media-tag-io.js";
 import { withMediaFileLock } from "./media-file-lock.js";
@@ -13,27 +20,19 @@ import {
   type WriteAudioTagsPolicy,
   getConfigSection,
 } from "../config/config.js";
-import { embedAudioCover, compareEmbeddedAudioCover, prepareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadata, removeAllTags } from "./audioUtils.js";
-import {
-  type AcoustIdLookupResult,
-  type MusicBrainzRecording,
-  type MusicBrainzRelease,
-  generateFingerprint,
-  lookupAcoustIdMatches,
-  lookupMusicBrainzRecording,
-  lookupMusicBrainzRecordingsByIsrc,
-  lookupMusicBrainzReleasesByBarcode,
-} from "./fingerprint.js";
-import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
-import { shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
-import { loadArtistMetadataIdentity } from "../music/managed-artists.js";
+import { embedAudioCover, compareEmbeddedAudioCover, type CoverImageInfo, type EmbeddedCoverComparison, writeMetadataWithCover, removeAllTags } from "./audioUtils.js";
+import { resolveUsableAlbumCover } from "./album-cover-repair.js";
+import { metadataWriteFailureKind } from "./tag-write-failure.js";
 import { resolveStoredLibraryPath } from "./library-paths.js";
-import { MoveArtistService } from "./move-artist-service.js";
-import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { getLyricsForProviderMedia, type ResolvedLyrics } from "../extras/lyrics/lyric-service.js";
 import { cleanProviderText } from "./metadata-files.js";
 import { providerMediaLyricsKey } from "./track-lyrics-materializer.js";
-import { classifyLyricsForSidecar, findAdjacentLyricSidecar } from "../extras/lyrics/lyric-sidecar.js";
+import { classifyLyricsForSidecar, findAdjacentLyricSidecar, isSynchronizedLyricContent } from "../extras/lyrics/lyric-sidecar.js";
+import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
+import { TAG_STANDARD_ID, resolveAlbumArtistMode, type AlbumArtistMode } from "./album-artist-mode.js";
+import { relationshipCreditRemovalTags, relationshipManagedTags } from "./relationship-credit-tags.js";
+import type { RecordingWorkLink, RelationshipCredit } from "../catalog/relationship-credit-model.js";
+import { loadCreditSnapshot } from "../metadata/relationship-credit-store.js";
 
 export type ManagedTag = {
   key: string;
@@ -44,8 +43,25 @@ export type ManagedTag = {
   writeAliases?: string[];
 };
 
+/** Drop LRC timestamps and [ar:]-style metadata. The synced text stays in the .lrc sidecar. */
+function plainLyricsText(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line
+      .replace(/^\s*(?:\[\d{1,3}:[0-5]\d(?:[.:]\d{1,3})?\])+\s*/u, "")
+      .replace(/^\s*\[[a-z]{2,}:[^\]]*\]\s*/iu, ""))
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join("\n")
+    .trim();
+}
+
 export function selectEmbeddedLyricsText(lyrics: { subtitles?: string | null; text?: string | null } | null | undefined): string {
-  return classifyLyricsForSidecar(lyrics)?.content || "";
+  const classified = classifyLyricsForSidecar(lyrics);
+  if (!classified) return "";
+  if (!classified.synchronized) return classified.text || classified.content;
+  if (classified.text && !isSynchronizedLyricContent(classified.text)) return classified.text;
+  return plainLyricsText(classified.subtitles || classified.content);
 }
 
 export function buildEmbeddedLyricsManagedTag(
@@ -162,6 +178,11 @@ type RetagTrackRow = {
   album_original_date: string | null;
   media_format: string | null;
   album_label: string | null;
+  album_catalog_numbers: string | null;
+  album_asin: string | null;
+  album_script: string | null;
+  album_language: string | null;
+  disc_subtitle: string | null;
   album_review_text: string | null;
   media_credits: string | null;
   media_mbid: string | null;
@@ -184,6 +205,14 @@ type RetagTrackRow = {
   canonical_recording_mbid: string | null;
   recording_artist_credit: string | null;
   recording_data: string | null;
+  /** True after a mirror refresh has stored this recording's relationship credits. */
+  relationship_credits_known?: boolean;
+  relationship_credits?: RelationshipCredit[];
+  recording_works?: RecordingWorkLink[];
+  file_hash: string | null;
+  managed_tag_fingerprint: string | null;
+  file_size: number | null;
+  file_modified_at: string | null;
 };
 
 export type RetagDifference = {
@@ -213,11 +242,23 @@ export type RetagStatusSummary = {
   sample: RetagPreviewItem[];
 };
 
+export type RetagFileFact = {
+  id: number;
+  size: number;
+  modifiedAt: string;
+  fingerprint: string | null;
+};
+
 export type RetagApplyResult = {
   retagged: number;
   skipped: number;
   missing: number;
   errors: Array<{ id: number; error: string }>;
+  /** Album-level cover repairs and tag read-back notices. Omitted when empty so
+   * existing result equality checks stay stable. Not file errors. */
+  warnings?: string[];
+  /** Set when persistence is deferred to the album settle write. */
+  fileFacts?: RetagFileFact[];
 };
 
 type RetagApplyOptions = {
@@ -233,6 +274,12 @@ type RetagApplyOptions = {
   lyricsByProviderMedia?: Map<string, ResolvedLyrics | null>;
   /** Reports per-file progress (completed, total) so a command can show "x/y files". */
   onProgress?: (completed: number, total: number) => void;
+  /** The caller already synced the MusicBrainz track credits of these files (retag does it per album). */
+  trackCreditsSynced?: boolean;
+  /** Fires before each file so a long synchronous save still counts as liveness. */
+  onFileStart?: (index: number, total: number) => void;
+  /** The album settle writes file size and the managed-tag fingerprint. */
+  deferPersistence?: boolean;
 };
 
 export type RetagScopeOptions = {
@@ -285,6 +332,9 @@ function formatCoverBytes(bytes: number): string {
 type EmbeddedCoverContext = {
   byAlbum: Map<string, Promise<string | null>>;
   temporaryDirectories: string[];
+  warnings: string[];
+  /** Preview resolves a cover without deleting or refetching it. */
+  repair: boolean;
 };
 
 type EmbeddedCoverSyncOutcome = "embedded" | "unchanged" | "failed";
@@ -321,8 +371,13 @@ async function resolvePreferredEmbeddedCover(
         albumMbid: albumMbid || null,
         libraryRoot: row.library_root,
       });
-      return cover && fs.existsSync(cover)
-        ? prepareEmbeddedAudioCover(_resolvedMediaPath, cover, context.temporaryDirectories, config.album_cover_resolution) : null;
+      try {
+        return await resolveUsableAlbumCover(row, _resolvedMediaPath, cover, context);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "unreadable image";
+        context.warnings.push(`Album cover is unreadable (${reason}); tags were written without an embedded cover`);
+        return null;
+      }
     })();
     context.byAlbum.set(key, pending);
   }
@@ -346,23 +401,11 @@ async function resolveLyricsForRetagRow(
   return lyrics;
 }
 
-function buildProviderTrackUrl(row: RetagTrackRow): string {
-  const provider = String(row.file_provider || "tidal").trim() || "tidal";
-  const providerTrackId = String(row.file_provider_id || row.media_id || "").trim();
-
-  try {
-    return buildStreamingMediaUrl("track", providerTrackId, provider);
-  } catch {
-    return "";
-  }
-}
-
 function shouldSkipEmbeddedAudioTagWrite(row: RetagTrackRow): boolean {
-  // ffmpeg has no APE (Monkey's Audio) muxer/encoder in this build (decode-only,
-  // confirmed live: `ffmpeg -formats` lists "ape" with demuxer support only) —
-  // a stream-copy metadata rewrite has no container to write back into. APE
-  // files still import/play fine; they just can't carry Discogenius's tags.
-  return String(row.extension || "").toLowerCase().replace(/^\./, "") === "ape";
+  // These containers cannot store Picard's multi-value fields. ffmpeg would
+  // write one joined string or fail the mux. Leave the file unchanged.
+  const extension = String(row.extension || "").toLowerCase().replace(/^\./, "");
+  return extension === "ape" || extension === "wma" || extension === "mp2" || extension === "alac";
 }
 
 function resolveTagPolicy(config: MetadataConfig): WriteAudioTagsPolicy {
@@ -431,6 +474,322 @@ export function parseArtistCreditIds(data?: string | null): string[] {
   } catch { return []; }
 }
 
+/** Full credit string with MusicBrainz join phrases ("A feat. B"), or null when only names are known. */
+export function parseArtistCreditString(data?: string | null): string | null {
+  if (!data) return null;
+  try {
+    const parsed = JSON.parse(data);
+    const credits = Array.isArray(parsed) ? parsed : parsed["artist-credit"] || parsed.artistCredits || parsed.artist_credits;
+    if (!Array.isArray(credits) || credits.length === 0) return null;
+    const hasJoinPhrases = credits.some(credit => typeof (credit?.join_phrase ?? credit?.joinphrase) === "string");
+    if (!hasJoinPhrases) return null;
+    const text = credits.map(credit => {
+      const name = String(credit?.name || credit?.artist?.name || "").trim();
+      const join = String(credit?.join_phrase ?? credit?.joinphrase ?? "");
+      return name + join;
+    }).join("").trim();
+    return text || null;
+  } catch { return null; }
+}
+
+/** Sort-name credit with the recording's MusicBrainz join phrases when they line up ("Buuren, Armin van feat. Adel, Sharon den"). */
+export function joinSortCredit(data: string | null | undefined, sortNames: string[]): string {
+  try {
+    const parsed = data ? JSON.parse(data) : null;
+    const credits = Array.isArray(parsed) ? parsed : parsed?.["artist-credit"] || parsed?.artistCredits || parsed?.artist_credits;
+    if (Array.isArray(credits) && credits.length === sortNames.length) {
+      return credits.map((credit, index) => sortNames[index] + String(credit?.join_phrase ?? credit?.joinphrase ?? (index < credits.length - 1 ? ", " : ""))).join("").trim();
+    }
+  } catch { /* fall through */ }
+  return sortNames.join(", ");
+}
+
+/** One name of a track's artist credit, in credit order. */
+export type TrackArtistCreditPart = {
+  /** Credited artist MBID ("" when unknown). */
+  artistMbid: string;
+  /** The artist's own MusicBrainz name ("Afrojack", "The Supremes"). */
+  artistName: string;
+  /** MusicBrainz sort name, or null when unknown. */
+  artistSortName: string | null;
+  /** Name as credited on this track ("Diana Ross & The Supremes"). */
+  creditedName: string;
+  /** Join phrase after this name (" feat. ", " & ", ""). */
+  joinPhrase: string;
+};
+
+export type TrackArtistTagPlan = {
+  /** ARTIST: the printed track credit with join phrases (Picard `artist`). */
+  artist: string;
+  /** ARTISTS: each credited artist once, by MusicBrainz name (Picard `artists`). */
+  artists: string[];
+  /** MUSICBRAINZ_ARTISTID: every credited artist, in credit order. */
+  artistMbids: string[];
+  /** ARTISTSORT: sort names with the same join phrases, or null when any sort name is unknown. */
+  artistSort: string | null;
+};
+
+/**
+ * Track artist tags from one artist credit. ARTIST keeps the credit as
+ * printed (credited-as names and join phrases); ARTISTS, the MBIDs and the
+ * sort credit come from the same credit, so they always describe the same
+ * people. ARTISTS uses each artist's own MusicBrainz name, which keeps one
+ * spelling per MBID: Jellyfin and Navidrome split artists on ARTISTS, and two
+ * spellings of one artist become two artists there.
+ */
+export function planTrackArtistTags(parts: TrackArtistCreditPart[], fallbackName: string): TrackArtistTagPlan {
+  const credit = parts
+    .map((part) => ({
+      ...part,
+      artistMbid: String(part.artistMbid || "").trim().toLowerCase(),
+      artistName: String(part.artistName || "").trim(),
+      creditedName: String(part.creditedName || part.artistName || "").trim(),
+      artistSortName: String(part.artistSortName || "").trim() || null,
+      joinPhrase: String(part.joinPhrase ?? ""),
+    }))
+    .filter((part) => part.creditedName || part.artistName);
+  if (credit.length === 0) {
+    const name = String(fallbackName || "").trim() || "Unknown Artist";
+    return { artist: name, artists: [name], artistMbids: [], artistSort: null };
+  }
+  const joinAt = (index: number, joinPhrase: string) => (index < credit.length - 1 ? (joinPhrase || ", ") : "");
+  const artist = collapseWhitespace(credit.map((part, index) => part.creditedName + joinAt(index, part.joinPhrase)).join(""));
+  const artists = dedupeNames(credit.map((part) => part.artistName || part.creditedName));
+  const artistMbids = [...new Set(credit.map((part) => part.artistMbid).filter(Boolean))];
+  const artistSort = credit.every((part) => part.artistSortName)
+    ? collapseWhitespace(credit.map((part, index) => `${part.artistSortName}${joinAt(index, part.joinPhrase)}`).join(""))
+    : null;
+  return { artist, artists, artistMbids, artistSort };
+}
+
+/** Recording credit JSON (`[{id,name,join_phrase}]` or `{artist-credit: [...]}`) as credit parts without names. */
+export function parseRecordingCreditParts(data?: string | null): TrackArtistCreditPart[] {
+  if (!data) return [];
+  try {
+    const parsed = JSON.parse(data);
+    const credits = Array.isArray(parsed) ? parsed : parsed?.["artist-credit"] || parsed?.artistCredits || parsed?.artist_credits;
+    if (!Array.isArray(credits)) return [];
+    return credits.flatMap((credit) => {
+      const creditedName = String(credit?.name || credit?.artist?.name || "").trim();
+      if (!creditedName) return [];
+      return [{
+        artistMbid: String(credit?.artist?.id || credit?.id || "").trim(),
+        artistName: String(credit?.artist?.name || "").trim(),
+        artistSortName: String(credit?.artist?.["sort-name"] || "").trim() || null,
+        creditedName,
+        joinPhrase: String(credit?.join_phrase ?? credit?.joinphrase ?? ""),
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** The published MusicBrainz credit of one track (TrackArtistCreditNames), in credit order. */
+export function readTrackArtistCreditNames(trackMbid: string): TrackArtistCreditPart[] {
+  const rows = db.prepare(`
+    SELECT artist_mbid, artist_name, artist_sort_name, credited_name, join_phrase
+    FROM TrackArtistCreditNames
+    WHERE track_mbid = ?
+    ORDER BY ordinal
+  `).all(String(trackMbid || "").trim().toLowerCase()) as Array<{
+    artist_mbid: string; artist_name: string; artist_sort_name: string | null; credited_name: string; join_phrase: string;
+  }>;
+  return rows.map((row) => ({
+    artistMbid: row.artist_mbid,
+    artistName: row.artist_name,
+    artistSortName: row.artist_sort_name,
+    creditedName: row.credited_name,
+    joinPhrase: row.join_phrase,
+  }));
+}
+
+/**
+ * Refresh the published MusicBrainz credits of these files before planning
+ * their tags. Never throws: a catalogue outage or a held HDD permit leaves the
+ * stored credit in place and tagging continues.
+ */
+export async function syncTrackArtistCredits(trackFileIds: number[]): Promise<void> {
+  try {
+    const { TrackArtistCreditSync } = await import("../metadata/track-artist-credit-sync.js");
+    await TrackArtistCreditSync.syncForTrackFiles(trackFileIds);
+  } catch (error) {
+    console.warn(`[AudioTagService] Track credit sync skipped: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Track credit parts with locale names (Picard semantics): the artist name and
+ * sort name are translated; the credited-as name only when it is the plain
+ * MusicBrainz name, so a real credited spelling ("AFROJACK") stays printed.
+ */
+export function translateTrackArtistCreditParts(
+  parts: TrackArtistCreditPart[],
+  options: ArtistNameTranslationOptions,
+): TrackArtistCreditPart[] {
+  if (!options.enabled) return parts;
+  return parts.map((part) => {
+    const translated = translateStoredArtistName(part.artistMbid, part.artistName, part.artistSortName, options);
+    if (!translated.translated) return part;
+    return {
+      ...part,
+      artistName: translated.name,
+      artistSortName: translated.sortName,
+      creditedName: part.creditedName === part.artistName ? translated.name : part.creditedName,
+    };
+  });
+}
+
+/** Case-insensitive de-duplication that keeps the first spelling and order. */
+export function dedupeNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of names) {
+    const name = String(raw || "").trim();
+    const key = name.toLocaleLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    result.push(name);
+  }
+  return result;
+}
+
+/** Tags written as one field per value, joined with "; " in managed tag values. */
+export const MULTI_VALUE_TAG_KEYS = new Set([
+  "artists", "album_artists", "album_artist_mbids", "label", "catalog_number",
+]);
+/** Picard writes these as one field/value per item too; compared order-insensitively. */
+export const MULTI_VALUE_SET_TAG_KEYS = new Set(["genre", "release_type"]);
+export const MULTI_VALUE_SEPARATOR = "; ";
+
+export function splitMultiValue(value: string | null | undefined): string[] {
+  return String(value || "").split(/\s*;\s*/).map(item => item.trim()).filter(Boolean);
+}
+
+export type AlbumArtistTagPlan = {
+  /** ALBUMARTIST: one primary artist, or the full credit in Picard mode. */
+  albumArtist: string;
+  /** MUSICBRAINZ_ALBUMARTISTID values matching `albumArtist`. */
+  albumArtistMbids: string[];
+  /** ALBUMARTISTSORT for the same people as `albumArtist`, or null when a sort name is missing. */
+  albumArtistSort: string | null;
+  /** ALBUMARTISTS: every credited album artist (credited-as, MusicBrainz order). */
+  creditNames: string[];
+  /** All album-artist MBIDs (multi-value). */
+  creditMbids: string[];
+  /** Release credited to MusicBrainz "Various Artists" (COMPILATION=1, Picard semantics). */
+  compilation: boolean;
+};
+
+/** MusicBrainz special-purpose artist "Various Artists". */
+export const VARIOUS_ARTISTS_MBID = "89ad4ac3-39f7-470e-963a-56509c546377";
+
+type AlbumArtistPart = {
+  credit: string;
+  mbName: string;
+  mbid: string;
+  join: string;
+  sort: string | null;
+};
+
+/** Printed credit. An empty join phrase becomes ", ", matching Picard. */
+function printJoined(parts: AlbumArtistPart[], text: (part: AlbumArtistPart) => string): string {
+  return collapseWhitespace(parts.map((part, index) => {
+    const join = index < parts.length - 1 ? (part.join || ", ") : "";
+    return text(part) + join;
+  }).join(""));
+}
+
+function sortOf(parts: AlbumArtistPart[]): string | null {
+  if (parts.length === 0 || parts.some((part) => !part.sort)) return null;
+  return printJoined(parts, (part) => part.sort || "");
+}
+
+/**
+ * Plex and Jellyfin create one artist per distinct ALBUMARTIST string, so a
+ * full credit ("A & B") splits an artist's discography. `plex_jellyfin` writes
+ * one MusicBrainz name there (or Various Artists). `picard` writes the release
+ * credit with MusicBrainz join phrases. ALBUMARTISTS is the credited-as list
+ * in both modes. `fullCredit: true` is the old boolean and means `picard`.
+ */
+export function planAlbumArtistTags(input: {
+  /** Release credited-as strings. Picard ALBUMARTIST and ALBUMARTISTS. */
+  creditNames: string[];
+  /** MusicBrainz artist names, aligned with `creditMbids`. Plex ALBUMARTIST reads this. */
+  artistNames: string[];
+  creditMbids: string[];
+  /** MusicBrainz join phrases, aligned with the credit. Empty joins print as ", ". */
+  joinPhrases?: Array<string | null | undefined>;
+  /** MusicBrainz sort names, aligned with the credit. */
+  sortNames?: Array<string | null | undefined>;
+  ownerMbid: string | null;
+  ownerName: string | null;
+  /** @deprecated Use `mode`. `true` selects Picard. */
+  fullCredit?: boolean;
+  mode?: AlbumArtistMode;
+  fallbackName: string;
+}): AlbumArtistTagPlan {
+  const mode: AlbumArtistMode = input.mode ?? (input.fullCredit ? "picard" : "plex_jellyfin");
+  const count = Math.max(input.creditNames.length, input.artistNames.length, input.creditMbids.length);
+  const seen = new Set<string>();
+  const parts: AlbumArtistPart[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const credit = String(input.creditNames[index] || "").trim();
+    const mbName = String(input.artistNames[index] || "").trim();
+    const mbid = String(input.creditMbids[index] || "").trim().toLowerCase();
+    const key = (credit || mbName).toLocaleLowerCase();
+    if (!key && !mbid) continue;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    parts.push({
+      credit: credit || mbName,
+      mbName,
+      mbid,
+      join: String(input.joinPhrases?.[index] ?? ""),
+      sort: String(input.sortNames?.[index] || "").trim() || null,
+    });
+  }
+  const creditNames = parts.map((part) => part.credit).filter(Boolean);
+  const creditMbids = [...new Set(parts.map((part) => part.mbid).filter(Boolean))];
+  const owner = input.ownerMbid?.toLowerCase() || null;
+  const va = parts.find((part) => part.mbid === VARIOUS_ARTISTS_MBID);
+  if (va) {
+    return {
+      albumArtist: va.mbName || "Various Artists",
+      albumArtistMbids: [VARIOUS_ARTISTS_MBID],
+      albumArtistSort: va.sort || "Various Artists",
+      creditNames,
+      creditMbids,
+      compilation: true,
+    };
+  }
+  if (mode === "picard") {
+    const printed = parts.length > 0 ? printJoined(parts, (part) => part.credit) : "";
+    return {
+      albumArtist: printed || input.ownerName || input.fallbackName,
+      albumArtistMbids: creditMbids.length ? creditMbids : (owner ? [owner] : []),
+      albumArtistSort: sortOf(parts),
+      creditNames,
+      creditMbids,
+      compilation: false,
+    };
+  }
+  const primary = (owner ? parts.find((part) => part.mbid === owner) : undefined) ?? parts[0];
+  const primaryMbid = primary?.mbid || owner;
+  const primaryName = primary?.mbName
+    || (primaryMbid && primaryMbid === owner ? input.ownerName : null)
+    || input.ownerName
+    || input.fallbackName;
+  return {
+    albumArtist: primaryName,
+    albumArtistMbids: primaryMbid ? [primaryMbid] : [],
+    albumArtistSort: primary?.sort ?? null,
+    creditNames,
+    creditMbids,
+    compilation: false,
+  };
+}
+
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -461,6 +820,59 @@ export function formatReleaseTypeTag(
     for (const type of secondary) push(type);
   }
   return types.length > 0 ? types.join(";") : null;
+}
+
+function releaseTypePartsFromUnknown(raw: unknown): string[] {
+  const items = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return items
+    .flatMap((item) => String(item).split("\u0000"))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/**
+ * One stored field keeps its text, including the legacy "album; compilation"
+ * spacing. Separate fields serialize as album;remix so a retag can tell them apart.
+ */
+function joinReleaseTypeParts(parts: string[]): string | null {
+  const restored = restoreReleaseTypeParts(parts);
+  if (restored.length === 0) return null;
+  if (restored.length === 1) return restored[0];
+  return restored.join(";");
+}
+
+function readNativeReleaseTypeParts(metadata: mm.IAudioMetadata, keys: string[]): string[] | null {
+  const wanted = new Set(keys.map((key) => key.toLowerCase()));
+  for (const tagSet of Object.values(metadata.native || {})) {
+    const parts: string[] = [];
+    for (const tag of tagSet as Array<{ id?: string; value?: unknown }>) {
+      if (!buildNativeTagAliases(String(tag?.id || "")).some((alias) => wanted.has(alias))) continue;
+      const items = Array.isArray(tag.value) ? tag.value : [tag.value];
+      for (const item of items) {
+        if (typeof item === "string" && item.trim()) parts.push(...item.split("\u0000"));
+      }
+    }
+    const trimmed = parts.map((part) => part.trim()).filter(Boolean);
+    if (trimmed.length) return trimmed;
+  }
+  return null;
+}
+
+function currentReleaseTypeValue(
+  metadata: mm.IAudioMetadata,
+  lookup: Map<string, string>,
+  tag: ManagedTag,
+): string | null {
+  const common = metadata.common as Record<string, any>;
+  const fallback = () => getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || [])]);
+  const native = readNativeReleaseTypeParts(metadata, [
+    tag.ffmpegKey,
+    ...(tag.aliases || []),
+    "releasetype",
+    "musicbrainz album type",
+  ]);
+  if (native) return joinReleaseTypeParts(native) ?? fallback();
+  return joinReleaseTypeParts(releaseTypePartsFromUnknown(common.releasetype)) ?? fallback();
 }
 
 function restoreReleaseTypeParts(parts: string[]): string[] {
@@ -554,6 +966,17 @@ export function isTagValueEqual(tagKey: string, current: string | null, target: 
     const actual = parseRecordingIsrcs(current).sort();
     const expected = parseRecordingIsrcs(target).sort();
     return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+  }
+  if (tagKey === "album_artist_mbids") {
+    const ids = (raw: string | null) => [...new Set(splitMultiValue(raw).map(id => id.toLowerCase()))].sort();
+    return JSON.stringify(ids(current)) === JSON.stringify(ids(target));
+  }
+  if (MULTI_VALUE_TAG_KEYS.has(tagKey)) {
+    return JSON.stringify(splitMultiValue(current)) === JSON.stringify(splitMultiValue(target));
+  }
+  if (tagKey === "compilation") {
+    const flag = (raw: string | null) => /^(1|true|yes)$/i.test(String(raw || "").trim());
+    return flag(current) === flag(target);
   }
   if (tagKey === "musicbrainz_artistid" || tagKey === "musicbrainz_albumartistid") {
     const values = (raw: string | null) => [...new Set((raw || "").toLowerCase().split(/[;,/\s]+/).filter(Boolean))].sort();
@@ -670,155 +1093,6 @@ function formatReleaseCountryTag(value: unknown): string | null {
   const withoutBrackets = raw.replace(/^\[+|\]+$/g, "").trim();
   if (!withoutBrackets) return null;
   return withoutBrackets.toLowerCase() === "worldwide" ? "Worldwide" : withoutBrackets;
-}
-
-function normalizeIdentifier(value: string | null | undefined): string {
-  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-type FingerprintRecordingMatch = {
-  recording: MusicBrainzRecording;
-  titleScore: number;
-  artistScore: number;
-  albumScore: number;
-  durationDelta: number | null;
-  isrcMatch: boolean;
-  score: number;
-};
-
-type MusicBrainzReleaseMatch = {
-  release: MusicBrainzRelease;
-  titleScore: number;
-  artistScore: number;
-  yearScore: number;
-  score: number;
-};
-
-function evaluateFingerprintRecordingMatch(row: RetagTrackRow, recording: MusicBrainzRecording): FingerprintRecordingMatch {
-  const normalizedTrackTitle = normalizeComparableText(row.media_title);
-  const normalizedPrimaryArtist = normalizeComparableText(row.primary_artist_name);
-  const normalizedAlbumTitle = normalizeComparableText(row.album_title || "");
-  const normalizedRecordingTitle = normalizeComparableText(recording.title);
-  const recordingArtistScores = recording.artists.map((artistName) => stringSimilarity(
-    normalizedPrimaryArtist,
-    normalizeComparableText(artistName),
-  ));
-  const recordingAlbumScores = recording.releaseTitles.map((releaseTitle) => stringSimilarity(
-    normalizedAlbumTitle,
-    normalizeComparableText(releaseTitle),
-  ));
-  const titleScore = normalizedTrackTitle
-    ? stringSimilarity(normalizedTrackTitle, normalizedRecordingTitle)
-    : 0;
-  const artistScore = normalizedPrimaryArtist && recordingArtistScores.length > 0
-    ? Math.max(...recordingArtistScores)
-    : 0;
-  const albumScore = normalizedAlbumTitle && recordingAlbumScores.length > 0
-    ? Math.max(...recordingAlbumScores)
-    : 0;
-  const trackIsrcs = new Set(parseRecordingIsrcs(row.media_isrc));
-  const isrcMatch = recording.isrcs.some((isrc) => trackIsrcs.has(normalizeIdentifier(isrc)));
-
-  const rowDuration = Number(row.media_duration || 0);
-  const recordingDuration = Number(recording.durationSeconds || 0);
-  const durationDelta = rowDuration > 0 && recordingDuration > 0
-    ? Math.abs(rowDuration - recordingDuration)
-    : null;
-
-  let score = 0;
-  if (isrcMatch) {
-    score += 4;
-  }
-
-  score += titleScore * 3;
-  score += artistScore * 2;
-  score += albumScore;
-
-  if (durationDelta !== null) {
-    if (durationDelta <= 2) {
-      score += 1;
-    } else if (durationDelta <= 5) {
-      score += 0.5;
-    } else if (durationDelta > 12) {
-      score -= 1;
-    }
-  }
-
-  return {
-    recording,
-    titleScore,
-    artistScore,
-    albumScore,
-    durationDelta,
-    isrcMatch,
-    score,
-  };
-}
-
-function isAcceptableFingerprintMatch(match: FingerprintRecordingMatch): boolean {
-  if (match.isrcMatch) {
-    return true;
-  }
-
-  if (match.titleScore < 0.9) {
-    return false;
-  }
-
-  if (match.artistScore > 0 && match.artistScore < 0.72) {
-    return false;
-  }
-
-  if (match.durationDelta !== null && match.durationDelta > 10) {
-    return false;
-  }
-
-  return match.score >= 4.1;
-}
-
-function evaluateMusicBrainzReleaseMatch(row: RetagTrackRow, release: MusicBrainzRelease): MusicBrainzReleaseMatch {
-  const normalizedAlbumTitle = normalizeComparableText(row.album_title || "");
-  const normalizedPrimaryArtist = normalizeComparableText(row.primary_artist_name);
-  const normalizedReleaseTitle = normalizeComparableText(release.title);
-  const titleScore = normalizedAlbumTitle
-    ? stringSimilarity(normalizedAlbumTitle, normalizedReleaseTitle)
-    : 0;
-  const artistScore = normalizedPrimaryArtist && release.artistCredits.length > 0
-    ? Math.max(...release.artistCredits.map((credit) => stringSimilarity(
-      normalizedPrimaryArtist,
-      normalizeComparableText(credit.name),
-    )))
-    : 0;
-
-  const currentYear = normalizeReleaseDate(row.album_release_date || row.media_release_date)?.slice(0, 4) || "";
-  const releaseYear = String(release.date || "").slice(0, 4);
-  const yearScore = currentYear && releaseYear
-    ? (currentYear === releaseYear ? 1 : 0)
-    : 0;
-
-  let score = titleScore * 3 + artistScore * 2 + yearScore;
-  if (normalizeIdentifier(row.album_upc) && normalizeIdentifier(release.barcode) === normalizeIdentifier(row.album_upc)) {
-    score += 3;
-  }
-
-  return {
-    release,
-    titleScore,
-    artistScore,
-    yearScore,
-    score,
-  };
-}
-
-function isAcceptableReleaseMatch(match: MusicBrainzReleaseMatch): boolean {
-  if (match.titleScore < 0.85) {
-    return false;
-  }
-
-  if (match.artistScore > 0 && match.artistScore < 0.72) {
-    return false;
-  }
-
-  return match.score >= 4.2;
 }
 
 function buildNativeTagAliases(rawId: string): string[] {
@@ -1024,9 +1298,50 @@ function mergeMp4KeyedNativeLookup(metadata: mm.IAudioMetadata, lookup: Map<stri
   }
 }
 
+/**
+ * Every value of a multi-value field (one Vorbis field / ID3 text string /
+ * iTunes string per value), joined with "; ". The generic lookup keeps only
+ * the first value, which would make a multi-value tag look perpetually stale.
+ */
+function readNativeMultiValue(metadata: mm.IAudioMetadata, keys: string[]): string | null {
+  const wanted = new Set(keys.map(key => key.toLowerCase()));
+  for (const tagSet of Object.values(metadata.native || {})) {
+    const values: string[] = [];
+    for (const tag of tagSet as Array<{ id?: string; value?: unknown }>) {
+      if (!buildNativeTagAliases(String(tag?.id || "")).some(alias => wanted.has(alias))) continue;
+      const items = Array.isArray(tag.value) ? tag.value : [tag.value];
+      for (const item of items) {
+        if (typeof item === "string") values.push(...splitMultiValue(item));
+      }
+    }
+    if (values.length) return values.join(MULTI_VALUE_SEPARATOR);
+  }
+  return null;
+}
+
 export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<string, string>, tag: ManagedTag): string | null {
   const common = metadata.common as Record<string, any>;
   const fallback = () => getLookupValue(lookup, [tag.ffmpegKey, ...(tag.aliases || [])]);
+
+  if (MULTI_VALUE_TAG_KEYS.has(tag.key)) {
+    const native = readNativeMultiValue(metadata, [tag.ffmpegKey, ...(tag.aliases || [])]);
+    if (native) return native;
+    // music-metadata often keeps every label on common.label and nothing in native.
+    if (tag.key === "label") {
+      const labels = Array.isArray(common.label) ? common.label : (common.label ? [common.label] : []);
+      const joined = labels.map((item: unknown) => String(item).trim()).filter(Boolean).join(MULTI_VALUE_SEPARATOR);
+      return joined || fallback();
+    }
+    return fallback();
+  }
+  if (tag.key === "release_type") {
+    return currentReleaseTypeValue(metadata, lookup, tag);
+  }
+  if (tag.key === "compilation") {
+    if (common.compilation === true) return "1";
+    const raw = fallback();
+    return raw && /^(1|true|yes)$/i.test(raw) ? "1" : null;
+  }
 
   switch (tag.key) {
     case "lyrics":
@@ -1203,20 +1518,6 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
       const statusVal = common.releasestatus ? String(common.releasestatus).toLowerCase() : null;
       return statusVal || (fallback() ? fallback()!.toLowerCase() : null);
     }
-    case "release_type": {
-      const raw = common.releasetype;
-      const parts = (Array.isArray(raw) ? raw : raw ? [raw] : [])
-        .flatMap((item) => String(item).split("\u0000"))
-        .map((item) => item.trim())
-        .filter(Boolean);
-      const restored = restoreReleaseTypeParts(parts);
-      if (restored.length === 0) return fallback();
-      // A single stored field keeps its original text, including the legacy
-      // "album; compilation" spacing that forces a retag. Separate values
-      // serialize as album;remix.
-      if (restored.length === 1) return restored[0];
-      return restored.join(";");
-    }
     case "musicbrainz_recordingid":
       if (Object.keys(metadata.native || {}).some(format => format.startsWith("ID3v2"))) {
         return normalizeValue(common.musicbrainz_recordingid);
@@ -1241,33 +1542,25 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
   }
 }
 
+/** Album ReplayGain from another tool: stale once the track gain is not ours. */
+function albumReplayGainRemovals(): ManagedTag[] {
+  return [
+    { key: "replaygain_album_gain", label: "ReplayGain Album Gain", ffmpegKey: "REPLAYGAIN_ALBUM_GAIN", targetValue: "", aliases: ["replaygain_album_gain", "txxx:replaygain_album_gain", "----:com.apple.itunes:replaygain_album_gain", "wm/replaygainalbumgain"] },
+    { key: "replaygain_album_peak", label: "ReplayGain Album Peak", ffmpegKey: "REPLAYGAIN_ALBUM_PEAK", targetValue: "", aliases: ["replaygain_album_peak", "txxx:replaygain_album_peak", "----:com.apple.itunes:replaygain_album_peak", "wm/replaygainalbumpeak"] },
+  ];
+}
+
+function albumFolderKey(filePath: string): string {
+  const normalized = filePath.replaceAll("\\", "/");
+  const index = normalized.lastIndexOf("/");
+  return index <= 0 ? normalized : normalized.slice(0, index);
+}
+
+function escapeLike(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+}
+
 export class AudioTagService {
-  private static refreshArtistPathFromTemplateIfNeeded(artistId: number) {
-    const artist = loadArtistMetadataIdentity(String(artistId));
-    if (!artist) {
-      return;
-    }
-
-    if (!shouldReapplyArtistPathTemplate({
-      artistId: artist.id,
-      artistName: String(artist.name || "Unknown Artist"),
-      artistMbId: artist.mbid || null,
-      existingPath: artist.path || null,
-    })) {
-      return;
-    }
-
-    try {
-      MoveArtistService.moveArtist({
-        artistId: String(artist.id),
-        applyNamingTemplate: true,
-        moveFiles: true,
-      });
-    } catch (error) {
-      console.warn(`[Retag] Failed to reapply artist path template for ${artistId}:`, error);
-    }
-  }
-
   private static buildScope(options: RetagScopeOptions = {}): {
     where: string[];
     params: Array<string | number>;
@@ -1280,7 +1573,6 @@ export class AudioTagService {
       ...(options.artistId ? [options.artistId] : []),
     ].map((id) => String(id).trim()).filter(Boolean)));
     if (artistIds.length > 0) {
-      const placeholders = artistIds.map(() => "?").join(",");
       // Public artist identity is the MusicBrainz MBID; TrackFiles stores the
       // internal ArtistMetadata FK. Accept either form at this boundary so the
       // artist page, Library selection bar, API, and command worker share one
@@ -1288,10 +1580,10 @@ export class AudioTagService {
       where.push(`lf.artist_metadata_id IN (
         SELECT artist.id
         FROM ArtistMetadata artist
-        WHERE CAST(artist.id AS TEXT) IN (${placeholders})
-           OR artist.mbid IN (${placeholders})
+        WHERE CAST(artist.id AS TEXT) IN ${SQL_JSON_LIST}
+           OR artist.mbid IN ${SQL_JSON_LIST}
       )`);
-      params.push(...artistIds, ...artistIds);
+      params.push(jsonList(artistIds), jsonList(artistIds));
     }
     const editionTarget = options.releaseMbid
       ? String(options.releaseMbid).trim()
@@ -1346,6 +1638,129 @@ export class AudioTagService {
     `).all(...params) as Array<{ id: number }>).map((row) => row.id);
   }
 
+  /**
+   * Files whose stored retag stamp still matches the catalogue and the file
+   * on disk. The first pass stamps them; a later pass does not open them.
+   */
+  static getRetagWorkIds(options: RetagScopeOptions = {}): number[] {
+    const ids = this.getTrackFileIds(options);
+    if (ids.length === 0) return ids;
+    const stamped = db.prepare(`
+      SELECT id FROM TrackFiles
+      WHERE file_hash LIKE 'retag:v1:%'
+        AND file_size IS NOT NULL
+        AND modified_at IS NOT NULL
+        AND id IN (SELECT value FROM json_each(?))
+    `).all(JSON.stringify(ids)) as Array<{ id: number }>;
+    if (stamped.length === 0) return ids;
+    const config = getConfigSection("metadata") as MetadataConfig;
+    const quality = getConfigSection("quality");
+    const clean = new Set<number>();
+    for (const row of this.getTrackRowsByIds(stamped.map((item) => item.id))) {
+      if (this.retagStampMatches(row, config, quality)) clean.add(row.id);
+    }
+    return ids.filter((id) => !clean.has(id));
+  }
+
+  private static retagFingerprint(config: MetadataConfig, quality: QualityConfig, tags: ManagedTag[]): string {
+    return `retag:v1:${createHash("sha256").update(JSON.stringify({
+      tagStandard: TAG_STANDARD_ID,
+      albumArtistMode: resolveAlbumArtistMode(config),
+      policy: config.write_audio_tags_policy ?? "no",
+      scrub: config.scrub_audio_tags === true,
+      replaygain: config.embed_replaygain !== false,
+      lyrics: quality.embed_lyrics === true,
+      cover: quality.embed_cover === true,
+      tags: tags.map((tag) => [tag.key, tag.targetValue]),
+    })).digest("hex")}`;
+  }
+
+  /**
+   * Desired managed tags from the catalogue row only. No stat, no lyric
+   * sidecar, no file open. The hash includes the scrub flag, so turning scrub
+   * on reopens files once. A stored `retag:v1:` stamp matches when it was
+   * written without sidecar lyric text; stamps that included a sidecar, or
+   * that predate the scrub flag, open once and are then stored again.
+   */
+  static desiredManagedFingerprints(ids: number[]): Map<number, string> {
+    const config = getConfigSection("metadata") as MetadataConfig;
+    const quality = getConfigSection("quality");
+    const fingerprints = new Map<number, string>();
+    for (const row of this.getTrackRowsByIds(ids)) {
+      fingerprints.set(row.id, this.retagFingerprint(config, quality, this.buildDesiredTags(row, config)));
+    }
+    return fingerprints;
+  }
+
+  /** Files whose stored fingerprint already equals the desired managed tags. */
+  static unchangedManagedFiles(ids: number[]): Map<number, string> {
+    const config = getConfigSection("metadata") as MetadataConfig;
+    const quality = getConfigSection("quality");
+    const matched = new Map<number, string>();
+    for (const row of this.getTrackRowsByIds(ids)) {
+      const fingerprint = this.retagFingerprint(config, quality, this.buildDesiredTags(row, config));
+      const stored = row.managed_tag_fingerprint
+        ?? (row.file_hash?.startsWith("retag:v1:") ? row.file_hash : null);
+      if (stored === fingerprint) matched.set(row.id, fingerprint);
+    }
+    return matched;
+  }
+
+  /**
+   * The next album in path order that this command has not planned. The
+   * caller inserts that album and can start it before the rest of the scope
+   * is planned. Files that sort behind the cursor wait for the next command.
+   */
+  static nextScopeAlbum(
+    commandId: number,
+    generation: number,
+    options: RetagScopeOptions,
+    includeVideo: boolean,
+  ): { folder: string; ids: number[] } | null {
+    const scope = this.buildScope(options);
+    if (includeVideo) scope.where[0] = "lf.file_type IN ('track', 'video')";
+    const where = scope.where.join(" AND ");
+    const first = db.prepare(`
+      SELECT lf.file_path AS file_path
+      FROM TrackFiles lf
+      WHERE ${where}
+        AND lf.file_path > COALESCE((
+          SELECT MAX(done.file_path)
+          FROM CommandFileWork work
+          JOIN TrackFiles done ON done.id = work.track_file_id
+          WHERE work.command_id = ? AND work.generation = ?
+        ), '')
+        AND NOT EXISTS (
+          SELECT 1 FROM CommandFileWork work
+          WHERE work.command_id = ? AND work.generation = ? AND work.track_file_id = lf.id
+        )
+      ORDER BY lf.file_path
+      LIMIT 1
+    `).get(...scope.params, commandId, generation, commandId, generation) as { file_path: string } | undefined;
+    if (!first?.file_path) return null;
+    const folder = albumFolderKey(first.file_path);
+    const pattern = `${escapeLike(folder)}/%`;
+    const rows = db.prepare(`
+      SELECT lf.id AS id, lf.file_path AS file_path
+      FROM TrackFiles lf
+      WHERE ${where}
+        AND lf.file_path LIKE ? ESCAPE '\\'
+        AND NOT EXISTS (
+          SELECT 1 FROM CommandFileWork work
+          WHERE work.command_id = ? AND work.generation = ? AND work.track_file_id = lf.id
+        )
+      ORDER BY lf.file_path
+    `).all(...scope.params, pattern, commandId, generation) as Array<{ id: number; file_path: string }>;
+    const ids = rows.filter(row => albumFolderKey(row.file_path) === folder).map(row => row.id);
+    return ids.length > 0 ? { folder, ids } : null;
+  }
+
+  private static retagStampMatches(row: RetagTrackRow, config: MetadataConfig, quality: QualityConfig): boolean {
+    const fingerprint = this.retagFingerprint(config, quality, this.buildDesiredTags(row, config));
+    if (row.managed_tag_fingerprint === fingerprint) return true;
+    return row.file_hash === fingerprint;
+  }
+
   static getAffectedArtistIds(options: RetagScopeOptions & { ids?: number[] }): string[] {
     const scope = options.ids?.length
       ? { where: ["lf.id IN (SELECT value FROM json_each(?))"], params: [JSON.stringify(options.ids)] }
@@ -1368,7 +1783,34 @@ export class AudioTagService {
       params.push(limit, offset);
     }
 
-    return db.prepare(sql).all(...params) as RetagTrackRow[];
+    return this.attachRelationshipCredits(db.prepare(sql).all(...params) as RetagTrackRow[]);
+  }
+
+  private static attachRelationshipCredits(rows: RetagTrackRow[]): RetagTrackRow[] {
+    if (rows.length === 0) return rows;
+    const snapshot = loadCreditSnapshot(
+      db,
+      rows.map((row) => row.canonical_recording_mbid),
+      rows.map((row) => row.canonical_release_mbid),
+    );
+    if (!snapshot || snapshot.known.size === 0) return rows;
+    return rows.map((row) => {
+      const recording = String(row.canonical_recording_mbid || "").trim().toLowerCase();
+      const release = String(row.canonical_release_mbid || "").trim().toLowerCase();
+      if (!recording || !snapshot.known.has(recording)) return row;
+      const works = snapshot.works.filter((work) => work.recordingMbid === recording);
+      const workIds = new Set(works.map((work) => work.workMbid));
+      const credits = snapshot.credits.filter((credit) =>
+        (credit.scope === "recording" && credit.entityMbid === recording)
+        || (credit.scope === "release" && credit.entityMbid === release)
+        || (credit.scope === "work" && workIds.has(credit.entityMbid)));
+      return {
+        ...row,
+        relationship_credits_known: true,
+        relationship_credits: credits,
+        recording_works: works,
+      };
+    });
   }
 
   private static buildTrackRowsSql(whereClause: string, includePaging = false): string {
@@ -1392,6 +1834,10 @@ export class AudioTagService {
         lf.fingerprint AS file_fingerprint,
         lf.acoustid_id AS file_acoustid_id,
         lf.fingerprint_duration AS file_fingerprint_duration,
+        lf.file_hash AS file_hash,
+        lf.managed_tag_fingerprint AS managed_tag_fingerprint,
+        lf.file_size AS file_size,
+        lf.modified_at AS file_modified_at,
         artist.name AS primary_artist_name,
         COALESCE(canonical_track.title, canonical_recording.title, provider_track.title) AS media_title,
         NULL AS media_version,
@@ -1438,6 +1884,22 @@ export class AudioTagService {
           'Digital Media'
         ) AS media_format,
         canonical_release.label AS album_label,
+        canonical_release.catalog_numbers AS album_catalog_numbers,
+        canonical_release.asin AS album_asin,
+        canonical_release.script AS album_script,
+        canonical_release.language AS album_language,
+        (SELECT MAX(COALESCE(
+          NULLIF(TRIM(json_extract(subtitle.value, '$.Name')), ''),
+          NULLIF(TRIM(json_extract(subtitle.value, '$.name')), ''),
+          NULLIF(TRIM(json_extract(subtitle.value, '$.title')), ''),
+          NULLIF(TRIM(json_extract(subtitle.value, '$.Title')), '')
+        )) FROM json_each(CASE WHEN json_valid(canonical_release.media) THEN canonical_release.media ELSE '[]' END) subtitle
+        WHERE COALESCE(
+          json_extract(subtitle.value, '$.position'),
+          json_extract(subtitle.value, '$.Position'),
+          CAST(subtitle.key AS INTEGER) + 1
+        ) = COALESCE(canonical_track.medium_position, 1)
+        HAVING COUNT(*) = 1) AS disc_subtitle,
         COALESCE(
           canonical_group.review_text,
           canonical_group.overview
@@ -1524,105 +1986,192 @@ export class AudioTagService {
       return [];
     }
 
-    const placeholders = ids.map(() => "?").join(",");
-    return db.prepare(this.buildTrackRowsSql(`lf.id IN (${placeholders})`, false)).all(...ids) as RetagTrackRow[];
+    return this.attachRelationshipCredits(
+      db.prepare(this.buildTrackRowsSql(`lf.id IN ${SQL_JSON_LIST}`, false)).all(jsonList(ids)) as RetagTrackRow[],
+    );
   }
 
-  private static getTrackArtistNames(row: RetagTrackRow, fallbackArtistName: string): string[] {
-    const canonicalNames = parseArtistCreditNames(row.recording_artist_credit, row.recording_data);
-    if (canonicalNames.length > 0) {
-      return canonicalNames;
+  /**
+   * The track's artist credit, most specific source first:
+   *  1. the published MusicBrainz track credit (TrackArtistCreditNames, synced
+   *     from the catalogue before tags are planned);
+   *  2. the recording credit stored on the recording (Recordings.credits);
+   *  3. the owning artist alone (no MusicBrainz track, or a catalogue that
+   *     exposes no per-track credit).
+   * TrackArtistCredits/RecordingArtistCredits are not read: the catalogue sync
+   * fills them with the release-group credit, which is the album's credit,
+   * not the track's.
+   */
+  private static getTrackArtistCreditParts(row: RetagTrackRow): TrackArtistCreditPart[] {
+    const trackMbid = String(row.canonical_track_mbid || "").trim().toLowerCase();
+    if (trackMbid) {
+      const published = readTrackArtistCreditNames(trackMbid);
+      if (published.length > 0) return published;
     }
 
-    if (row.artist_mbid) {
-      const artistRow = db.prepare(`
-        SELECT name
-        FROM ArtistMetadata
-        WHERE mbid = ?
-        LIMIT 1
-      `).get(row.artist_mbid) as { name?: string | null } | undefined;
-      const artistName = String(artistRow?.name || "").trim();
-      if (artistName) {
-        return [artistName];
-      }
+    const recordingCredit = parseRecordingCreditParts(row.recording_data);
+    if (recordingCredit.length > 0) {
+      return recordingCredit.map((part) => {
+        const artist = part.artistMbid ? this.getArtistIdentity(part.artistMbid) : null;
+        return {
+          ...part,
+          artistName: artist?.name || part.creditedName,
+          artistSortName: artist?.sortName ?? null,
+        };
+      });
     }
 
-    return [fallbackArtistName];
+    const ownerMbid = String(row.artist_mbid || "").trim();
+    const owner = ownerMbid ? this.getArtistIdentity(ownerMbid) : null;
+    const ownerName = owner?.name || String(row.primary_artist_name || "").trim();
+    if (!ownerName) return [];
+    return [{
+      artistMbid: ownerMbid,
+      artistName: ownerName,
+      artistSortName: owner?.sortName ?? null,
+      creditedName: ownerName,
+      joinPhrase: "",
+    }];
   }
 
-  private static getAlbumArtistNames(row: RetagTrackRow, fallbackArtistName: string): string[] {
-    if (row.album_mbid) {
-      const credits = db.prepare(`SELECT COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS name
-        FROM ReleaseArtistCredits credit JOIN AlbumEditions edition ON edition.id = credit.edition_id
+  private static getArtistIdentity(mbid: string): { name: string; sortName: string | null } | null {
+    const found = db.prepare("SELECT name, sort_name FROM ArtistMetadata WHERE mbid = ? LIMIT 1")
+      .get(mbid) as { name?: string | null; sort_name?: string | null } | undefined;
+    const name = String(found?.name || "").trim();
+    if (!name) return null;
+    return { name, sortName: String(found?.sort_name || "").trim() || null };
+  }
+
+  private static getTrackArtistTagPlan(row: RetagTrackRow): TrackArtistTagPlan {
+    const fallbackArtistName = String(row.primary_artist_name || "").trim() || "Unknown Artist";
+    const parts = translateTrackArtistCreditParts(this.getTrackArtistCreditParts(row), getArtistNameTranslationOptions());
+    return planTrackArtistTags(parts, fallbackArtistName);
+  }
+
+  /**
+   * Album-artist roster. `name` is ArtistMetadata.name (Plex/Jellyfin ALBUMARTIST).
+   * `credit` is the release credited-as string. `joinPhrase` and `sortName`
+   * follow that same credit so Picard mode can print "A & B".
+   */
+  private static getAlbumArtistRoster(row: RetagTrackRow, fallbackArtistName: string): Array<{
+    name: string;
+    credit: string;
+    mbid: string;
+    joinPhrase: string;
+    sortName: string | null;
+  }> {
+    const queries: Array<[string, string | null | undefined]> = [
+      [`SELECT artist.name AS name,
+          artist.sort_name AS sort_name,
+          COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS credit,
+          credit.join_phrase AS join_phrase,
+          artist.mbid AS mbid
+        FROM ReleaseArtistCredits credit
+        JOIN AlbumEditions edition ON edition.id = credit.edition_id
         JOIN ArtistMetadata artist ON artist.id = credit.artist_id
-        WHERE edition.mbid = ? ORDER BY credit.ordinal`).all(row.album_mbid) as Array<{ name: string }>;
-      if (credits.length) return credits.map(credit => credit.name);
-    }
-    if (row.album_mb_release_group_id) {
-      const canonicalRows = db.prepare(`
-        SELECT COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS name
+        WHERE edition.mbid = ?
+        ORDER BY credit.ordinal`, row.album_mbid],
+      [`SELECT artist.name AS name,
+          artist.sort_name AS sort_name,
+          COALESCE(NULLIF(credit.credited_name, ''), artist.name) AS credit,
+          credit.join_phrase AS join_phrase,
+          artist.mbid AS mbid
         FROM ReleaseGroupArtistCredits credit
         JOIN Albums release_group ON release_group.id = credit.release_group_id
         JOIN ArtistMetadata artist ON artist.id = credit.artist_id
         WHERE release_group.mbid = ?
-        ORDER BY credit.ordinal ASC
-      `).all(row.album_mb_release_group_id) as Array<{ name?: string | null }>;
-
-      let canonicalNames = canonicalRows.map((canonicalRow) => String(canonicalRow.name || "").trim()).filter(Boolean);
-      if (canonicalNames.length === 0) {
-        const listingRows = db.prepare(`
-          SELECT COALESCE(NULLIF(aa.credited_name, ''), artist.name) AS name
-          FROM AlbumArtists aa
-          LEFT JOIN ArtistMetadata artist ON artist.mbid = aa.artist_mbid
-          WHERE aa.release_group_mbid = ?
-          ORDER BY aa.ord ASC
-        `).all(row.album_mb_release_group_id) as Array<{ name?: string | null }>;
-        canonicalNames = listingRows.map((listingRow) => String(listingRow.name || "").trim()).filter(Boolean);
-      }
-      if (canonicalNames.length > 0) {
-        return canonicalNames;
-      }
+        ORDER BY credit.ordinal ASC`, row.album_mb_release_group_id],
+      [`SELECT artist.name AS name,
+          artist.sort_name AS sort_name,
+          COALESCE(NULLIF(aa.credited_name, ''), artist.name) AS credit,
+          aa.join_phrase AS join_phrase,
+          artist.mbid AS mbid
+        FROM AlbumArtists aa
+        JOIN ArtistMetadata artist ON artist.mbid = aa.artist_mbid
+        WHERE aa.release_group_mbid = ?
+        ORDER BY aa.ord ASC`, row.album_mb_release_group_id],
+    ];
+    const mapCredit = (credit: { name?: string | null; credit?: string | null; mbid?: string | null; join_phrase?: string | null; sort_name?: string | null }) => ({
+      name: String(credit.name || "").trim(),
+      credit: String(credit.credit || credit.name || "").trim(),
+      mbid: String(credit.mbid || "").trim(),
+      joinPhrase: String(credit.join_phrase ?? ""),
+      sortName: String(credit.sort_name || "").trim() || null,
+    });
+    for (const [sql, id] of queries) {
+      if (!id) continue;
+      const credits = db.prepare(sql).all(id) as Array<{ name?: string | null; credit?: string | null; mbid?: string | null; join_phrase?: string | null; sort_name?: string | null }>;
+      const roster = credits.map(mapCredit).filter((credit) => credit.name || credit.credit);
+      if (roster.length > 0) return roster;
     }
 
     if (row.artist_mbid) {
       const artistRow = db.prepare(`
-        SELECT name
+        SELECT name, mbid, sort_name
         FROM ArtistMetadata
         WHERE mbid = ?
         LIMIT 1
-      `).get(row.artist_mbid) as { name?: string | null } | undefined;
+      `).get(row.artist_mbid) as { name?: string | null; mbid?: string | null; sort_name?: string | null } | undefined;
       const artistName = String(artistRow?.name || "").trim();
       if (artistName) {
-        return [artistName];
+        return [{
+          name: artistName,
+          credit: artistName,
+          mbid: String(artistRow?.mbid || row.artist_mbid),
+          joinPhrase: "",
+          sortName: String(artistRow?.sort_name || "").trim() || null,
+        }];
       }
     }
 
-    return [fallbackArtistName];
+    return [{
+      name: fallbackArtistName,
+      credit: fallbackArtistName,
+      mbid: String(row.artist_mbid || ""),
+      joinPhrase: "",
+      sortName: null,
+    }];
   }
 
-  private static getArtistMbids(row: RetagTrackRow, album: boolean): string[] {
-    const queries: Array<[string, string | null]> = album ? [
-      [`SELECT artist.mbid FROM ReleaseArtistCredits credit JOIN AlbumEditions edition ON edition.id = credit.edition_id
-        JOIN ArtistMetadata artist ON artist.id = credit.artist_id WHERE edition.mbid = ? ORDER BY credit.ordinal`, row.album_mbid],
-      [`SELECT artist.mbid FROM ReleaseGroupArtistCredits credit JOIN Albums album ON album.id = credit.release_group_id
-        JOIN ArtistMetadata artist ON artist.id = credit.artist_id WHERE album.mbid = ? ORDER BY credit.ordinal`, row.album_mb_release_group_id],
-    ] : [
-      [`SELECT artist.mbid FROM TrackArtistCredits credit JOIN Tracks track ON track.id = credit.track_id
-        JOIN ArtistMetadata artist ON artist.id = credit.artist_id WHERE track.mbid = ? ORDER BY credit.ordinal`, row.canonical_track_mbid],
-      [`SELECT artist.mbid FROM RecordingArtistCredits credit JOIN Recordings recording ON recording.id = credit.recording_id
-        JOIN ArtistMetadata artist ON artist.id = credit.artist_id WHERE recording.mbid = ? ORDER BY credit.ordinal`, row.media_mbid],
-    ];
-    for (const [query, mbid] of queries) {
-      if (!mbid) continue;
-      const rows = db.prepare(query).all(mbid) as Array<{ mbid: string | null }>;
-      const ids = rows.map(item => item.mbid).filter((id): id is string => Boolean(id));
-      if (ids.length) return [...new Set(ids)];
-    }
-    if (!album && row.recording_data) {
-      const ids = parseArtistCreditIds(row.recording_data);
-      if (ids.length) return ids;
-    }
-    return row.artist_mbid ? [row.artist_mbid] : [];
+  /** Sort tags for this row. Album-artist sort follows the active album-artist mode. */
+  private static getSortNames(row: RetagTrackRow, mode: AlbumArtistMode): { artistSort: string | null; albumArtistSort: string | null } {
+    return {
+      artistSort: this.getTrackArtistTagPlan(row).artistSort,
+      albumArtistSort: this.getAlbumArtistTagPlan(row, String(row.primary_artist_name || "").trim() || "Unknown Artist", mode).albumArtistSort,
+    };
+  }
+
+  private static getAlbumArtistTagPlan(row: RetagTrackRow, fallbackArtistName: string, mode: AlbumArtistMode): AlbumArtistTagPlan {
+    const ownerMbid = row.artist_mbid ? String(row.artist_mbid) : null;
+    const ownerRow = ownerMbid
+      ? db.prepare("SELECT name, sort_name FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(ownerMbid) as { name?: string | null; sort_name?: string | null } | undefined
+      : undefined;
+    const translation = getArtistNameTranslationOptions();
+    const roster = this.getAlbumArtistRoster(row, fallbackArtistName).map((credit) => {
+      const translated = translateStoredArtistName(credit.mbid, credit.name, credit.sortName, translation);
+      if (!translated.translated) return credit;
+      return {
+        ...credit,
+        name: translated.name,
+        sortName: translated.sortName,
+        credit: credit.credit === credit.name ? translated.name : credit.credit,
+      };
+    });
+    const ownerName = String(ownerRow?.name || "").trim() || null;
+    const translatedOwner = ownerName && ownerMbid
+      ? translateStoredArtistName(ownerMbid, ownerName, String(ownerRow?.sort_name || "").trim() || null, translation)
+      : null;
+    return planAlbumArtistTags({
+      creditNames: roster.map((credit) => credit.credit),
+      artistNames: roster.map((credit) => credit.name),
+      creditMbids: roster.map((credit) => credit.mbid),
+      joinPhrases: roster.map((credit) => credit.joinPhrase),
+      sortNames: roster.map((credit) => credit.sortName),
+      ownerMbid,
+      ownerName: translatedOwner?.name || ownerName,
+      mode,
+      fallbackName: fallbackArtistName,
+    });
   }
 
   private static getTrackCountForDisc(albumId: number | null, volumeNumber: number, canonicalReleaseMbid?: string | null): number | null {
@@ -1653,7 +2202,8 @@ export class AudioTagService {
     // .opus is Ogg-container Vorbis comments, same scheme as FLAC/OGG
     // (matches Xiph tag-type handling, which covers Opus identically).
     const isFlac = [".flac", ".ogg", ".oga", ".opus"].includes(ext);
-    const isMp3 = ext === ".mp3" || ext === ".aac";
+    // WAV and classic AIFF store the same ID3v2 frames as MP3/AAC.
+    const isId3 = [".mp3", ".aac", ".wav", ".aif", ".aiff"].includes(ext);
     const isM4a = ext === ".m4a" || ext === ".mp4";
     const isWma = ext === ".wma";
     const isApe = ext === ".ape";
@@ -1678,6 +2228,8 @@ export class AudioTagService {
       itunesadvisory: "ITUNESADVISORY",
       replaygain_track_gain: "REPLAYGAIN_TRACK_GAIN",
       replaygain_track_peak: "REPLAYGAIN_TRACK_PEAK",
+      replaygain_album_gain: "REPLAYGAIN_ALBUM_GAIN",
+      replaygain_album_peak: "REPLAYGAIN_ALBUM_PEAK",
       isrc: "ISRC",
       copyright: "COPYRIGHT",
       barcode: "BARCODE",
@@ -1695,6 +2247,34 @@ export class AudioTagService {
       release_status: "RELEASESTATUS",
       release_type: "RELEASETYPE",
       initialkey: "INITIALKEY",
+      artist_sort: "ARTISTSORT",
+      album_artist_sort: "ALBUMARTISTSORT",
+      composer_sort: "COMPOSERSORT",
+      composer: "COMPOSER",
+      lyricist: "LYRICIST",
+      writer: "WRITER",
+      arranger: "ARRANGER",
+      conductor: "CONDUCTOR",
+      remixer: "REMIXER",
+      producer: "PRODUCER",
+      engineer: "ENGINEER",
+      mixer: "MIXER",
+      djmixer: "DJMIXER",
+      performer: "PERFORMER",
+      work: "WORK",
+      musicbrainz_workid: "MUSICBRAINZ_WORKID",
+      musicbrainz_composerid: "MUSICBRAINZ_COMPOSERID",
+      director: "DIRECTOR",
+      compilation: "COMPILATION",
+      catalog_number: "CATALOGNUMBER",
+      asin: "ASIN",
+      script: "SCRIPT",
+      language: "LANGUAGE",
+      disc_subtitle: "DISCSUBTITLE",
+      original_year: "ORIGINALYEAR",
+      legacy_itunesadvisory: "ITUNESADVISORY",
+      album_artist_mbids: "DISCOGENIUS_ALBUMARTIST_MBIDS",
+      legacy_release_time: "RELEASETIME",
     };
 
     const mp3Map: Record<string, string> = {
@@ -1717,6 +2297,8 @@ export class AudioTagService {
       itunesadvisory: "TXXX:ITUNESADVISORY",
       replaygain_track_gain: "TXXX:REPLAYGAIN_TRACK_GAIN",
       replaygain_track_peak: "TXXX:REPLAYGAIN_TRACK_PEAK",
+      replaygain_album_gain: "TXXX:REPLAYGAIN_ALBUM_GAIN",
+      replaygain_album_peak: "TXXX:REPLAYGAIN_ALBUM_PEAK",
       isrc: "isrc",
       copyright: "copyright",
       barcode: "TXXX:BARCODE",
@@ -1734,6 +2316,34 @@ export class AudioTagService {
       release_status: "TXXX:MusicBrainz Album Status",
       release_type: "TXXX:MusicBrainz Album Type",
       initialkey: "TKEY",
+      artist_sort: "TSOP",
+      album_artist_sort: "TSO2",
+      composer_sort: "TSOC",
+      composer: "TCOM",
+      lyricist: "TEXT",
+      writer: "TXXX:Writer",
+      conductor: "TPE3",
+      remixer: "TPE4",
+      performer: "TMCL",
+      involved_people: "TIPL",
+      work: "TXXX:WORK",
+      musicbrainz_workid: "TXXX:MusicBrainz Work Id",
+      musicbrainz_composerid: "TXXX:MusicBrainz Composer Id",
+      director: "TXXX:DIRECTOR",
+      compilation: "TCMP",
+      catalog_number: "TXXX:CATALOGNUMBER",
+      asin: "TXXX:ASIN",
+      script: "TXXX:SCRIPT",
+      language: "TLAN",
+      disc_subtitle: "TSST",
+      original_year: "TXXX:originalyear",
+      legacy_itunesadvisory: "TXXX:ITUNESADVISORY",
+      album_artist_mbids: "TXXX:DISCOGENIUS_ALBUMARTIST_MBIDS",
+      legacy_release_time: "TXXX:RELEASETIME",
+      legacy_track_number: "TXXX:Track Number",
+      legacy_track_count: "TXXX:Track Count",
+      legacy_disc_number: "TXXX:Disc Number",
+      legacy_disc_count: "TXXX:Disc Count",
     };
 
     const m4aMap: Record<string, string> = {
@@ -1757,6 +2367,8 @@ export class AudioTagService {
       itunesadvisory: "rtng",
       replaygain_track_gain: "----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN",
       replaygain_track_peak: "----:com.apple.iTunes:REPLAYGAIN_TRACK_PEAK",
+      replaygain_album_gain: "----:com.apple.iTunes:REPLAYGAIN_ALBUM_GAIN",
+      replaygain_album_peak: "----:com.apple.iTunes:REPLAYGAIN_ALBUM_PEAK",
       isrc: "isrc",
       copyright: "copyright",
       barcode: "----:com.apple.iTunes:BARCODE",
@@ -1774,6 +2386,41 @@ export class AudioTagService {
       release_status: "----:com.apple.iTunes:MusicBrainz Album Status",
       release_type: "----:com.apple.iTunes:MusicBrainz Album Type",
       initialkey: "----:com.apple.iTunes:initialkey",
+      artist_sort: "soar",
+      album_artist_sort: "soaa",
+      composer_sort: "soco",
+      composer: "\u00a9wrt",
+      lyricist: "----:com.apple.iTunes:LYRICIST",
+      writer: "----:com.apple.iTunes:writer",
+      arranger: "----:com.apple.iTunes:arranger",
+      conductor: "----:com.apple.iTunes:CONDUCTOR",
+      remixer: "----:com.apple.iTunes:REMIXER",
+      producer: "----:com.apple.iTunes:PRODUCER",
+      engineer: "----:com.apple.iTunes:ENGINEER",
+      mixer: "----:com.apple.iTunes:MIXER",
+      djmixer: "----:com.apple.iTunes:DJMIXER",
+      work: "\u00a9wrk",
+      musicbrainz_workid: "----:com.apple.iTunes:MusicBrainz Work Id",
+      musicbrainz_composerid: "----:com.apple.iTunes:MusicBrainz Composer Id",
+      director: "\u00a9dir",
+      compilation: "cpil",
+      catalog_number: "----:com.apple.iTunes:CATALOGNUMBER",
+      asin: "----:com.apple.iTunes:ASIN",
+      script: "----:com.apple.iTunes:SCRIPT",
+      language: "----:com.apple.iTunes:LANGUAGE",
+      disc_subtitle: "----:com.apple.iTunes:DISCSUBTITLE",
+      original_year: "----:com.apple.iTunes:originalyear",
+      legacy_itunesadvisory: "----:com.apple.iTunes:ITUNESADVISORY",
+      album_artist_mbids: "----:com.apple.iTunes:DISCOGENIUS_ALBUMARTIST_MBIDS",
+      legacy_track_number: "----:com.apple.iTunes:Track Number",
+      legacy_track_count: "----:com.apple.iTunes:Track Count",
+      legacy_disc_number: "----:com.apple.iTunes:Disc Number",
+      legacy_disc_count: "----:com.apple.iTunes:Disc Count",
+      legacy_album_sort: "soal",
+      legacy_title_sort: "sonm",
+      legacy_composer_sort: "soco",
+      legacy_publisher: "\u00a9pub",
+      legacy_release_time: "----:com.apple.iTunes:RELEASETIME",
     };
 
     // ASF/WMA descriptor names:
@@ -1799,6 +2446,8 @@ export class AudioTagService {
       itunesadvisory: "WM/ContentAdvisoryRating",
       replaygain_track_gain: "WM/ReplayGainTrackGain",
       replaygain_track_peak: "WM/ReplayGainTrackPeak",
+      replaygain_album_gain: "WM/ReplayGainAlbumGain",
+      replaygain_album_peak: "WM/ReplayGainAlbumPeak",
       isrc: "WM/ISRC",
       copyright: "copyright",
       barcode: "WM/Barcode",
@@ -1831,7 +2480,7 @@ export class AudioTagService {
       if (isFlac) {
         return flacMap[tag.key] || tag.ffmpegKey.toUpperCase();
       }
-      if (isMp3) {
+      if (isId3) {
         const mapped = mp3Map[tag.key];
         if (mapped) return mapped;
         if (tag.ffmpegKey.toUpperCase().startsWith("TXXX:")) return tag.ffmpegKey;
@@ -1874,8 +2523,17 @@ export class AudioTagService {
       if (isFlac && (tag.key === "track" || tag.key === "disc")) {
         continue;
       }
+      // Explicit content is the MP4 rtng atom. Vorbis/ID3 TXXX:ITUNESADVISORY
+      // is removed, not written.
+      if (tag.key === "itunesadvisory" && !isM4a) {
+        continue;
+      }
+      // Picard does not write performer tags to MP4.
+      if (tag.key === "performer" && isM4a) {
+        continue;
+      }
       // ID3 TRCK/TPOS and MP4 trkn/disk already contain number and total.
-      if ((isMp3 || isM4a) && ["track_number", "track_count", "disc_number", "disc_count"].includes(tag.key)) continue;
+      if ((isId3 || isM4a) && ["track_number", "track_count", "disc_number", "disc_count"].includes(tag.key)) continue;
 
       const formatKey = getFormatKey(tag);
       output[formatKey] = value;
@@ -1942,6 +2600,7 @@ export class AudioTagService {
           targetValue: "",
           aliases: ["replaygain_track_peak"],
         },
+        ...albumReplayGainRemovals(),
       );
     }
     return removals;
@@ -1949,6 +2608,41 @@ export class AudioTagService {
 
   private static buildRowManagedTagRemovals(row: RetagTrackRow, config: MetadataConfig): ManagedTag[] {
     const removals = this.buildManagedTagRemovals(config);
+    const remove = (key: string, label: string, ffmpegKey: string): void => {
+      removals.push({ key, label, ffmpegKey, targetValue: "" });
+    };
+    // Non-standard duplicates of TRCK/TPOS/trkn/disk written by older releases.
+    remove("legacy_track_number", "Legacy Track Number", "TXXX:Track Number");
+    remove("legacy_track_count", "Legacy Track Count", "TXXX:Track Count");
+    remove("legacy_disc_number", "Legacy Disc Number", "TXXX:Disc Number");
+    remove("legacy_disc_count", "Legacy Disc Count", "TXXX:Disc Count");
+    // Picard writes soal only for an album sort name and sonm only for a title
+    // sort name. MusicBrainz releases and recordings have no separate sort
+    // title in this catalogue, and Apple's atoms often append edition text
+    // ("… (Deluxe Edition)"). Strip both. soco is Picard's composersort, so it
+    // is not in this list: a retag rewrites it from composer sort names.
+    remove("legacy_album_sort", "Legacy Album Sort", "soal");
+    remove("legacy_title_sort", "Legacy Title Sort", "sonm");
+    // Picard writes the label as LABEL / TPUB, never the Apple ©pub atom.
+    // Drop ©pub only when a MusicBrainz label is written, so a file with no
+    // label keeps a publisher another tool stored.
+    if (parseJsonStringList(row.album_label).length > 0) remove("legacy_publisher", "Legacy Publisher", "\u00a9pub");
+    // Custom frames from earlier Discogenius releases. A retag deletes them
+    // in every format. MP4 rtng is the itunesadvisory write key and is not
+    // this removal.
+    remove("acoustid_fingerprint", "AcoustID Fingerprint", "ACOUSTID_FINGERPRINT");
+    if (row.relationship_credits_known) {
+      removals.push(...relationshipCreditRemovalTags(row.extension));
+    }
+    remove("provider_url", "Provider URL", "PROVIDER_URL");
+    remove("album_artist_mbids", "Legacy Album Artist MBIDs", "DISCOGENIUS_ALBUMARTIST_MBIDS");
+    remove("legacy_itunesadvisory", "Legacy iTunes Advisory", "ITUNESADVISORY");
+    remove("legacy_release_time", "Legacy Release Time", "RELEASETIME");
+    // Sort tags are written only from MusicBrainz sort names; otherwise drop
+    // stale provider sort tags instead of leaving them inconsistent.
+    const sortNames = this.getSortNames(row, resolveAlbumArtistMode(config));
+    if (!sortNames.artistSort) remove("artist_sort", "Artist Sort", "ARTISTSORT");
+    if (!sortNames.albumArtistSort) remove("album_artist_sort", "Album Artist Sort", "ALBUMARTISTSORT");
     if (config.embed_replaygain !== false) {
       if (row.media_replay_gain === null || row.media_replay_gain === undefined) {
         removals.push({
@@ -1967,6 +2661,10 @@ export class AudioTagService {
           targetValue: "",
           aliases: ["replaygain_track_peak"],
         });
+      }
+      // No track gain written: a leftover album gain would disagree with it.
+      if (row.media_replay_gain === null || row.media_replay_gain === undefined) {
+        removals.push(...albumReplayGainRemovals());
       }
     }
     return removals;
@@ -1987,7 +2685,7 @@ export class AudioTagService {
   }
 
   static async readPreferredEmbeddedCoverForTest(canonicalReleaseMbid: string): Promise<Buffer | null> {
-    const context: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [] };
+    const context: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [], warnings: [], repair: false };
     try {
       const coverPath = await resolvePreferredEmbeddedCover(
         { canonical_release_mbid: canonicalReleaseMbid } as RetagTrackRow,
@@ -2003,243 +2701,13 @@ export class AudioTagService {
     }
   }
 
-  private static async enrichMusicBrainzMetadata(row: RetagTrackRow, config: MetadataConfig): Promise<RetagTrackRow> {
-    let nextRow = { ...row };
-
-    if (nextRow.album_upc && (!nextRow.album_mbid || !nextRow.album_mb_release_group_id || !nextRow.artist_mbid)) {
-      const releases = await lookupMusicBrainzReleasesByBarcode(nextRow.album_upc);
-      let bestReleaseMatch: MusicBrainzReleaseMatch | null = null;
-
-      for (const release of releases) {
-        const candidate = evaluateMusicBrainzReleaseMatch(nextRow, release);
-        if (!isAcceptableReleaseMatch(candidate)) {
-          continue;
-        }
-
-        if (!bestReleaseMatch || candidate.score > bestReleaseMatch.score) {
-          bestReleaseMatch = candidate;
-        }
-      }
-
-      if (bestReleaseMatch) {
-        const primaryArtistCredit = bestReleaseMatch.release.artistCredits[0];
-        db.prepare(`
-          UPDATE TrackFiles
-          SET canonical_release_mbid = COALESCE(canonical_release_mbid, ?),
-              canonical_release_group_mbid = COALESCE(canonical_release_group_mbid, ?)
-          WHERE id = ?
-        `).run(bestReleaseMatch.release.id, bestReleaseMatch.release.releaseGroupId, nextRow.id);
-
-        if (primaryArtistCredit?.id) {
-          db.prepare(`
-            UPDATE ArtistMetadata
-            SET mbid = COALESCE(mbid, ?)
-            WHERE id = ?
-          `).run(primaryArtistCredit.id, nextRow.artist_id);
-          this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
-        }
-
-        nextRow = {
-          ...nextRow,
-          album_mbid: nextRow.album_mbid || bestReleaseMatch.release.id,
-          album_mb_release_group_id: nextRow.album_mb_release_group_id || bestReleaseMatch.release.releaseGroupId,
-          artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
-        };
-      }
-    }
-
-    if (nextRow.media_isrc && !nextRow.media_mbid) {
-      const recordings: MusicBrainzRecording[] = [];
-      for (const isrc of parseRecordingIsrcs(nextRow.media_isrc)) {
-        recordings.push(...await lookupMusicBrainzRecordingsByIsrc(isrc));
-      }
-      let bestIsrcMatch: FingerprintRecordingMatch | null = null;
-
-      for (const recording of recordings) {
-        const candidate = evaluateFingerprintRecordingMatch(nextRow, recording);
-        if (!isAcceptableFingerprintMatch(candidate)) {
-          continue;
-        }
-
-        if (!bestIsrcMatch || candidate.score > bestIsrcMatch.score) {
-          bestIsrcMatch = candidate;
-        }
-      }
-
-      if (bestIsrcMatch) {
-        const primaryArtistCredit = bestIsrcMatch.recording.artistCredits?.[0];
-        db.prepare(`
-          UPDATE TrackFiles
-          SET canonical_recording_mbid = COALESCE(canonical_recording_mbid, ?)
-          WHERE id = ?
-        `).run(bestIsrcMatch.recording.id, nextRow.id);
-
-        if (primaryArtistCredit?.id) {
-          db.prepare(`
-            UPDATE ArtistMetadata
-            SET mbid = COALESCE(mbid, ?)
-            WHERE id = ?
-          `).run(primaryArtistCredit.id, nextRow.artist_id);
-          this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
-        }
-
-        nextRow = {
-          ...nextRow,
-          media_mbid: bestIsrcMatch.recording.id,
-          artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
-        };
-      }
-    }
-
-    // Canonical imports already carry their MusicBrainz recording identity.
-    // Fingerprinting is only for unknown/mistagged files; attempting fpcalc on
-    // Atmos E-AC-3 can fail and used to hold the import finalizer at 94%.
-    if (nextRow.media_mbid) return nextRow;
-
-    if (!config.enable_fingerprinting) {
-      return nextRow;
-    }
-
-    const resolvedPath = resolveStoredLibraryPath({
-      filePath: nextRow.file_path,
-      libraryRoot: nextRow.library_root,
-      relativePath: nextRow.relative_path,
-    });
-
-    if (!fs.existsSync(resolvedPath)) {
-      return nextRow;
-    }
-
-    let fingerprint = nextRow.file_fingerprint || nextRow.media_acoustid_fingerprint;
-    let fingerprintDuration = Number(nextRow.file_fingerprint_duration || nextRow.media_fingerprint_duration || nextRow.media_duration || 0) || null;
-
-    if (!fingerprint) {
-      try {
-        const fingerprintResult = await generateFingerprint(resolvedPath);
-        fingerprint = fingerprintResult.fingerprint;
-        fingerprintDuration = fingerprintResult.duration || fingerprintDuration;
-
-        db.prepare(`
-          UPDATE TrackFiles
-          SET fingerprint = ?, fingerprint_duration = ?, verified_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(fingerprint, fingerprintDuration, nextRow.id);
-      } catch (error) {
-        console.warn(`[Retag] Failed to fingerprint ${resolvedPath}:`, error);
-        return nextRow;
-      }
-    }
-
-    if (!fingerprint || !fingerprintDuration) {
-      return {
-        ...nextRow,
-        file_fingerprint: fingerprint,
-        media_duration: fingerprintDuration ?? nextRow.media_duration,
-      };
-    }
-
-    let acoustidMatches: AcoustIdLookupResult[] = [];
-    if (!nextRow.media_acoustid_id && !nextRow.file_acoustid_id) {
-      acoustidMatches = await lookupAcoustIdMatches(fingerprint, fingerprintDuration);
-    }
-
-    const matchedKnownAcoustId = nextRow.media_mbid
-      ? acoustidMatches.find((match) => match.id && match.recordingIds.includes(String(nextRow.media_mbid)))
-      : null;
-    const resolvedAcoustId = nextRow.media_acoustid_id || nextRow.file_acoustid_id || matchedKnownAcoustId?.id || null;
-
-    if (nextRow.media_mbid) {
-      db.prepare(`
-        UPDATE TrackFiles
-        SET acoustid_id = COALESCE(?, acoustid_id),
-            fingerprint = COALESCE(fingerprint, ?),
-            fingerprint_duration = COALESCE(fingerprint_duration, ?),
-            verified_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(resolvedAcoustId, fingerprint, fingerprintDuration, nextRow.id);
-
-      return {
-        ...nextRow,
-        file_fingerprint: fingerprint,
-        file_acoustid_id: resolvedAcoustId,
-        media_acoustid_id: resolvedAcoustId,
-        media_acoustid_fingerprint: nextRow.media_acoustid_fingerprint || fingerprint,
-        media_duration: fingerprintDuration ?? nextRow.media_duration,
-      };
-    }
-
-    let bestFingerprintMatch: FingerprintRecordingMatch | null = null;
-    let bestFingerprintAcoustId: string | null = null;
-    for (const acoustid of acoustidMatches) {
-      for (const recordingId of acoustid.recordingIds.slice(0, 5)) {
-        const recording = await lookupMusicBrainzRecording(recordingId);
-        if (!recording) {
-          continue;
-        }
-
-        const candidate = evaluateFingerprintRecordingMatch(nextRow, recording);
-        if (!isAcceptableFingerprintMatch(candidate)) {
-          continue;
-        }
-
-        if (!bestFingerprintMatch || candidate.score > bestFingerprintMatch.score) {
-          bestFingerprintMatch = candidate;
-          bestFingerprintAcoustId = acoustid.id || null;
-        }
-      }
-    }
-
-    if (!bestFingerprintMatch) {
-      return {
-        ...nextRow,
-        file_fingerprint: fingerprint,
-        media_duration: fingerprintDuration ?? nextRow.media_duration,
-      };
-    }
-
-    const fallbackIsrc = !nextRow.media_isrc && bestFingerprintMatch.recording.isrcs.length > 0
-      ? bestFingerprintMatch.recording.isrcs.join('; ')
-      : null;
-    const primaryArtistCredit = bestFingerprintMatch.recording.artistCredits?.[0];
-
-    db.prepare(`
-      UPDATE TrackFiles
-      SET canonical_recording_mbid = COALESCE(canonical_recording_mbid, ?),
-          acoustid_id = COALESCE(?, acoustid_id),
-          fingerprint = COALESCE(fingerprint, ?),
-          fingerprint_duration = COALESCE(fingerprint_duration, ?),
-          verified_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(bestFingerprintMatch.recording.id, bestFingerprintAcoustId, fingerprint, fingerprintDuration, nextRow.id);
-
-    if (primaryArtistCredit?.id) {
-      db.prepare(`
-        UPDATE ArtistMetadata
-        SET mbid = COALESCE(mbid, ?)
-        WHERE id = ?
-      `).run(primaryArtistCredit.id, nextRow.artist_id);
-      this.refreshArtistPathFromTemplateIfNeeded(nextRow.artist_id);
-    }
-
-    return {
-      ...nextRow,
-      file_fingerprint: fingerprint,
-      file_acoustid_id: bestFingerprintAcoustId || nextRow.file_acoustid_id,
-      media_duration: fingerprintDuration ?? nextRow.media_duration,
-      media_mbid: bestFingerprintMatch.recording.id,
-      media_acoustid_id: bestFingerprintAcoustId || nextRow.media_acoustid_id,
-      media_acoustid_fingerprint: nextRow.media_acoustid_fingerprint || fingerprint,
-      media_isrc: nextRow.media_isrc || fallbackIsrc,
-      artist_mbid: nextRow.artist_mbid || primaryArtistCredit?.id || null,
-    };
-  }
-
   private static buildDesiredTags(row: RetagTrackRow, config: MetadataConfig): ManagedTag[] {
     const fallbackArtistName = String(row.primary_artist_name || "").trim() || "Unknown Artist";
-    const artistNames = this.getTrackArtistNames(row, fallbackArtistName);
-    const albumArtistNames = this.getAlbumArtistNames(row, fallbackArtistName);
-    const artistMbids = this.getArtistMbids(row, false);
-    const albumArtistMbids = this.getArtistMbids(row, true);
+    const trackArtists = this.getTrackArtistTagPlan(row);
+    const artistNames = trackArtists.artists;
+    const artistCredit = trackArtists.artist;
+    const artistMbids = trackArtists.artistMbids;
+    const albumArtistPlan = this.getAlbumArtistTagPlan(row, fallbackArtistName, resolveAlbumArtistMode(config));
     const discNumber = Number(row.media_volume_number || 1);
     const discCount = Number(row.album_num_volumes || 1);
     const trackCount = this.getTrackCountForDisc(row.album_id, discNumber, row.canonical_release_mbid || row.album_mbid);
@@ -2288,14 +2756,39 @@ export class AudioTagService {
           key: "artist",
           label: "Artist",
           ffmpegKey: "artist",
-          targetValue: artistNames.join(", "),
+          targetValue: artistCredit,
+        },
+        {
+          key: "artists",
+          label: "Artists",
+          ffmpegKey: "ARTISTS",
+          targetValue: artistNames.join(MULTI_VALUE_SEPARATOR),
+          aliases: ["artists"],
         },
         {
           key: "album_artist",
           label: "Album Artist",
           ffmpegKey: "album_artist",
-          targetValue: albumArtistNames.join(", "),
+          targetValue: albumArtistPlan.albumArtist,
         },
+        {
+          key: "album_artists",
+          label: "Album Artists",
+          ffmpegKey: "ALBUMARTISTS",
+          targetValue: albumArtistPlan.creditNames.join(MULTI_VALUE_SEPARATOR),
+          aliases: ["albumartists"],
+        },
+      );
+      if (trackArtists.artistSort) {
+        tags.push({ key: "artist_sort", label: "Artist Sort", ffmpegKey: "ARTISTSORT", targetValue: trackArtists.artistSort, aliases: ["artistsort", "tsop", "soar"] });
+      }
+      if (albumArtistPlan.albumArtistSort) {
+        tags.push({ key: "album_artist_sort", label: "Album Artist Sort", ffmpegKey: "ALBUMARTISTSORT", targetValue: albumArtistPlan.albumArtistSort, aliases: ["albumartistsort", "tso2", "soaa"] });
+      }
+      if (albumArtistPlan.compilation) {
+        tags.push({ key: "compilation", label: "Compilation", ffmpegKey: "COMPILATION", targetValue: "1", aliases: ["compilation", "tcmp", "cpil"] });
+      }
+      tags.push(
         {
           key: "album",
           label: "Album",
@@ -2397,6 +2890,27 @@ export class AudioTagService {
             "original date",
           ],
         });
+        const originalYear = /^(\d{4})/.exec(originalDate)?.[1];
+        if (originalYear) {
+          tags.push({
+            key: "original_year",
+            label: "Original Year",
+            ffmpegKey: "ORIGINALYEAR",
+            targetValue: originalYear,
+            aliases: ["originalyear"],
+          });
+        }
+      }
+
+      const discSubtitle = String(row.disc_subtitle || "").trim();
+      if (discSubtitle) {
+        tags.push({
+          key: "disc_subtitle",
+          label: "Disc Subtitle",
+          ffmpegKey: "DISCSUBTITLE",
+          targetValue: discSubtitle,
+          aliases: ["discsubtitle", "tsst"],
+        });
       }
 
       const mediaFormat = String(row.media_format || "Digital Media").trim();
@@ -2410,15 +2924,13 @@ export class AudioTagService {
         });
       }
 
-      // Kodi/Jellyfin/Picard read genre from embedded tags (not album.nfo for
-      // Jellyfin). Join with " / " — Kodi's default multi-value divider.
       const albumGenres = parseJsonStringList(row.album_genres);
       if (albumGenres.length > 0) {
         tags.push({
           key: "genre",
           label: "Genre",
           ffmpegKey: "genre",
-          targetValue: albumGenres.join(" / "),
+          targetValue: albumGenres.join(MULTI_VALUE_SEPARATOR),
         });
       }
 
@@ -2450,26 +2962,37 @@ export class AudioTagService {
         });
       }
 
-      // Picard/Kodi LABEL / publisher — first label from AlbumEditions.label JSON.
       const albumLabels = parseJsonStringList(row.album_label);
       if (albumLabels.length > 0) {
         tags.push({
           key: "label",
           label: "Label",
           ffmpegKey: "LABEL",
-          targetValue: albumLabels[0],
+          targetValue: albumLabels.join(MULTI_VALUE_SEPARATOR),
           aliases: ["publisher"],
         });
       }
-
-      if (config.write_tidal_url) {
+      const catalogNumbers = parseJsonStringList(row.album_catalog_numbers);
+      if (catalogNumbers.length > 0) {
         tags.push({
-          key: "provider_url",
-          label: "provider URL",
-          ffmpegKey: "PROVIDER_URL",
-          targetValue: buildProviderTrackUrl(row),
-          aliases: ["provider_url", "tidal_url", "url", "purl"],
+          key: "catalog_number",
+          label: "Catalog Number",
+          ffmpegKey: "CATALOGNUMBER",
+          targetValue: catalogNumbers.join(MULTI_VALUE_SEPARATOR),
+          aliases: ["catalognumber"],
         });
+      }
+      const asin = String(row.album_asin || "").trim();
+      if (asin) {
+        tags.push({ key: "asin", label: "ASIN", ffmpegKey: "ASIN", targetValue: asin, aliases: ["asin"] });
+      }
+      const script = String(row.album_script || "").trim();
+      if (script) {
+        tags.push({ key: "script", label: "Script", ffmpegKey: "SCRIPT", targetValue: script, aliases: ["script"] });
+      }
+      const language = String(row.album_language || "").trim();
+      if (language) {
+        tags.push({ key: "language", label: "Language", ffmpegKey: "LANGUAGE", targetValue: language, aliases: ["language", "tlan"] });
       }
 
       if (row.media_mbid) {
@@ -2505,12 +3028,12 @@ export class AudioTagService {
         });
       }
 
-      if (albumArtistMbids.length) {
+      if (albumArtistPlan.albumArtistMbids.length) {
         tags.push({
           key: "musicbrainz_albumartistid",
           label: "MusicBrainz Album Artist ID",
           ffmpegKey: "musicbrainz_albumartistid",
-          targetValue: albumArtistMbids.join("; "),
+          targetValue: albumArtistPlan.albumArtistMbids.join("; "),
           aliases: [
             "musicbrainz_albumartistid",
             "musicbrainzalbumartistid",
@@ -2626,13 +3149,23 @@ export class AudioTagService {
         });
       }
 
-      // AcoustID id/fingerprint are deliberately NOT embedded: we write only
-      // MusicBrainz IDs (what media servers typically read) and use fpcalc/
-      // AcoustID purely as INTERNAL import-match evidence — never as a written
-      // tag. The fingerprint stays in TrackFiles for
-      // matching/verification but is not surfaced as an embedded tag.
+      // Picard default is save_acoustid_fingerprints = false. The id is the
+      // portable AcoustID tag; the chromaprint stays in TrackFiles for matching.
+      const acoustidId = String(row.media_acoustid_id || row.file_acoustid_id || "").trim();
+      if (acoustidId) {
+        tags.push({
+          key: "acoustid_id",
+          label: "AcoustID",
+          ffmpegKey: "ACOUSTID_ID",
+          targetValue: acoustidId,
+          aliases: ["acoustid_id", "acoustid id", "Acoustid Id"],
+        });
+      }
 
-      if (row.media_explicit !== null && row.media_explicit !== undefined) {
+      // Explicit content is the MP4 rtng atom. Other containers drop the old
+      // TXXX/Vorbis ITUNESADVISORY field instead of writing a custom tag.
+      const container = String(row.extension || "").toLowerCase().replace(/^\./, "");
+      if ((container === "m4a" || container === "mp4") && row.media_explicit !== null && row.media_explicit !== undefined) {
         tags.push({
           key: "itunesadvisory",
           label: "iTunes Advisory",
@@ -2680,6 +3213,15 @@ export class AudioTagService {
           aliases: ["replaygain_track_peak"],
         });
       }
+    }
+
+    if (row.relationship_credits_known) {
+      tags.push(...relationshipManagedTags({
+        credits: row.relationship_credits ?? [],
+        works: row.recording_works ?? [],
+        extension: row.extension,
+        mediumPosition: row.media_volume_number,
+      }));
     }
 
     return tags.filter((tag) => Boolean(normalizeComparableValue(tag.targetValue)));
@@ -2742,6 +3284,16 @@ export class AudioTagService {
         // describes the encoded stream and must survive metadata cleanup.
         if (/^(APIC(?::.*)?|METADATA_BLOCK_PICTURE|covr|COVERART|COVERARTMIME)$/i.test(key)
           || key === "----:com.apple.iTunes:iTunSMPB" || isNumericMp4NativeId(key)) continue;
+        // music-metadata prefixes Matroska simple tags with track: or segment:.
+        // ENCODER and DURATION are stream facts ffmpeg writes back on every remux.
+        if (format === "matroska") {
+          const bare = key.includes(":") ? key.slice(key.lastIndexOf(":") + 1) : key;
+          const bareName = bare.toLowerCase();
+          if (bareName === "encoder" || bareName === "duration" || bareName === "bps"
+            || bareName === "number_of_frames" || bareName === "number_of_bytes"
+            || bareName.startsWith("statistics_")) continue;
+          if (allowed.has(keyIdentity(bare)) || owned.has(semanticKey(bare))) continue;
+        }
         if (allowed.has(keyIdentity(key))) continue;
         if (owned.has(semanticKey(key))) obsolete.add(key);
         else if (scrub) unmanaged.add(key);
@@ -2749,9 +3301,14 @@ export class AudioTagService {
     }
     if (obsolete.size) changes.push({ field: "Obsolete tag fields", oldValue: [...obsolete].sort().join(", "), newValue: null });
     if (unmanaged.size) changes.push({ field: "Unmanaged tags", oldValue: [...unmanaged].sort().join(", "), newValue: null });
+    // Removal names are shared across formats (MP4 atoms, ID3 frames). A Vorbis
+    // comment can only hold printable ASCII names without '=', so other names
+    // cannot be present and must not reach a Xiph writer.
+    const removable = (key: string) => !vorbis || /^[\x20-\x3C\x3E-\x7D]+$/.test(key);
     return {
       changes,
-      removalKeys: [...new Set([...this.buildAudioTagRemovalKeys(removals, extension), ...obsolete, ...unmanaged])],
+      removalKeys: [...new Set([...this.buildAudioTagRemovalKeys(removals, extension), ...obsolete, ...unmanaged])]
+        .filter(removable),
     };
   }
 
@@ -2812,7 +3369,7 @@ export class AudioTagService {
         // context is created only when the batch did not supply a shared one.
         const ownsContext = !options.embeddedCoverContext;
         const coverContext = options.embeddedCoverContext
-          ?? { byAlbum: new Map(), temporaryDirectories: [] };
+          ?? { byAlbum: new Map(), temporaryDirectories: [], warnings: [], repair: false };
         const preferredCover = await resolvePreferredEmbeddedCover(row, config, resolvedPath, coverContext);
         if (preferredCover) {
           const comparison = await compareEmbeddedAudioCover(resolvedPath, preferredCover);
@@ -2867,7 +3424,7 @@ export class AudioTagService {
     // One cover context for the whole batch so an album's embedded-cover
     // rendition is resolved/downloaded once, not per track.
     const embeddedCoverContext: EmbeddedCoverContext = options.embeddedCoverContext
-      ?? { byAlbum: new Map(), temporaryDirectories: [] };
+      ?? { byAlbum: new Map(), temporaryDirectories: [], warnings: [], repair: false };
     const scopedOptions: RetagEvaluationOptions = { ...options, embeddedCoverContext };
 
     // Read files concurrently (Lidarr-style) instead of one-at-a-time — the
@@ -2897,6 +3454,7 @@ export class AudioTagService {
     }
 
     const rows = this.getTrackRows(options, true);
+    await syncTrackArtistCredits(rows.map((row) => row.id));
     // Preview must not network-fetch lyrics (status already disables this).
     // Disk tag reads alone decide what would change on Apply.
     const items = await this.evaluateRows(rows, config, { includeExternalMetadata: false });
@@ -2921,6 +3479,7 @@ export class AudioTagService {
 
     const scanLimit = Math.max(1, Math.min(1000, options.limit ?? 25));
     const rows = this.getTrackRows({ ...options, limit: scanLimit, offset: 0 }, true);
+    await syncTrackArtistCredits(rows.map((row) => row.id));
     const items = await this.evaluateRows(rows, config, { includeExternalMetadata: false });
     const actionable = items.filter((item) => item.missing || item.changes.length > 0);
 
@@ -2973,6 +3532,8 @@ export class AudioTagService {
     const context: EmbeddedCoverContext = {
       byAlbum: new Map(),
       temporaryDirectories: [],
+      warnings: [],
+      repair: true,
     };
     const updated: Array<[number, string, number]> = [];
 
@@ -3022,6 +3583,7 @@ export class AudioTagService {
       for (const tempDir of context.temporaryDirectories) {
         try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best effort */ }
       }
+      if (context.warnings.length > 0) result.warnings = [...context.warnings];
     }
 
     if (updated.length > 0) {
@@ -3035,11 +3597,34 @@ export class AudioTagService {
     return result;
   }
 
-  static createRetagSession(): { apply: (ids: number[]) => Promise<RetagApplyResult>; close: () => void } {
-    const embeddedCoverContext: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [] };
+  static createRetagSession(): {
+    apply: (ids: number[], options?: { deferPersistence?: boolean }) => Promise<RetagApplyResult>;
+    warmAlbumCovers: (ids: number[]) => Promise<void>;
+    warnings: () => string[];
+    close: () => void;
+  } {
+    const embeddedCoverContext: EmbeddedCoverContext = { byAlbum: new Map(), temporaryDirectories: [], warnings: [], repair: true };
     const lyricsByProviderMedia = new Map<string, ResolvedLyrics | null>();
     return {
-      apply: ids => this.apply(ids, { includeExternalLyrics: false, embeddedCoverContext, lyricsByProviderMedia }),
+      apply: (ids, options) => this.apply(ids, {
+        trackCreditsSynced: true,
+        includeExternalLyrics: false,
+        embeddedCoverContext,
+        lyricsByProviderMedia,
+        deferPersistence: options?.deferPersistence,
+      }),
+      warmAlbumCovers: async (ids: number[]) => {
+        const metadata = getConfigSection("metadata") as MetadataConfig;
+        for (const row of this.getTrackRowsByIds(ids)) {
+          const resolvedPath = resolveStoredLibraryPath({
+            filePath: row.file_path,
+            libraryRoot: row.library_root,
+            relativePath: row.relative_path,
+          });
+          await resolvePreferredEmbeddedCover(row, metadata, resolvedPath, embeddedCoverContext);
+        }
+      },
+      warnings: () => [...embeddedCoverContext.warnings],
       close: () => {
         for (const directory of embeddedCoverContext.temporaryDirectories) {
           try { fs.rmSync(directory, { recursive: true, force: true }); } catch { /* best-effort session cleanup */ }
@@ -3067,19 +3652,29 @@ export class AudioTagService {
       return result;
     }
 
+    if (!options.trackCreditsSynced) await syncTrackArtistCredits(ids);
     const rowsById = new Map(this.getTrackRowsByIds(ids).map((row) => [row.id, row]));
     const updateFileRecord = db.prepare(`
       UPDATE TrackFiles
-      SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP
+      SET file_size = ?, modified_at = ?, managed_tag_fingerprint = ?, verified_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
 
-    const pendingUpdates: Array<[number, string, number]> = []; // [size, mtime, id]
+    const pendingUpdates: Array<[number, string, string | null, number]> = []; // [size, mtime, fingerprint, id]
+    const rememberFact = (size: number, modifiedAt: string, fingerprint: string | null, fileId: number): void => {
+      if (options.deferPersistence) {
+        (result.fileFacts ??= []).push({ id: fileId, size, modifiedAt, fingerprint });
+        return;
+      }
+      pendingUpdates.push([size, modifiedAt, fingerprint, fileId]);
+    };
     const lyricsByProviderMedia = options.lyricsByProviderMedia ?? new Map<string, ResolvedLyrics | null>();
     const quality = getConfigSection("quality");
     const embeddedCoverContext: EmbeddedCoverContext = options.embeddedCoverContext ?? {
       byAlbum: new Map(),
       temporaryDirectories: [],
+      warnings: [],
+      repair: true,
     };
 
     const applyPreferredCover = async (
@@ -3102,6 +3697,7 @@ export class AudioTagService {
     let processedCount = 0;
     for (const id of ids) {
       processedCount++;
+      options.onFileStart?.(processedCount, ids.length);
 
       const row = rowsById.get(id);
       if (!row) {
@@ -3115,6 +3711,12 @@ export class AudioTagService {
       // A 2.13.6 library-wide retag mixed those together and wedged the live
       // server (one file at a time against MusicBrainz while 5k refresh
       // commands fought for the writer).
+      // A matching fingerprint is decided from the row. Do not stat or open.
+      if (options.includeExternalLyrics !== true && this.retagStampMatches(row, config, quality)) {
+        result.skipped++;
+        options.onProgress?.(processedCount, ids.length);
+        continue;
+      }
       try {
         const resolvedPath = resolveStoredLibraryPath({
           filePath: row.file_path,
@@ -3131,6 +3733,10 @@ export class AudioTagService {
           }
 
           const desiredTagsArr = this.buildDesiredTags(row, config);
+          // The stored fingerprint is the catalogue projection only. Lyric text
+          // is written when present, but it is not part of the skip hash, so a
+          // later pass does not reopen the file to re-read a sidecar.
+          const fingerprint = this.retagFingerprint(config, quality, desiredTagsArr);
 
           if (quality.embed_lyrics) {
             const lyrics = await resolveLyricsForRetagRow(row, resolvedPath, options.includeExternalLyrics === true, lyricsByProviderMedia);
@@ -3145,6 +3751,8 @@ export class AudioTagService {
           };
           const preview = await this.evaluateRow(row, config, evaluationOptions);
           if (!preview.missing && preview.changes.length === 0) {
+            const stat = fs.statSync(resolvedPath);
+            rememberFact(stat.size, stat.mtime.toISOString(), fingerprint, id);
             result.skipped++;
             return;
           }
@@ -3155,45 +3763,46 @@ export class AudioTagService {
           if (shouldSkipEmbeddedAudioTagWrite(row)) {
             result.errors.push({
               id,
-              error: `${row.extension || "file"} ${row.file_codec || "audio"} metadata is not safely writable with ffmpeg stream copy`,
+              error: `${row.extension || "file"} cannot store Picard multi-value tags; the file was left unchanged`,
             });
             return;
           }
 
           // Remove unwanted fields in the same atomic rewrite as the desired
           // tags, so a failed write never leaves an already-scrubbed original.
-          const success = await writeMetadata(resolvedPath, desiredTags, removalKeys);
-          if (!success) {
-            result.errors.push({ id, error: "Metadata write failed" });
+          // Resolve the album cover (cached per album in the session) up front
+          // and fold it into the tag rewrite when it differs from the embedded
+          // one: one copy/verify/replace of the audio file instead of two.
+          let combinedCover: string | null = null;
+          if (quality.embed_cover !== false) {
+            const coverPath = await resolvePreferredEmbeddedCover(row, config, resolvedPath, embeddedCoverContext);
+            if (coverPath && !shouldSkipCoverEmbed(await compareEmbeddedAudioCover(resolvedPath, coverPath))) {
+              combinedCover = coverPath;
+            }
+          }
+          const write = await writeMetadataWithCover(resolvedPath, desiredTags, removalKeys, combinedCover);
+          if (!write.success) {
+            const message = write.error || "Metadata write failed";
+            if (metadataWriteFailureKind(message) === "warning") {
+              embeddedCoverContext.warnings.push(`File #${id}: ${message}`);
+              result.skipped++;
+              return;
+            }
+            result.errors.push({ id, error: message });
             return;
           }
 
-          const coverOutcome = await applyPreferredCover(row, resolvedPath, id);
-          if (coverOutcome === "failed") {
-            return;
+          if (!write.coverEmbedded && combinedCover) {
+            const coverOutcome = await applyPreferredCover(row, resolvedPath, id);
+            if (coverOutcome === "failed") {
+              return;
+            }
           }
 
           const stat = fs.statSync(resolvedPath);
-          pendingUpdates.push([stat.size, stat.mtime.toISOString(), id]);
-
-          const verification = await this.evaluateRow(row, config, evaluationOptions);
-          if (verification.missing || verification.error || verification.changes.length > 0) {
-            const remainingFields = verification.changes
-              .map((change) => change.field)
-              .filter(Boolean)
-              .join(", ");
-            const warnMsg = verification.error
-              ? `Metadata verification notice: ${verification.error}`
-              : `Metadata verification notice${remainingFields ? ` for: ${remainingFields}` : ""}`;
-            console.warn(`[Retag] Track ${id} file ${resolvedPath}: ${warnMsg}`);
-            result.errors.push({
-              id,
-              error: warnMsg,
-            });
-            result.retagged++;
-            return;
-          }
-
+          // The writer already read the tags back once. A second music-metadata
+          // pass used to disagree with that read-back and stamp a null fingerprint.
+          rememberFact(stat.size, stat.mtime.toISOString(), fingerprint, id);
           result.retagged++;
         });
       } catch (error) {
@@ -3212,12 +3821,15 @@ export class AudioTagService {
     for (const tempDir of options.embeddedCoverContext ? [] : embeddedCoverContext.temporaryDirectories) {
       try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort temp cleanup */ }
     }
+    if (embeddedCoverContext.warnings.length > 0) {
+      result.warnings = [...embeddedCoverContext.warnings];
+    }
 
     // Wait asynchronously between short commits. A catalog writer must not
     // turn successfully written tags into a failed job at the batch boundary.
     if (pendingUpdates.length > 0) {
-      await runGatedChunkedWrite(pendingUpdates, ([size, mtime, id]) => {
-        updateFileRecord.run(size, mtime, id);
+      await runGatedChunkedWrite(pendingUpdates, ([size, mtime, stamp, id]) => {
+        updateFileRecord.run(size, mtime, stamp, id);
       }, 100, "retag:file-facts");
     }
 
@@ -3232,9 +3844,10 @@ export class AudioTagService {
 
     // `apply` performs the same diff and skips aligned files. Pass exact row
     // identities instead of evaluating the scope first, which used to parse
-    // every file twice. Batching also keeps a large library below SQLite's
-    // bound-variable limit and avoids holding all joined tag context in memory.
-    const ids = this.getTrackFileIds(options);
+    // every file twice. Files already stamped against the current catalogue
+    // are left out of the batch. Batching also keeps a large library below
+    // SQLite's bound-variable limit.
+    const ids = this.getRetagWorkIds(options);
     const result: RetagApplyResult = {
       retagged: 0,
       skipped: 0,
@@ -3253,6 +3866,7 @@ export class AudioTagService {
       result.skipped += batchResult.skipped;
       result.missing += batchResult.missing;
       result.errors.push(...batchResult.errors);
+      if (batchResult.warnings?.length) result.warnings = [...(result.warnings ?? []), ...batchResult.warnings];
       completed += batch.length;
     }
     return result;
@@ -3262,7 +3876,7 @@ export class AudioTagService {
    * Lidarr-style strip tags: remove embedded metadata from audio files without
    * rewriting catalog tags. Skips Atmos/spatial files that are not safely writable.
    */
-  static async stripTags(ids: number[]): Promise<RetagApplyResult> {
+  static async stripTags(ids: number[], options: { deferPersistence?: boolean } = {}): Promise<RetagApplyResult> {
     const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id))));
     const result: RetagApplyResult = {
       retagged: 0,
@@ -3297,9 +3911,19 @@ export class AudioTagService {
         continue;
       }
       const stats = fs.statSync(resolvedPath);
-      await withSqliteWriteGate(() => db.prepare(`UPDATE TrackFiles
-        SET file_size = ?, modified_at = ?, verified_at = CURRENT_TIMESTAMP WHERE id = ? AND file_path = ?`)
-        .run(stats.size, stats.mtime.toISOString(), row.id, row.file_path), "retag:strip-file-facts");
+      if (options.deferPersistence) {
+        (result.fileFacts ??= []).push({
+          id: row.id,
+          size: stats.size,
+          modifiedAt: stats.mtime.toISOString(),
+          fingerprint: null,
+        });
+      } else {
+        await withSqliteWriteGate(() => db.prepare(`UPDATE TrackFiles
+          SET file_size = ?, modified_at = ?, managed_tag_fingerprint = NULL, verified_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND file_path = ?`)
+          .run(stats.size, stats.mtime.toISOString(), row.id, row.file_path), "retag:strip-file-facts");
+      }
       result.retagged++;
     }
 

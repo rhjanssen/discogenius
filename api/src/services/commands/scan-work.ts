@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { withSqliteWriteGate } from "../../database.js";
-import { getConfigSection } from "../config/config.js";
-import type { ScanResult } from "../mediafiles/library-scan.js";
+import { scanConfigRevision } from "./scan-config-revision.js";
+import type { DiscoveryResult, ScanResult } from "../mediafiles/library-scan.js";
 import type { CommandModelOf } from "./command-model.js";
 import { CommandQueueManager } from "./command-queue-manager.js";
 import { CommandContinuation } from "./command-continuation.js";
@@ -9,18 +8,18 @@ import { CommandContinuation } from "./command-continuation.js";
 const counters = ["artists", "orphansRemoved", "filesIndexed", "filesUpdated", "downloadFlagsReset", "unmappedOrphans"] as const;
 
 /** Reconciliation is idempotent within an artist. Settle its counts before
- * releasing admission; root discovery is deliberately a separate legacy path. */
+ * releasing admission. Optional new-artist discovery settles once before the
+ * shared root inventory, rather than selecting a different scan execution path. */
 export async function runScanWorkUnit(
     job: CommandModelOf<"RescanFolders">,
     resolveIds: () => string[],
     scanArtist: (id: string, cursor: number, total: number) => Promise<ScanResult>,
     cleanup: (() => Promise<number>) | null,
+    discover?: () => Promise<DiscoveryResult>,
 ): Promise<ScanResult> {
     const owner = job.worker_id;
     if (!owner || !CommandQueueManager.isExecutionOwner(job.id, owner)) throw new Error("Scan execution ownership changed");
-    const configRevision = createHash("sha256").update(JSON.stringify({
-        path: getConfigSection("path"), metadata: getConfigSection("metadata"), filtering: getConfigSection("filtering"),
-    })).digest("hex");
+    const configRevision = scanConfigRevision();
     let plan = job.payload.scanWork;
     const persist = async () => withSqliteWriteGate(() => {
         if (!CommandQueueManager.updateState(job.id, { workerId: owner, payloadPatch: { scanWork: plan } })) {
@@ -53,10 +52,15 @@ export async function runScanWorkUnit(
         await persist();
         if (plan.cursor < plan.artistIds.length || cleanup) throw new CommandContinuation({});
     }
+    if (discover && !plan.discovery) {
+        plan.discovery = await discover();
+        await persist();
+        throw new CommandContinuation({});
+    }
     if (!plan.cleanupDone) {
         if (cleanup) plan.result.unmappedOrphans += await cleanup();
         plan.cleanupDone = true;
         await persist();
     }
-    return plan.result;
+    return plan.discovery ? { ...plan.result, discovery: plan.discovery } : plan.result;
 }

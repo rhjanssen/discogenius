@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { invalidateAcquisitionPlans } from "../music/acquisition-plan-ownership.js";
 import {
   ProviderCatalogRepository,
   type ProviderAudioVariantInput,
@@ -19,7 +20,10 @@ import {
   type MatchTargetTrack,
   type TrackMatchEvidence,
 } from "../music/provider-track-matcher.js";
-import { replanMonitoredEditions } from "../music/acquisition-planning-service.js";
+import { replanMonitoredEditions, type MonitoredEditionRef } from "../music/acquisition-planning-service.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "../music/provider-track-matcher.js";
+import { jsonList, SQL_JSON_LIST } from "../../utils/sql-id-list.js";
+import { isDerivativeProviderRelease } from "../metadata/derivative-release.js";
 
 const MIN_AMBIGUITY_MARGIN = 0.1;
 
@@ -114,6 +118,33 @@ export interface ProviderReleaseMemberFacts {
   audioVariants?: readonly ProviderAudioVariantInput[];
 }
 
+export interface StoredReplayDecision {
+  editionId: number;
+  acceptedTrackCount: number;
+  ambiguousTrackCount: number;
+  write: {
+    decision: ProviderMatchDecision;
+    targetTrackIds: number[];
+    sourceMemberIds: number[];
+    trackMatches: ProviderTrackMatchInput[];
+  } | null;
+}
+
+export interface StoredReplayPlan {
+  providerEditionItemId: number;
+  matcherVersion: number;
+  decisions: StoredReplayDecision[];
+  acceptedTrackCount: number;
+  ambiguousTrackCount: number;
+}
+
+export interface StoredReplayCommit {
+  acceptedTrackCount: number;
+  ambiguousTrackCount: number;
+  retired: number;
+  replan: MonitoredEditionRef[];
+}
+
 export interface ProviderReleaseIngestionInput {
   release: ProviderItemFacts & { entityType: "release" };
   canonicalReleaseId: number;
@@ -180,6 +211,116 @@ function providerTrack(member: ProviderReleaseMemberFacts): MatchProviderTrack {
   };
 }
 
+/** Same tolerance the matcher grants one recording measured twice. */
+const SHARED_ITEM_DURATION_GRACE_MS = 10_000;
+
+function normalizedContextTitle(member: ProviderReleaseMemberFacts): string {
+  return String(member.contextualTitle || member.item.title || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Sources whose provider item fills several slots of this release that
+ * describe different content.
+ *
+ * YouTube Music substitutes one official music video for every slot it has no
+ * audio track for, so its "Everlasting" single lists xBbOVxfFuMc as both
+ * "Everlasting" (2:38) and "Everlasting (Extended Mix)" (4:25). Each slot's
+ * contextual title and runtime match a different canonical track perfectly,
+ * but the item has one piece of audio, which is at most one of them. Matching
+ * each slot on its own facts promised two recordings from one download, and the
+ * import then rightly refused the file as ambiguous provenance.
+ *
+ * Which slot the audio really is cannot be read from the listing, so none of
+ * them is accepted: the canonical tracks stay open for another provider. A
+ * provider listing the same audio twice under the same title and runtime is
+ * not a conflict when only one canonical track can claim it. When that same
+ * listing is a viable match for two canonical tracks, {@link sharedItemSourcesToDrop}
+ * refuses every slot: one download is still one recording.
+ */
+function sourcesWithConflictingSharedItem(audioSources: readonly AudioSource[]): Set<number> {
+  const byItem = new Map<string, number[]>();
+  audioSources.forEach((source, sourceIndex) => {
+    const key = `${source.member.item.provider}:${source.member.item.providerId}`;
+    const indexes = byItem.get(key) ?? [];
+    indexes.push(sourceIndex);
+    byItem.set(key, indexes);
+  });
+  const conflicted = new Set<number>();
+  for (const indexes of byItem.values()) {
+    if (indexes.length < 2) continue;
+    const members = indexes.map((index) => audioSources[index].member);
+    const titles = new Set(members.map(normalizedContextTitle));
+    const durations = members
+      .map((member) => member.contextualDurationMs ?? member.item.durationMs)
+      .filter((value): value is number => value != null);
+    const durationSpread = durations.length > 1
+      ? Math.max(...durations) - Math.min(...durations)
+      : 0;
+    if (titles.size > 1 || durationSpread > SHARED_ITEM_DURATION_GRACE_MS) {
+      for (const index of indexes) conflicted.add(index);
+    }
+  }
+  return conflicted;
+}
+
+/**
+ * Sources to withhold because one provider item is a viable match for more
+ * than one canonical track.
+ *
+ * Version 4 only compared the provider's own slot titles and runtimes, so two
+ * listings of the same item with the same title and a runtime inside the 10s
+ * grace were both accepted. That is right when they describe one canonical
+ * track listed twice, and wrong when they describe two: a multi-disc "Intro"
+ * or a deluxe twin. The file that arrives has one identity, and the import
+ * refuses it once two offers name that identity.
+ *
+ * Viability uses the same bar as the assignment edges (threshold, perfect
+ * identity, and the tier margin). A duplicate listing of a single track is
+ * left to the one-to-one assigner, which keeps one of them.
+ */
+function sharedItemSourcesToDrop(
+  audioSources: readonly { member: ProviderReleaseMemberFacts; sourceIndex: number }[],
+  evidence: readonly (readonly TrackMatchEvidence[])[],
+  sourceMargins: readonly number[],
+  targetMargins: readonly number[],
+  alreadyConflicted: ReadonlySet<number>,
+): Set<number> {
+  const byItem = new Map<string, number[]>();
+  for (const source of audioSources) {
+    if (alreadyConflicted.has(source.sourceIndex)) continue;
+    const key = `${source.member.item.provider}:${source.member.item.providerId}`;
+    const indexes = byItem.get(key) ?? [];
+    indexes.push(source.sourceIndex);
+    byItem.set(key, indexes);
+  }
+  const dropped = new Set<number>();
+  for (const indexes of byItem.values()) {
+    if (indexes.length < 2) continue;
+    const viableTargets = new Set<number>();
+    for (const sourceIndex of indexes) {
+      const row = evidence[sourceIndex] ?? [];
+      for (let targetIndex = 0; targetIndex < row.length; targetIndex += 1) {
+        const score = row[targetIndex]?.score || 0;
+        if (score < TRACK_MATCH_THRESHOLD) continue;
+        if (score !== 1
+          && (sourceMargins[sourceIndex] < MIN_AMBIGUITY_MARGIN
+            || targetMargins[targetIndex] < MIN_AMBIGUITY_MARGIN)) {
+          continue;
+        }
+        viableTargets.add(targetIndex);
+      }
+    }
+    if (viableTargets.size > 1) {
+      for (const sourceIndex of indexes) dropped.add(sourceIndex);
+    }
+  }
+  return dropped;
+}
+
 export class ProviderReleaseIngestionService {
   private readonly catalog: ProviderCatalogRepository;
   private readonly matches: ProviderMatchRepository;
@@ -218,7 +359,6 @@ export class ProviderReleaseIngestionService {
     let droppedEditions: Array<{ libraryId: number; editionId: number }> = [];
     const result = this.db.transaction(() => {
       const providerEditionItemId = this.catalog.upsertItem(input.release);
-      droppedEditions = this.clearDependentAcquisitionPlans(providerEditionItemId);
       if (input.releaseAudioVariants) {
         this.catalog.replaceAudioVariants(providerEditionItemId, input.releaseAudioVariants,
           { provider: input.release.provider });
@@ -229,6 +369,23 @@ export class ProviderReleaseIngestionService {
           this.materializeCredits(input.release.provider, input.releaseCredits),
         );
       }
+      const decisionSource = input.decisionSource || "automatic";
+      // Store the provider row so it can be reported. Do not invalidate plans
+      // and do not write a match: an existing accepted karaoke row stays until
+      // someone decides, and a replay must not retire it.
+      if (decisionSource !== "manual" && isDerivativeProviderRelease({
+        title: input.release.title,
+        version: input.release.version,
+        artistCredit: (input.releaseCredits ?? []).map((credit) => credit.name).join(" "),
+      })) {
+        return {
+          providerEditionItemId,
+          releaseMatchId: null,
+          acceptedTrackCount: 0,
+          ambiguousTrackCount: 0,
+        };
+      }
+      droppedEditions = this.invalidateDependentAcquisitionPlans(providerEditionItemId);
 
       const memberRows = input.members.map((member) => {
         const memberItemId = this.catalog.upsertItem({
@@ -262,7 +419,6 @@ export class ProviderReleaseIngestionService {
         .map(({ member }, index) => ({ member, memberId: memberIds[index] }))
         .filter(({ member }) => member.item.entityType === "track");
 
-      const decisionSource = input.decisionSource || "automatic";
       const upcNorm = normalizeBarcodeDigits(input.release.upc);
       const upcEditionIds = upcNorm ? this.findEditionIdsByBarcode(upcNorm) : [];
       const identityMode = upcEditionIds.length > 0;
@@ -346,19 +502,6 @@ export class ProviderReleaseIngestionService {
     return row?.release_group_id ?? null;
   }
 
-  /**
-   * Drop a fan-out match that we decided after the fact should not exist.
-   * Track matches cascade from the edition match row.
-   */
-  private clearEditionMatch(providerEditionItemId: number, editionId: number): void {
-    this.db.prepare(`
-      DELETE FROM ProviderEditionMatches
-      WHERE provider_edition_item_id = ?
-        AND edition_id = ?
-        AND decision_source != 'manual'
-    `).run(providerEditionItemId, editionId);
-  }
-
   private loadCanonicalTracks(editionId: number): CanonicalTrack[] {
     const canonicalTracks = this.db.prepare(`
       SELECT
@@ -389,15 +532,14 @@ export class ProviderReleaseIngestionService {
     const titlesByRecording = new Map<number, string[]>();
     if (canonicalTracks.length > 0) {
       const recordingIds = [...new Set(canonicalTracks.map((track) => track.recording_id))];
-      const placeholders = recordingIds.map(() => "?").join(",");
       const siblingTitles = this.db.prepare(`
         SELECT sibling.recording_id AS recording_id, sibling.title AS title
         FROM Tracks sibling
         JOIN AlbumEditions sibling_edition ON sibling_edition.id = sibling.album_edition_id
         JOIN AlbumEditions target_edition ON target_edition.id = ?
         WHERE sibling_edition.release_group_id = target_edition.release_group_id
-          AND sibling.recording_id IN (${placeholders})
-      `).all(editionId, ...recordingIds) as Array<{ recording_id: number; title: string | null }>;
+          AND sibling.recording_id IN ${SQL_JSON_LIST}
+      `).all(editionId, jsonList(recordingIds)) as Array<{ recording_id: number; title: string | null }>;
       for (const row of siblingTitles) {
         const title = String(row.title || "").trim();
         if (!title) continue;
@@ -446,15 +588,64 @@ export class ProviderReleaseIngestionService {
     identityRecordingIds: number[];
     relation: string | null;
   } {
+    const built = this.buildEditionMatch(input);
+    if (!built.write) {
+      return {
+        releaseMatchId: null,
+        acceptedTrackCount: built.acceptedTrackCount,
+        ambiguousTrackCount: built.ambiguousTrackCount,
+        acceptedRecordingIds: [],
+        identityRecordingIds: [],
+        relation: null,
+      };
+    }
+    const result = this.matches.replaceReleaseMatch({
+      providerEditionItemId: input.providerEditionItemId,
+      editionId: input.editionId,
+      decision: built.write.decision,
+      targetTrackIds: new Set(built.write.targetTrackIds),
+      sourceMemberIds: new Set(built.write.sourceMemberIds),
+      trackMatches: built.write.trackMatches,
+    });
+    return {
+      releaseMatchId: result.releaseMatchId,
+      acceptedTrackCount: built.acceptedTrackCount,
+      ambiguousTrackCount: built.ambiguousTrackCount,
+      acceptedRecordingIds: built.acceptedRecordingIds,
+      identityRecordingIds: built.identityRecordingIds,
+      relation: result.relation.relation,
+    };
+  }
+
+  /**
+   * Score one edition from stored member rows. No writes: the caller commits.
+   */
+  private buildEditionMatch(input: {
+    providerEditionItemId: number;
+    editionId: number;
+    audioSources: readonly AudioSource[];
+    matcherVersion: number;
+    decisionSource: ProviderMatchDecision["decisionSource"];
+  }): {
+    acceptedTrackCount: number;
+    ambiguousTrackCount: number;
+    acceptedRecordingIds: number[];
+    identityRecordingIds: number[];
+    write: {
+      decision: ProviderMatchDecision;
+      targetTrackIds: number[];
+      sourceMemberIds: number[];
+      trackMatches: ProviderTrackMatchInput[];
+    } | null;
+  } {
     const targets = this.loadCanonicalTracks(input.editionId);
     if (targets.length === 0 || input.audioSources.length === 0) {
       return {
-        releaseMatchId: null,
         acceptedTrackCount: 0,
         ambiguousTrackCount: 0,
         acceptedRecordingIds: [],
         identityRecordingIds: [],
-        relation: null,
+        write: null,
       };
     }
 
@@ -480,9 +671,19 @@ export class ProviderReleaseIngestionService {
       }
     }
 
+    const conflictedSources = sourcesWithConflictingSharedItem(audioSources);
     const sourceMargins = evidence.map((sourceEvidence) => tierAwareMargin(sourceEvidence));
     const targetMargins = targets.map((_, targetIndex) =>
       tierAwareMargin(evidence.map((sourceEvidence) => sourceEvidence[targetIndex])));
+    for (const sourceIndex of sharedItemSourcesToDrop(
+      audioSources,
+      evidence,
+      sourceMargins,
+      targetMargins,
+      conflictedSources,
+    )) {
+      conflictedSources.add(sourceIndex);
+    }
     const edges = targets.map((_target, targetIndex) =>
       audioSources.map((source) => ({
         sourceKey: String(source.memberId),
@@ -491,6 +692,7 @@ export class ProviderReleaseIngestionService {
         method: evidence[source.sourceIndex][targetIndex].method,
       }))
         .filter((edge) => {
+          if (conflictedSources.has(edge.source.sourceIndex)) return false;
           if (edge.matchScore < TRACK_MATCH_THRESHOLD) return false;
           if (edge.matchScore === 1) return true;
           return sourceMargins[edge.source.sourceIndex] >= MIN_AMBIGUITY_MARGIN
@@ -574,58 +776,312 @@ export class ProviderReleaseIngestionService {
     const ambiguousTrackCount = trackMatches.filter((match) => match.matchState === "ambiguous").length;
     if (acceptedTrackCount === 0) {
       return {
-        releaseMatchId: null,
         acceptedTrackCount,
         ambiguousTrackCount,
         acceptedRecordingIds: [],
         identityRecordingIds: [],
-        relation: null,
+        write: null,
       };
     }
-    const result = this.matches.replaceReleaseMatch({
-      providerEditionItemId: input.providerEditionItemId,
-      editionId: input.editionId,
-      decision: {
-        matchState: "accepted",
-        decisionSource: input.decisionSource,
-        confidence: acceptedTrackCount / Math.max(targets.length, audioSources.length, 1),
-        method: "normalized_track_assignment",
-        evidence: { ambiguousTrackCount },
-        matcherVersion: input.matcherVersion,
-      },
-      targetTrackIds: new Set(targets.map((target) => target.id)),
-      sourceMemberIds: new Set(audioSources.map((source) => source.memberId)),
-      trackMatches,
-    });
     return {
-      releaseMatchId: result.releaseMatchId,
       acceptedTrackCount,
       ambiguousTrackCount,
       acceptedRecordingIds,
       identityRecordingIds,
-      relation: result.relation.relation,
+      write: {
+        decision: {
+          matchState: "accepted",
+          decisionSource: input.decisionSource,
+          confidence: acceptedTrackCount / Math.max(targets.length, audioSources.length, 1),
+          method: "normalized_track_assignment",
+          evidence: { ambiguousTrackCount },
+          matcherVersion: input.matcherVersion,
+        },
+        targetTrackIds: targets.map((target) => target.id),
+        sourceMemberIds: audioSources.map((source) => source.memberId),
+        trackMatches,
+      },
     };
   }
 
   /**
-   * Drop the acquisition plans built on this provider release before its rows
-   * are rewritten.
- *
-   * Plan tracks point at both the track match and the exact audio variant they
-   * would download, and neither reference carries an ON DELETE clause. Re-
-   * ingesting replaces both, so a release that had ever been planned could not
-   * be re-ingested at all: it failed on a foreign-key error. That is what froze
-   * matching for an established catalog and kept a matcher fix from ever
-   * reaching it.
+   * Re-decide one stored provider release from catalogue rows already on disk.
    *
-   * This has to run before any replace, not alongside the match rewrite — the
-   * audio variants are replaced first.
-   *
-   * Plans are derived state, so the planner rebuilds them. The operator's
-   * choice survives because a selection is remembered by stable plan_key on
-   * LibraryEditions, not by plan row id. Composites are caught too: a composite
-   * that draws on this release records it as one of its sources.
+   * No provider traffic and no writes. Identity mode (a UPC that hits edition
+   * barcodes) re-decides only those editions, matching ingest. Otherwise every
+   * accepted linked edition is re-decided, plus the caller's canonical edition
+   * when artist refresh has just selected one that is not linked yet.
+   * Returns null only when the item is not a stored release.
    */
+  prepareStoredReplay(
+    providerEditionItemId: number,
+    options?: { canonicalEditionId?: number | null },
+  ): StoredReplayPlan | null {
+    const release = this.db.prepare(`
+      SELECT id, provider, upc
+      FROM ProviderItems
+      WHERE id = ? AND entity_type = 'release'
+    `).get(providerEditionItemId) as { id: number; provider: string; upc: string | null } | undefined;
+    if (!release) return null;
+
+    const memberRows = this.db.prepare(`
+      SELECT
+        member.id AS member_id,
+        member.medium_position,
+        member.position,
+        member.contextual_title,
+        member.contextual_duration_ms,
+        item.provider_id,
+        item.title,
+        item.version,
+        item.isrc,
+        item.duration_ms,
+        item.explicit
+      FROM ProviderEditionMembers member
+      JOIN ProviderItems item ON item.id = member.member_item_id
+      WHERE member.provider_edition_item_id = ?
+        AND item.entity_type = 'track'
+      ORDER BY member.medium_position, member.position, member.id
+    `).all(providerEditionItemId) as Array<{
+      member_id: number;
+      medium_position: number;
+      position: number;
+      contextual_title: string | null;
+      contextual_duration_ms: number | null;
+      provider_id: string;
+      title: string | null;
+      version: string | null;
+      isrc: string | null;
+      duration_ms: number | null;
+      explicit: number | null;
+    }>;
+
+    const audioSources: AudioSource[] = memberRows.map((row) => ({
+      memberId: row.member_id,
+      member: {
+        item: {
+          provider: release.provider,
+          entityType: "track",
+          providerId: String(row.provider_id),
+          title: row.title,
+          version: row.version,
+          isrc: row.isrc,
+          durationMs: row.duration_ms,
+          explicit: row.explicit == null ? null : Boolean(row.explicit),
+        },
+        mediumPosition: Number(row.medium_position || 1),
+        position: Number(row.position || 0),
+        contextualTitle: row.contextual_title,
+        contextualDurationMs: row.contextual_duration_ms,
+      },
+    }));
+
+    const upcEditionIds = normalizeBarcodeDigits(release.upc)
+      ? this.findEditionIdsByBarcode(normalizeBarcodeDigits(release.upc))
+      : [];
+    const linkedEditionIds = (this.db.prepare(`
+      SELECT DISTINCT edition_id AS id
+      FROM ProviderEditionMatches
+      WHERE provider_edition_item_id = ?
+        AND match_state = 'accepted'
+    `).all(providerEditionItemId) as Array<{ id: number }>).map((row) => row.id);
+    const editionIds = upcEditionIds.length > 0
+      ? upcEditionIds
+      : [...new Set([
+        ...linkedEditionIds,
+        ...(options?.canonicalEditionId ? [options.canonicalEditionId] : []),
+      ])];
+
+    const decisions = editionIds.map((editionId) => {
+      const built = this.buildEditionMatch({
+        providerEditionItemId,
+        editionId,
+        audioSources,
+        matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
+        decisionSource: "automatic",
+      });
+      return {
+        editionId,
+        acceptedTrackCount: built.acceptedTrackCount,
+        ambiguousTrackCount: built.ambiguousTrackCount,
+        write: built.write,
+      };
+    });
+    const canonical = options?.canonicalEditionId == null
+      ? decisions[0]
+      : decisions.find((decision) => decision.editionId === options.canonicalEditionId);
+    return {
+      providerEditionItemId,
+      matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
+      decisions,
+      acceptedTrackCount: canonical?.acceptedTrackCount ?? 0,
+      ambiguousTrackCount: canonical?.ambiguousTrackCount ?? 0,
+    };
+  }
+
+  /**
+   * True when this replay would store the same automatic assignments that are
+   * already on disk. A version bump can then skip match replacement.
+   *
+   * `write: null` counts as unchanged only when that edition has no automatic
+   * rows. A stale automatic match on an edition this pass did not decide is a
+   * change: UPC mode leaves those rows for retirement.
+   */
+  storedReplayAssignmentsUnchanged(plan: StoredReplayPlan): boolean {
+    const stored = this.db.prepare(`
+      SELECT edition_match.edition_id AS edition_id,
+             track_match.provider_edition_member_id AS member_id,
+             track_match.track_id AS track_id,
+             track_match.recording_id AS recording_id,
+             track_match.match_state AS match_state,
+             track_match.matcher_version AS matcher_version
+      FROM ProviderTrackMatches track_match
+      JOIN ProviderEditionMatches edition_match
+        ON edition_match.id = track_match.provider_edition_match_id
+      WHERE edition_match.provider_edition_item_id = ?
+        AND track_match.decision_source = 'automatic'
+    `).all(plan.providerEditionItemId) as Array<{
+      edition_id: number;
+      member_id: number;
+      track_id: number | null;
+      recording_id: number;
+      match_state: string;
+      matcher_version: number;
+    }>;
+    const decided = new Set(plan.decisions.map((decision) => decision.editionId));
+    if (stored.some((row) => row.matcher_version < plan.matcherVersion && !decided.has(row.edition_id))) {
+      return false;
+    }
+    const key = (
+      memberId: number,
+      trackId: number | null,
+      recordingId: number,
+      matchState: string,
+    ) => `${memberId}\u0001${trackId ?? ""}\u0001${recordingId}\u0001${matchState}`;
+    for (const decision of plan.decisions) {
+      const actual = stored
+        .filter((row) => row.edition_id === decision.editionId)
+        .map((row) => key(row.member_id, row.track_id, row.recording_id, row.match_state))
+        .sort();
+      if (!decision.write) {
+        if (actual.length > 0) return false;
+        continue;
+      }
+      const proposed = decision.write.trackMatches
+        .map((match) => key(
+          match.providerEditionMemberId,
+          match.trackId,
+          match.recordingId,
+          match.matchState,
+        ))
+        .sort();
+      if (proposed.join("\u0002") !== actual.join("\u0002")) return false;
+    }
+    return true;
+  }
+
+  /** Automatic matches of decided editions that a version bump would touch. */
+  staleAutomaticMatchIds(plan: StoredReplayPlan): number[] {
+    const editionIds = plan.decisions
+      .filter((decision) => decision.write)
+      .map((decision) => decision.editionId);
+    if (editionIds.length === 0) return [];
+    return (this.db.prepare(`
+      SELECT track_match.id AS id
+      FROM ProviderTrackMatches track_match
+      JOIN ProviderEditionMatches edition_match
+        ON edition_match.id = track_match.provider_edition_match_id
+      WHERE edition_match.provider_edition_item_id = ?
+        AND edition_match.edition_id IN ${SQL_JSON_LIST}
+        AND track_match.decision_source = 'automatic'
+        AND track_match.matcher_version < ?
+      ORDER BY track_match.id
+    `).all(
+      plan.providerEditionItemId,
+      jsonList(editionIds),
+      plan.matcherVersion,
+    ) as Array<{ id: number }>).map((row) => row.id);
+  }
+
+  /**
+   * Stamp the current matcher version onto unchanged automatic rows.
+   * Does not invalidate plans. The caller updates policy hashes to match.
+   */
+  bumpStoredReplayVersion(plan: StoredReplayPlan): void {
+    const matchIds = this.staleAutomaticMatchIds(plan);
+    if (matchIds.length > 0) {
+      this.db.prepare(`
+        UPDATE ProviderTrackMatches
+        SET matcher_version = ?
+        WHERE id IN ${SQL_JSON_LIST}
+          AND decision_source = 'automatic'
+          AND matcher_version < ?
+      `).run(plan.matcherVersion, jsonList(matchIds), plan.matcherVersion);
+    }
+    const editionIds = plan.decisions
+      .filter((decision) => decision.write)
+      .map((decision) => decision.editionId);
+    if (editionIds.length === 0) return;
+    this.db.prepare(`
+      UPDATE ProviderEditionMatches
+      SET matcher_version = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE provider_edition_item_id = ?
+        AND decision_source = 'automatic'
+        AND match_state = 'accepted'
+        AND edition_id IN ${SQL_JSON_LIST}
+    `).run(plan.matcherVersion, plan.providerEditionItemId, jsonList(editionIds));
+  }
+
+  /**
+   * Persist a prepared replay. SQL only: matching already ran outside the
+   * write gate. The caller replans the returned editions in the same
+   * transaction so a reader never sees the plans marked stale.
+   */
+  commitStoredReplay(plan: StoredReplayPlan): StoredReplayCommit {
+    const run = (): StoredReplayCommit => {
+      const before = this.monitoredEditionsForRelease(plan.providerEditionItemId);
+      for (const decision of plan.decisions) {
+        if (!decision.write) continue;
+        this.matches.replaceReleaseMatch({
+          providerEditionItemId: plan.providerEditionItemId,
+          editionId: decision.editionId,
+          decision: decision.write.decision,
+          targetTrackIds: new Set(decision.write.targetTrackIds),
+          sourceMemberIds: new Set(decision.write.sourceMemberIds),
+          trackMatches: decision.write.trackMatches,
+        });
+      }
+      const retired = this.retireStaleTrackMatches(plan.providerEditionItemId, plan.matcherVersion);
+      const after = this.monitoredEditionsForRelease(plan.providerEditionItemId);
+      const seen = new Set<string>();
+      const replan: MonitoredEditionRef[] = [];
+      for (const edition of [...before, ...after]) {
+        const key = `${edition.libraryId}:${edition.editionId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        replan.push(edition);
+      }
+      return {
+        acceptedTrackCount: plan.acceptedTrackCount,
+        ambiguousTrackCount: plan.ambiguousTrackCount,
+        retired,
+        replan,
+      };
+    };
+    return this.db.transaction(run)();
+  }
+
+  private monitoredEditionsForRelease(providerEditionItemId: number): MonitoredEditionRef[] {
+    return this.db.prepare(`
+      SELECT DISTINCT library_edition.library_id AS libraryId,
+        library_edition.edition_id AS editionId
+      FROM LibraryEditions library_edition
+      JOIN ProviderEditionMatches edition_match
+        ON edition_match.edition_id = library_edition.edition_id
+      WHERE edition_match.provider_edition_item_id = ?
+    `).all(providerEditionItemId) as MonitoredEditionRef[];
+  }
+
   /**
    * Retire automatic track matches for this provider release that the current
    * matcher did not reproduce.
@@ -639,7 +1095,8 @@ export class ProviderReleaseIngestionService {
    * test for them: anything the replay believed was rewritten at the current
    * version moments ago.
    *
-   * An Edition match with no surviving track matches goes too. It asserts a
+   * An Edition match with no surviving tracks is rejected, retaining its identity
+   * for selected source provenance. It must not continue asserting a
    * relationship that nothing supports and would otherwise keep offering an
    * Edition the provider cannot actually fill.
    */
@@ -658,12 +1115,12 @@ export class ProviderReleaseIngestionService {
 
       // Same reference to release as the delete path above: a plan built on a
       // match being retired is stale, and the FK will not let it dangle.
-      this.clearDependentAcquisitionPlans(providerEditionItemId);
+      this.invalidateDependentAcquisitionPlans(providerEditionItemId);
 
-      const placeholders = staleIds.map(() => "?").join(",");
-      this.db.prepare(`DELETE FROM ProviderTrackMatches WHERE id IN (${placeholders})`).run(...staleIds);
+      this.db.prepare(`DELETE FROM ProviderTrackMatches WHERE id IN ${SQL_JSON_LIST}`).run(jsonList(staleIds));
       this.db.prepare(`
-        DELETE FROM ProviderEditionMatches
+        UPDATE ProviderEditionMatches SET match_state='rejected', matched_track_count=0,
+          source_coverage=0, target_coverage=0, updated_at=CURRENT_TIMESTAMP
         WHERE provider_edition_item_id = ?
           AND decision_source = 'automatic'
           AND NOT EXISTS (
@@ -675,7 +1132,7 @@ export class ProviderReleaseIngestionService {
     })();
   }
 
-  private clearDependentAcquisitionPlans(providerEditionItemId: number): Array<{ libraryId: number; editionId: number }> {
+  private invalidateDependentAcquisitionPlans(providerEditionItemId: number): Array<{ libraryId: number; editionId: number }> {
     // Plans reference this release three ways, and none of the track-level
     // foreign keys cascade: sources point at the edition match, plan tracks
     // point at individual track matches, and plan tracks also pin the exact
@@ -717,33 +1174,16 @@ export class ProviderReleaseIngestionService {
       providerEditionItemId,
     ];
 
+    invalidateAcquisitionPlans(this.db, (this.db.prepare(`
+      SELECT id FROM AcquisitionPlans WHERE id IN (${dependentPlanIds})
+    `).all(...args) as Array<{ id: number }>).map(row => row.id));
+
     const droppedEditions = this.db.prepare(`
       SELECT DISTINCT plan.library_id AS libraryId, plan.edition_id AS editionId
       FROM AcquisitionPlans plan
       WHERE plan.id IN (${dependentPlanIds})
     `).all(...args) as Array<{ libraryId: number; editionId: number }>;
 
-    // A plan the operator picked is still pointed at by
-    // `LibraryEditions.preferred_plan_key`, and that reference is a real
-    // foreign key. Deleting the plan under it aborts the whole re-ingest with
-    // "FOREIGN KEY constraint failed" — measured on 36 of Amy Winehouse's 102
-    // provider releases, and always the ones that had plans, so a matcher fix
-    // could never reach the albums anyone had acted on. Release the reference
-    // first, exactly as AcquisitionPlanRepository.replacePlans does before its
-    // own delete; the planner re-points it when it rebuilds.
-    this.db.prepare(`
-      UPDATE LibraryEditions
-      SET preferred_plan_key = NULL, updated_at = CURRENT_TIMESTAMP
-      WHERE (library_id, edition_id, preferred_plan_key) IN (
-        SELECT plan.library_id, plan.edition_id, plan.plan_key
-        FROM AcquisitionPlans plan
-        WHERE plan.id IN (${dependentPlanIds})
-      )
-    `).run(...args);
-
-    this.db.prepare(`
-      DELETE FROM AcquisitionPlans WHERE id IN (${dependentPlanIds})
-    `).run(...args);
     return droppedEditions;
   }
 

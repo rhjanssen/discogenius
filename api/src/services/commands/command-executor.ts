@@ -1,8 +1,10 @@
+import { ArtworkMutationJournal } from "../metadata/artwork-mutation-journal.js";
 import { randomUUID } from "node:crypto";
 
 import {CommandModel} from "./command-model.js";
 import {
     NON_DOWNLOAD_COMMAND_NAMES,
+    DOWNLOAD_COMMAND_NAMES,
     DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
 } from "./command-names.js";
 import {
@@ -10,13 +12,15 @@ import {
     resolveInfrastructureMaxAttempts,
 } from "./command-liveness-policy.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
-import { withDbWrite, withSqliteWriteGate } from "../../database.js";
+import { db, withDbWrite, withSqliteWriteGate } from "../../database.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
 import { CommandWorkerPool, isPoolShutdownError } from "./worker/command-worker-pool.js";
 import { shouldDeferCatalogHydration } from "./command-ordering.js";
 import { FileMutationJournal } from "../mediafiles/file-mutation-journal.js";
+import { prepareFileCheckpointResume } from "./command-file-checkpoint.js";
+import { commandResumesFromFileCheckpoint, commandWritesLibraryFiles } from "./command-registry.js";
 
 export { formatHealthCheckDescription } from "./scheduler-maintenance-handlers.js";
 
@@ -34,6 +38,7 @@ const COMMAND_HEARTBEAT_MS = Math.min(
 // the conservative command-specific expectations below.
 const COMMAND_NO_PROGRESS_MS = readIntEnv('DISCOGENIUS_COMMAND_NO_PROGRESS_MS', 0, 0);
 const COMMAND_WATCHDOG_INTERVAL_MS = readIntEnv('DISCOGENIUS_COMMAND_WATCHDOG_INTERVAL_MS', 5_000, 100);
+const FILE_RECOVERY_SWEEP_MS = readIntEnv('DISCOGENIUS_FILE_RECOVERY_SWEEP_MS', 60_000, 100);
 const COMMAND_MAX_ATTEMPTS = readIntEnv('DISCOGENIUS_COMMAND_MAX_ATTEMPTS', 3, 1);
 const COMMAND_RETRY_BASE_MS = readIntEnv('DISCOGENIUS_COMMAND_RETRY_BASE_MS', 1_000, 0);
 const COMMAND_RETRY_MAX_MS = readIntEnv('DISCOGENIUS_COMMAND_RETRY_MAX_MS', 60_000, 0);
@@ -59,6 +64,30 @@ function retryDelayForAttempt(attempt: number, baseMs: number, maxMs: number): n
  * One deterministic lease/no-progress watchdog pass. Exported so recovery can
  * be verified without starting the executor's perpetual polling loop.
  */
+/** True while any started command may own a file mutation intent. A download
+ * in its import phase writes library files like ImportDownload. */
+function libraryFileWriterRunning(): boolean {
+    const started = db.prepare("SELECT name, progress_phase FROM commands WHERE status = 'started'")
+        .all() as Array<{ name: string; progress_phase: string | null }>;
+    return started.some((job) => {
+        if ((DOWNLOAD_COMMAND_NAMES as readonly string[]).includes(job.name)) return job.progress_phase === "importing";
+        return commandWritesLibraryFiles(CommandManager.getDefinition(job.name));
+    });
+}
+
+/**
+ * Settle file mutations nobody owns any more. Recovery used to run only at
+ * startup and after a stale library command, but a pending intent also stops
+ * every library command from starting. One intent whose owner gave up (for
+ * example on SQLITE_BUSY) then parked all imports until a restart.
+ * Exported so the deadlock can be verified without the polling loop.
+ */
+export async function recoverAbandonedFileMutations(): Promise<string[] | null> {
+    // Isolated artwork intents do not block library work but are still retried here.
+    if ((!FileMutationJournal.hasPending() && !ArtworkMutationJournal.hasPending()) || libraryFileWriterRunning()) return null;
+    return FileMutationJournal.recoverPending({ abandonedArtworkOnly: true });
+}
+
 export async function recoverStaleNonDownloadCommands(options: {
     now?: Date;
     noProgressMs: number;
@@ -77,32 +106,43 @@ export async function recoverStaleNonDownloadCommands(options: {
 
     for (const command of stale) {
         await CommandWorkerPool.abortCommandAndWait(command.id, command.workerId, `Command watchdog recovered ${command.reason}`);
-        if (CommandManager.getDefinition(command.name).requiresDiskAccess) {
+        if (commandWritesLibraryFiles(CommandManager.getDefinition(command.name))) {
             const errors = await FileMutationJournal.recoverPending();
             if (errors.length) console.error("[CommandExecutor] File recovery requires attention:", errors);
         }
-        const result = await withSqliteWriteGate(() => CommandQueueManager.recoverOwnedCommand({
-            id: command.id,
-            workerId: command.workerId,
-            reason: `${command.reason}; last heartbeat ${command.heartbeatAt ?? "never"}, last progress ${command.lastProgressAt ?? "never"}`,
-            maxAttempts: resolveInfrastructureMaxAttempts(
-                command.name,
-                options.maxAttempts,
-            ),
-            retryDelayMs: retryDelayForAttempt(
-                command.attempt,
-                options.retryBaseMs,
-                options.retryMaxMs,
-            ),
-            now: options.now,
-        }), "commands:recover-stale");
+        const reason = `${command.reason}; last heartbeat ${command.heartbeatAt ?? "never"}, last progress ${command.lastProgressAt ?? "never"}`;
+        const result = await withSqliteWriteGate(() => commandResumesFromFileCheckpoint(command.name)
+            ? CommandQueueManager.requeueFromCheckpoint({
+                id: command.id,
+                workerId: command.workerId,
+                reason,
+                now: options.now,
+                prepare: () => prepareFileCheckpointResume(command.name, command.id),
+            })
+            : CommandQueueManager.recoverOwnedCommand({
+                id: command.id,
+                workerId: command.workerId,
+                reason,
+                maxAttempts: resolveInfrastructureMaxAttempts(
+                    command.name,
+                    options.maxAttempts,
+                ),
+                retryDelayMs: retryDelayForAttempt(
+                    command.attempt,
+                    options.retryBaseMs,
+                    options.retryMaxMs,
+                ),
+                now: options.now,
+            }), "commands:recover-stale");
         if (result.outcome === "not-owner") continue;
 
         if (result.outcome === "requeued") requeued += 1;
         if (result.outcome === "failed") failed += 1;
         console.warn(
             result.outcome === "requeued"
-                ? `[CommandExecutor] Re-queued command #${command.id} after ${command.reason} (attempt ${command.attempt})`
+                ? commandResumesFromFileCheckpoint(command.name)
+                    ? `[CommandExecutor] Resumed command #${command.id} from its file checkpoint after ${command.reason}`
+                    : `[CommandExecutor] Re-queued command #${command.id} after ${command.reason} (attempt ${command.attempt})`
                 : `[CommandExecutor] Poison-failed command #${command.id} after ${command.reason} (attempt ${command.attempt})`,
         );
     }
@@ -129,6 +169,7 @@ export class CommandExecutor {
     private static isRunning = false;
     private static blockedLogAt = new Map<string, number>();
     private static lastWatchdogAt = 0;
+    private static lastFileRecoverySweepAt = 0;
     private static activeJobs = new Map<number, ActiveCommandAttempt>();
 
     static async start(): Promise<void> {
@@ -136,7 +177,12 @@ export class CommandExecutor {
         this.isRunning = true;
 
         // Recover interrupted non-download jobs after process restart.
+        // Journal recovery finishes before any resumed command can touch a file.
         try {
+            const fileRecoveryErrors = await FileMutationJournal.recoverPending();
+            if (fileRecoveryErrors.length) {
+                console.error("[CommandExecutor] File recovery requires attention before resume:", fileRecoveryErrors);
+            }
             const recovered = await withSqliteWriteGate(() => CommandQueueManager.recoverInterruptedJobsByTypes({
                 types: NON_DOWNLOAD_COMMAND_NAMES,
                 reason: "Discogenius process restarted while command was running",
@@ -145,6 +191,7 @@ export class CommandExecutor {
                     name,
                     COMMAND_MAX_ATTEMPTS,
                 ),
+                prepareCheckpoint: (row) => prepareFileCheckpointResume(row.name, row.id),
             }), "commands:restart-recovery");
             if (recovered.requeued > 0 || recovered.failed > 0) {
                 console.log(
@@ -168,6 +215,7 @@ export class CommandExecutor {
         this.isRunning = false;
         this.blockedLogAt.clear();
         this.lastWatchdogAt = 0;
+        this.lastFileRecoverySweepAt = 0;
         this.activeJobs.clear();
         console.log("🛑 Command executor stopped");
     }
@@ -206,6 +254,12 @@ export class CommandExecutor {
             retryBaseMs: COMMAND_RETRY_BASE_MS,
             retryMaxMs: COMMAND_RETRY_MAX_MS,
         });
+
+        if (now - this.lastFileRecoverySweepAt >= FILE_RECOVERY_SWEEP_MS) {
+            this.lastFileRecoverySweepAt = now;
+            const errors = await recoverAbandonedFileMutations();
+            if (errors?.length) console.error("[CommandExecutor] File recovery requires attention:", errors);
+        }
     }
 
     private static async loop() {
@@ -314,24 +368,38 @@ export class CommandExecutor {
                 const message = error instanceof Error ? error.message : String(error);
                 console.error(`[CommandExecutor] Command #${claimedJob.id} (${claimedJob.name}) worker interrupted:`, message);
                 try {
+                    if (commandWritesLibraryFiles(CommandManager.getDefinition(claimedJob.name))) {
+                        const errors = await FileMutationJournal.recoverPending();
+                        if (errors.length) console.error("[CommandExecutor] File recovery requires attention:", errors);
+                    }
+                    const reason = `worker stopped: ${message}`;
                     const recovered = await withDbWrite(
-                        () => CommandQueueManager.recoverOwnedCommand({
-                            id: claimedJob.id,
-                            workerId,
-                            reason: `worker stopped: ${message}`,
-                            maxAttempts: resolveInfrastructureMaxAttempts(
-                                claimedJob.name,
-                                COMMAND_MAX_ATTEMPTS,
-                            ),
-                            retryDelayMs: retryDelayForAttempt(
-                                claimedJob.attempt,
-                                COMMAND_RETRY_BASE_MS,
-                                COMMAND_RETRY_MAX_MS,
-                            ),
-                        }),
+                        () => commandResumesFromFileCheckpoint(claimedJob.name)
+                            ? CommandQueueManager.requeueFromCheckpoint({
+                                id: claimedJob.id,
+                                workerId,
+                                reason,
+                                prepare: () => prepareFileCheckpointResume(claimedJob.name, claimedJob.id),
+                            })
+                            : CommandQueueManager.recoverOwnedCommand({
+                                id: claimedJob.id,
+                                workerId,
+                                reason,
+                                maxAttempts: resolveInfrastructureMaxAttempts(
+                                    claimedJob.name,
+                                    COMMAND_MAX_ATTEMPTS,
+                                ),
+                                retryDelayMs: retryDelayForAttempt(
+                                    claimedJob.attempt,
+                                    COMMAND_RETRY_BASE_MS,
+                                    COMMAND_RETRY_MAX_MS,
+                                ),
+                            }),
                     );
                     if (recovered.outcome === "requeued") {
-                        console.warn(`[CommandExecutor] Re-queued command #${claimedJob.id} after worker interruption`);
+                        console.warn(commandResumesFromFileCheckpoint(claimedJob.name)
+                            ? `[CommandExecutor] Resumed command #${claimedJob.id} from its file checkpoint after worker interruption`
+                            : `[CommandExecutor] Re-queued command #${claimedJob.id} after worker interruption`);
                     } else if (recovered.outcome === "failed") {
                         console.error(`[CommandExecutor] Command #${claimedJob.id} exhausted ${recovered.attempt} infrastructure attempt(s)`);
                     }

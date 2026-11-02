@@ -8,6 +8,7 @@ import type {
 } from "../../download/download-backend.js";
 import { configuredAudioQuality } from "../../config/config.js";
 import { getDeezerConfigDir, loadDeezerCredentials } from "./deezer-auth.js";
+import { ProviderAuthError } from "../provider-auth-error.js";
 
 const MEDIA_EXTENSIONS = new Set([".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus"]);
 
@@ -68,9 +69,11 @@ export function renderStreamripConfig(arl: string): string {
 folder = "/downloads"
 source_subdirectories = false
 disc_subdirectories = false
-concurrency = true
-max_connections = 6
-requests_per_minute = 60
+# max_connections limits file transfers only. Deezer metadata resolve shares
+# one requests session and is serialized in streamrip-bridge.py.
+concurrency = false
+max_connections = 1
+requests_per_minute = 20
 verify_ssl = true
 
 [qobuz]
@@ -268,6 +271,9 @@ export function classifyStreamripOutput(output: string): StreamripClassifiedErro
     } else if (/domain name not found|name resolution|enotfound|eai_again|dns/iu.test(line)) {
       kind = "transient";
       permanent = false;
+    } else if (/connection pool is full|httpsconnectionpool|httpconnectionpool|max retries exceeded|discarding connection/iu.test(line)) {
+      kind = "transient";
+      permanent = false;
     } else if (/not found|no longer available|unavailable/iu.test(line)) {
       kind = "unavailable";
     } else if (/rate.?limit|too many requests|timeout|temporar|network|connection/iu.test(line)) {
@@ -369,6 +375,14 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
   });
 });
 
+/** Read at call time. DISCOGENIUS_DEEZER_JITTER_MAX_MS=0 disables the pause. */
+export function deezerDownloadJitterMs(random: () => number = Math.random): number {
+  const max = Number(process.env.DISCOGENIUS_DEEZER_JITTER_MAX_MS ?? 2000);
+  if (!Number.isFinite(max) || max <= 0) return 0;
+  const min = Math.min(400, max);
+  return Math.floor(min + random() * Math.max(0, max - min));
+}
+
 export class StreamripDeezerBackend implements DownloadBackend {
   readonly id = "streamrip-deezer";
   readonly supportedProviders = ["deezer"];
@@ -381,9 +395,13 @@ export class StreamripDeezerBackend implements DownloadBackend {
     options: { signal?: AbortSignal; onProgress: (progress: DownloadProgress) => void },
   ): Promise<void> {
     if (!loadDeezerCredentials()) {
-      throw new Error("Connect Deezer with an ARL cookie before downloading.");
+      throw new ProviderAuthError("deezer", "Deezer ARL is invalid or expired.");
     }
     syncDeezerStreamripConfig();
+    const jitterMs = deezerDownloadJitterMs();
+    if (jitterMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, jitterMs));
+    }
     fs.mkdirSync(request.downloadPath, { recursive: true });
     options.onProgress({ progress: 1, state: "downloading", statusMessage: "Starting Deezer download" });
     const result = await this.runner(getStreamripBinary(), buildStreamripArgs(request), {
@@ -401,6 +419,9 @@ export class StreamripDeezerBackend implements DownloadBackend {
       ? result.classifiedErrors
       : classifyStreamripOutput(result.outputTail);
     const errorSummary = errors.map((error) => `${error.kind}: ${error.message}`).join("; ");
+    if (errors.some((error) => error.kind === "authentication") && producedFiles.length === 0) {
+      throw new ProviderAuthError("deezer", "Deezer ARL is invalid or expired.");
+    }
     if (result.exitCode !== 0 && producedFiles.length === 0) {
       throw new Error(
         `Streamrip exited with ${result.exitCode ?? "unknown"}: ${errorSummary || result.outputTail || "unknown error"}`,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import { after, beforeEach, test } from "node:test";
 
 import {
@@ -18,6 +19,7 @@ const { db, dbModule } = await openActiveSchemaDb();
 const {
   persistPreparedImportQuality,
   persistDownloadedProviderProvenance,
+  selectProvenanceOffer,
   reconcileImportedDownload,
   releaseGroupMbidFromJobContext,
   ensureDestAlbumArtworkForFileIds,
@@ -302,6 +304,82 @@ test("dest edition cover cache overwrites a leftover downloader cover.jpg", asyn
   );
 });
 
+test("a busy writer during cover materialization does not fail the import", async () => {
+  const destCover = Buffer.from("DEST-EDITION-COVER-BUSY");
+  const leftoverCover = Buffer.from("DOWNLOADER-COVER-BUSY");
+  const releaseMbid = "a1b2c3d4-e5f6-4789-a012-3456789abcde";
+  const albumDir = path.join(tempDir, "library", "Afterlife", "Busy Writer");
+  fs.mkdirSync(albumDir, { recursive: true });
+  const trackPath = path.join(albumDir, "01 - Busy Writer.m4a");
+  const destSidecar = path.join(albumDir, "cover.jpg");
+  fs.writeFileSync(trackPath, "fixture audio");
+  fs.writeFileSync(destSidecar, leftoverCover);
+
+  seedLibrary();
+  const fileId = seedTrackFile({
+    file_path: trackPath,
+    library_root: path.join(tempDir, "library"),
+    relative_path: path.join("Afterlife", "Busy Writer", "01 - Busy Writer.m4a"),
+    filename: "01 - Busy Writer.m4a",
+    extension: "m4a",
+  });
+  db.prepare(`UPDATE TrackFiles SET canonical_release_mbid = ? WHERE id = ?`).run(releaseMbid, fileId);
+
+  const { getMediaCoverPath } = await import("../metadata/media-cover-service.js");
+  const cachePath = getMediaCoverPath(releaseMbid, "Edition", "cover", ".jpg");
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+  fs.writeFileSync(cachePath, destCover);
+
+  const { sqliteWriteMutexWorkerData, SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY, forceReleaseSqliteWriteMutexOwner } = await import("../../database/sqlite-write-mutex.js");
+  const { listArtworkMaterializeFollowUps, recoverArtworkMaterializeFollowUps } = await import("../metadata/artwork-materialize-followup.js");
+  const workerData = sqliteWriteMutexWorkerData();
+  const worker = new Worker(new URL("../commands/worker/command-worker-bootstrap.mjs", import.meta.url), {
+    workerData: {
+      ...workerData,
+      mode: "hold",
+      name: "busy cover writer",
+      __entry: new URL("../../database/sqlite-write-mutex.fixture.ts", import.meta.url).href,
+    },
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("busy writer did not acquire the database lock")), 10_000);
+      worker.on("message", (message: { kind?: string }) => {
+        if (message?.kind === "acquired") {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      worker.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+
+    await ensureDestAlbumArtworkForFileIds([fileId]);
+    assert.equal(fs.readFileSync(destSidecar).toString(), leftoverCover.toString(),
+      "the import keeps the previous cover when the database write cannot commit");
+    const pending = listArtworkMaterializeFollowUps();
+    assert.equal(pending.some((item) => item.outputPath === destSidecar && item.reason === "database is locked"), true);
+
+    worker.postMessage("release");
+    await new Promise<void>((resolve, reject) => {
+      worker.once("exit", (code) => (code === 0 ? resolve() : reject(new Error(`busy writer exited ${code}`))));
+      worker.once("error", reject);
+    });
+    assert.deepEqual(await recoverArtworkMaterializeFollowUps(), []);
+    assert.equal(
+      crypto.createHash("sha256").update(fs.readFileSync(destSidecar)).digest("hex"),
+      crypto.createHash("sha256").update(destCover).digest("hex"),
+      "the follow-up writes the edition cover once the database is free",
+    );
+    assert.equal(listArtworkMaterializeFollowUps().some((item) => item.outputPath === destSidecar), false);
+  } finally {
+    await worker.terminate();
+    forceReleaseSqliteWriteMutexOwner(Number(workerData[SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY]));
+  }
+});
+
 test("dest edition artwork cache does not materialize cover.jpg when sidecars are disabled", async () => {
   const releaseMbid = "7bd48d27-e5ae-47e5-b4c2-424a8293839a";
   const albumDir = path.join(tempDir, "library", "Afterlife", "No Sidecar");
@@ -559,4 +637,86 @@ test("a composite plan's cross-provider track keeps its own provenance", () => {
   ).get(fileId) as { provider: string; provider_item_id: number };
   assert.equal(row.provider_item_id, tidalItem.id, "the offer is the authority on where the track came from");
   assert.equal(row.provider, "tidal", "and the file's provider is corrected to match it");
+});
+
+test("the same recording on two editions is the plan's own offer, not an ambiguous provenance", () => {
+  // Live shape: YouTube Ey_hgKCCYU4 accepted on two editions of recording a5ccdf6f.
+  // On 95475504 persist throws "2 exact offer contexts; refusing ambiguous provenance".
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile({ provider: "youtube-music", provider_id: "Ey_hgKCCYU4" });
+  db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type)
+    VALUES ('rg-shared', 'op-artist', 'Shared', 'Album')
+  `).run();
+  db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title)
+    VALUES ('rel-imported', 'rg-shared', 'op-artist', 'Imported'),
+           ('rel-other', 'rg-shared', 'op-artist', 'Other')
+  `).run();
+  db.prepare(`
+    INSERT INTO Recordings (mbid, title) VALUES ('rec-shared', 'Perfect Strangers (Club Mix)')
+  `).run();
+  const importedEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-imported'").get() as { id: number };
+  const otherEdition = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = 'rel-other'").get() as { id: number };
+  const recording = db.prepare("SELECT id FROM Recordings WHERE mbid = 'rec-shared'").get() as { id: number };
+  db.prepare(`
+    INSERT INTO Tracks (
+      mbid, album_edition_id, recording_id, medium_position, position, title, length_ms,
+      release_mbid, recording_mbid
+    ) VALUES
+      ('track-imported', ?, ?, 1, 3, 'Perfect Strangers (Club Mix)', 180000, 'rel-imported', 'rec-shared'),
+      ('track-other', ?, ?, 1, 1, 'Perfect Strangers (Club Mix)', 180000, 'rel-other', 'rec-shared')
+  `).run(importedEdition.id, recording.id, otherEdition.id, recording.id);
+  const item = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('youtube-music', 'track', 'Ey_hgKCCYU4', 'Perfect Strangers (Club Mix)', 'available')
+    RETURNING id
+  `).get() as { id: number };
+  const plannedVariant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (provider_item_id, variant_key, quality_class, availability)
+    VALUES (?, 'planned', 'lossy', 'available') RETURNING id
+  `).get(item.id) as { id: number };
+  const otherVariant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (provider_item_id, variant_key, quality_class, availability)
+    VALUES (?, 'other', 'lossy', 'available') RETURNING id
+  `).get(item.id) as { id: number };
+  const offers = [
+    {
+      provider: "youtube-music",
+      providerTrackId: "Ey_hgKCCYU4",
+      providerTrackItemId: item.id,
+      providerAudioVariantId: otherVariant.id,
+      canonicalTrackMbid: "track-other",
+      canonicalRecordingMbid: "rec-shared",
+    },
+    {
+      provider: "youtube-music",
+      providerTrackId: "Ey_hgKCCYU4",
+      providerTrackItemId: item.id,
+      providerAudioVariantId: plannedVariant.id,
+      canonicalTrackMbid: "track-imported",
+      canonicalRecordingMbid: "rec-shared",
+    },
+  ];
+
+  assert.throws(
+    () => selectProvenanceOffer("Ey_hgKCCYU4", [
+      { ...offers[0], canonicalRecordingMbid: "rec-other" },
+      offers[1],
+    ]),
+    /refusing ambiguous provenance/,
+  );
+
+  persistDownloadedProviderProvenance(
+    libraryId,
+    organizeResult(["Ey_hgKCCYU4"], { Ey_hgKCCYU4: fileId }),
+    offers,
+    25601,
+    "rel-imported",
+  );
+  const row = db.prepare(
+    "SELECT provider_item_id, source_audio_variant_id FROM TrackFiles WHERE id = ?",
+  ).get(fileId) as { provider_item_id: number; source_audio_variant_id: number };
+  assert.equal(row.provider_item_id, item.id);
+  assert.equal(row.source_audio_variant_id, plannedVariant.id);
 });

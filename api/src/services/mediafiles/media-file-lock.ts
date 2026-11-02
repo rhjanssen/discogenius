@@ -6,7 +6,17 @@ const DATA_KEY = "mediaFileLocks";
 export const MEDIA_FILE_LOCK_OWNER_KEY = "mediaFileLockOwner";
 const GLOBAL_KEY = "__discogeniusMediaFileLocks";
 const LANES = 256;
-const context = new AsyncLocalStorage<Set<number>>();
+// The store reaches every continuation created inside `run`, including work
+// that outlives the lock (timers, fire-and-forget promises). A released hold
+// must not count, or that work would skip the lock it no longer owns.
+type FileLockHold = { lanes: Set<number>; released: boolean; parent: FileLockHold | null };
+const context = new AsyncLocalStorage<FileLockHold>();
+
+function heldLanes(): Set<number> | undefined {
+  let hold = context.getStore() ?? null;
+  while (hold && hold.released) hold = hold.parent;
+  return hold?.lanes;
+}
 let owner = 0;
 
 function view(): Int32Array {
@@ -40,7 +50,7 @@ function lane(file: string): number {
 export async function acquireMediaFileLocks(files: string[]): Promise<() => void> {
   const locks = view();
   const token = currentOwner();
-  const held = context.getStore();
+  const held = heldLanes();
   const lanes = [...new Set(files.map(lane))].filter(index => !held?.has(index)).sort((a, b) => a - b);
   const acquired: number[] = [];
   const release = () => {
@@ -65,9 +75,11 @@ export async function acquireMediaFileLocks(files: string[]): Promise<() => void
 
 export async function withMediaFileLock<T>(file: string, run: () => Promise<T>): Promise<T> {
   const release = await acquireMediaFileLocks([file]);
-  const held = new Set(context.getStore());
-  held.add(lane(file));
-  try { return await context.run(held, run); } finally { release(); }
+  const parent = context.getStore() ?? null;
+  const lanes = new Set(heldLanes());
+  lanes.add(lane(file));
+  const hold: FileLockHold = { lanes, released: false, parent };
+  try { return await context.run(hold, run); } finally { hold.released = true; release(); }
 }
 
 /** Call only after the physical worker has exited, never on a logical timeout. */

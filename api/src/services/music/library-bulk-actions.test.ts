@@ -5,6 +5,7 @@ import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
 import { enableVideoLibraryForTests } from "../../test-support/active-schema-fixture.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-library-bulk-actions-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
@@ -176,7 +177,7 @@ function seedLibrary() {
             provider_track_item_id, provider_edition_member_id, provider_edition_match_id,
             track_id, recording_id,
             match_state, decision_source, confidence, method, matcher_version
-        ) VALUES (?, ?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', 1)
+        ) VALUES (?, ?, ?, 401, 301, 'accepted', 'automatic', 1, 'test', ${PROVIDER_TRACK_MATCHER_VERSION})
         RETURNING id
     `).get(trackItemId, memberId, releaseMatchId) as { id: number }).id;
     dbModule.db.prepare(`

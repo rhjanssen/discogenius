@@ -10,6 +10,7 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-deezer-"));
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.STREAMRIP_BIN = "rip-test";
+process.env.DISCOGENIUS_DEEZER_JITTER_MAX_MS = "0";
 
 const { DeezerProvider, deezerArtworkUrl } = await import("./deezer-provider.js");
 const {
@@ -298,6 +299,11 @@ test("Streamrip distinguishes DNS failure from unavailable tracks and missing qu
   assert.equal(quality[0]?.kind, "quality");
   assert.equal(quality[0]?.permanent, true);
   assert.equal(classifyStreamripOutput("ERROR track no longer available")[0]?.kind, "unavailable");
+  const pool = classifyStreamripOutput(
+    "ERROR Track 3135553 not available for stream on deezer: Connection pool is full",
+  );
+  assert.equal(pool[0]?.kind, "transient");
+  assert.equal(pool[0]?.permanent, false);
 });
 
 test("Streamrip exit zero still surfaces authentication and quality failures", async () => {

@@ -22,8 +22,10 @@ import type {
 import {
   clearDeezerCredentials,
   loadDeezerCredentials,
-  saveDeezerCredentials,
 } from "./deezer-auth.js";
+import type { DeezerGwFetchLike } from "./deezer-gw-api.js";
+import { validateAndSaveDeezerArl } from "./deezer-arl-health.js";
+import { readProviderAuthPublic, recordProviderAuthFailure } from "../provider-auth-state.js";
 import {
   deezerApiAllPages,
   deezerApiRequest,
@@ -247,7 +249,10 @@ export class DeezerProvider implements StreamingProvider {
   };
   readonly qualityMapping = deezerQualityMapping;
 
-  constructor(private readonly fetchImpl?: DeezerFetchLike) {}
+  constructor(
+    private readonly fetchImpl?: DeezerFetchLike,
+    private readonly gwFetch?: DeezerGwFetchLike,
+  ) {}
 
   isAuthenticated(): boolean {
     return Boolean(loadDeezerCredentials());
@@ -357,30 +362,42 @@ export class DeezerProvider implements StreamingProvider {
   }
 
   async saveCredentials(credentials: Record<string, unknown>): Promise<void> {
-    saveDeezerCredentials({ arl: String(credentials.arl || credentials.ARL || "") });
+    await validateAndSaveDeezerArl(String(credentials.arl || credentials.ARL || ""), this.gwFetch);
     syncDeezerStreamripConfig();
   }
 
   logout(): void {
     clearDeezerCredentials();
+    void recordProviderAuthFailure("deezer", "Deezer ARL verwijderd.").catch((error) => {
+      console.error("[DEEZER] Failed to record auth state:", error instanceof Error ? error.message : "unknown");
+    });
   }
 
   async getAuthStatus(): Promise<ProviderAuthStatus> {
-    const connected = this.isAuthenticated();
+    const state = readProviderAuthPublic("deezer");
+    const needsReauth = state?.status === "needs_reauth";
+    const connected = this.isAuthenticated() && !needsReauth;
+    const account = state?.accountLabel ?? null;
+    const message = [
+      needsReauth
+        ? "Deezer opnieuw koppelen"
+        : connected
+          ? (account ? `Deezer gekoppeld: ${account}` : "Deezer ARL is configured for downloads.")
+          : "Deezer catalog access is available; add an ARL cookie to download.",
+      state?.ageWarning,
+    ].filter(Boolean).join(" ");
     return {
       connected,
-      tokenExpired: false,
-      refreshTokenExpired: false,
+      tokenExpired: needsReauth,
+      refreshTokenExpired: needsReauth,
       hoursUntilExpiry: 0,
       canAccessShell: true,
       canAccessLocalLibrary: true,
       // The simple catalog API is public; ARL is needed only for acquisition.
       remoteCatalogAvailable: true,
       canAuthenticate: true,
-      user: null,
-      message: connected
-        ? "Deezer ARL is configured for downloads."
-        : "Deezer catalog access is available; add an ARL cookie to download.",
+      user: account ? { username: account } : null,
+      message,
     };
   }
 

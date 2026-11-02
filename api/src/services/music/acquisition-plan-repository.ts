@@ -1,5 +1,7 @@
 import type Database from "better-sqlite3";
 import type { OptimizedAcquisitionPlan } from "./acquisition-plan-optimizer.js";
+import { prepareAcquisitionPlanMutation } from "./acquisition-plan-ownership.js";
+import { acquisitionPlanSourceOrder } from "./acquisition-plan-identity.js";
 
 export interface LibraryReleaseCompletion {
   trackCount: number;
@@ -106,6 +108,9 @@ export class AcquisitionPlanRepository {
       : null;
 
     return this.db.transaction(() => {
+      prepareAcquisitionPlanMutation(this.db, (this.db.prepare(`
+        SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=?
+      `).all(input.libraryId, input.editionId) as Array<{ id: number }>).map(row => row.id));
       // Release the deferred reference before deleting the rows it points at.
       this.db.prepare(`
         UPDATE LibraryEditions
@@ -361,23 +366,7 @@ export class AcquisitionPlanRepository {
       input.computedAt || new Date().toISOString(),
     ) as { id: number };
 
-    const counts = new Map<number, number>();
-    for (const track of input.plan.tracks) {
-      counts.set(
-        track.providerEditionMatchId,
-        (counts.get(track.providerEditionMatchId) || 0) + 1,
-      );
-    }
-    // The user's preferred Provider Edition stays `primary` even when a
-    // secondary source contributes more tracks, so the next replan can still
-    // recover the preference from the plan.
-    const preferredSourceId = input.plan.preferredSourceId;
-    const preferredRank = (sourceId: number): number =>
-      preferredSourceId != null && sourceId === preferredSourceId ? 0 : 1;
-    const orderedSources = [...input.plan.sourceIds].sort((left, right) =>
-      preferredRank(left) - preferredRank(right)
-      || (counts.get(right) || 0) - (counts.get(left) || 0)
-      || left - right);
+    const orderedSources = acquisitionPlanSourceOrder(input.plan);
     const insertSource = this.db.prepare(`
       INSERT INTO AcquisitionPlanSources (
         plan_id, provider_edition_match_id, role, sort_order
@@ -458,8 +447,46 @@ export class AcquisitionPlanRepository {
     return removed;
   }
 
+  /** Expire derived coverage while retaining selected offers and waiting intent.
+   * Claimed downloads/imports own immutable snapshots and cannot be rewritten. */
+  expireRemovedTrackAssignments(trackId: number): void {
+    if (!this.db.inTransaction) throw new Error("Catalog plan invalidation requires an active transaction");
+    this.discardUnusedPlansForTrack(trackId);
+    const plans = this.db.prepare(`
+      SELECT DISTINCT plan.id, plan.library_id, plan.provider, edition.mbid AS release_mbid
+      FROM AcquisitionPlanTracks assignment
+      JOIN AcquisitionPlans plan ON plan.id = assignment.plan_id
+      JOIN AlbumEditions edition ON edition.id = plan.edition_id
+      WHERE assignment.track_id = ?
+    `).all(trackId) as Array<{ id: number; library_id: number; provider: string; release_mbid: string }>;
+    prepareAcquisitionPlanMutation(this.db, plans.map(plan => plan.id));
+    for (const plan of plans) {
+      this.db.prepare("DELETE FROM AcquisitionPlanTracks WHERE plan_id=? AND track_id=?").run(plan.id, trackId);
+      this.db.prepare(`UPDATE AcquisitionPlans SET state='stale',
+        coverage=(SELECT COUNT(*) FROM AcquisitionPlanTracks WHERE plan_id=?), updated_at=CURRENT_TIMESTAMP WHERE id=?
+      `).run(plan.id, plan.id);
+    }
+  }
+
   clear(libraryId: number, editionId: number): number {
     return this.db.transaction(() => {
+      prepareAcquisitionPlanMutation(this.db, (this.db.prepare(`
+        SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=?
+      `).all(libraryId, editionId) as Array<{ id: number }>).map(row => row.id));
+      const retained = this.db.prepare(`SELECT plan.id,plan.plan_key FROM LibraryEditions selected
+        JOIN AcquisitionPlans plan ON plan.library_id=selected.library_id
+          AND plan.edition_id=selected.edition_id AND plan.plan_key=selected.preferred_plan_key
+        JOIN AlbumEditions edition ON edition.id=selected.edition_id
+        LEFT JOIN LibraryAlbums album ON album.library_id=selected.library_id AND album.release_group_id=edition.release_group_id
+        WHERE selected.library_id=? AND selected.edition_id=?
+          AND (selected.plan_selection_mode='manual' OR album.locked=1)
+      `).get(libraryId,editionId) as {id:number;plan_key:string} | undefined;
+      if (retained) {
+        this.db.prepare("DELETE FROM AcquisitionPlanTracks WHERE plan_id=?").run(retained.id);
+        this.db.prepare("UPDATE AcquisitionPlans SET state='unavailable',coverage=0,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(retained.id);
+        return this.db.prepare("DELETE FROM AcquisitionPlans WHERE library_id=? AND edition_id=? AND id != ?")
+          .run(libraryId,editionId,retained.id).changes;
+      }
       this.db.prepare(`
         UPDATE LibraryEditions
         SET preferred_plan_key = NULL, plan_selection_mode = 'auto',

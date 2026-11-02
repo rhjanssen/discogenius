@@ -23,6 +23,13 @@ import {
   splitReleaseTypeValues,
   writeMediaTagsWithTagLib,
 } from "./media-tag-io.js";
+import {
+  clearInPlaceTagCrashHooks,
+  crashNextInPlaceTagWrite,
+  hasPendingInPlaceTagUndo,
+  isInPlaceTagCrash,
+  recoverInPlaceTagUndos,
+} from "./in-place-tag-undo.js";
 
 const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { windowsHide: true }).status === 0;
 
@@ -377,7 +384,7 @@ for (const version of [3, 4]) {
   });
 }
 
-test("M4A writes each release type as its own freeform atom and leaves genre whole", { skip: !hasFfmpeg }, async () => {
+test("M4A writes each release type as its own freeform atom and splits a Picard genre list", { skip: !hasFfmpeg }, async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-m4a-release-type-"));
   try {
     const filePath = path.join(tempDir, "sample.m4a");
@@ -393,12 +400,13 @@ test("M4A writes each release type as its own freeform atom and leaves genre who
     try {
       const tag = file.getTag(TagTypes.Apple, false) as Mpeg4AppleTag;
       assert.deepEqual(tag.getItunesStrings("com.apple.iTunes", "MusicBrainz Album Type"), ["album", "remix"]);
-      assert.equal(
-        tag.getFirstQuickTimeData(
+      // Picard writes one genre atom per value. "/" is the ID3v2.3 joiner, not part of the name.
+      assert.deepEqual(
+        tag.getQuickTimeData(
           ByteVector.fromString("\xa9gen", StringType.Latin1),
           Mpeg4AppleDataBoxFlagType.ContainsText,
-        )?.toString(StringType.UTF8),
-        genre,
+        ).map((data) => data.toString(StringType.UTF8)),
+        genre.split(" / "),
       );
     } finally {
       file.dispose();
@@ -429,3 +437,236 @@ test("M4A ISRC writes retain the Apple code when it belongs to the complete cano
     assert.equal(decodedAudioHash(filePath), beforeHash);
   } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
 });
+
+function topLevelAtoms(buffer: Buffer): Array<{ type: string; offset: number; size: number; headerSize: number }> {
+  const atoms: Array<{ type: string; offset: number; size: number; headerSize: number }> = [];
+  let position = 0;
+  while (position + 8 <= buffer.length) {
+    let size = buffer.readUInt32BE(position);
+    let headerSize = 8;
+    if (size === 1) {
+      size = Number(buffer.readBigUInt64BE(position + 8));
+      headerSize = 16;
+    } else if (size === 0) {
+      size = buffer.length - position;
+    }
+    atoms.push({
+      type: buffer.toString("latin1", position + 4, position + 8),
+      offset: position,
+      size,
+      headerSize,
+    });
+    position += size;
+  }
+  return atoms;
+}
+
+function mdatPayload(filePath: string): { offset: number; payload: Buffer } {
+  const buffer = fs.readFileSync(filePath);
+  const mdat = topLevelAtoms(buffer).find((atom) => atom.type === "mdat");
+  assert.ok(mdat, `${filePath} has no mdat`);
+  return {
+    offset: mdat.offset,
+    payload: Buffer.from(buffer.subarray(mdat.offset + mdat.headerSize, mdat.offset + mdat.size)),
+  };
+}
+
+/** Grow the free atom that sits in front of mdat and shift chunk offsets by the same amount. */
+function expandFreeBeforeMdat(filePath: string, extra: number): void {
+  const buffer = fs.readFileSync(filePath);
+  const atoms = topLevelAtoms(buffer);
+  const mdat = atoms.find((atom) => atom.type === "mdat");
+  assert.ok(mdat);
+  const free = [...atoms].reverse().find((atom) => (atom.type === "free" || atom.type === "skip") && atom.offset + atom.size <= mdat.offset);
+  assert.ok(free, "expected a free atom before mdat");
+  const grown = Buffer.alloc(buffer.length + extra);
+  const insertAt = free.offset + free.size;
+  buffer.copy(grown, 0, 0, insertAt);
+  buffer.copy(grown, insertAt + extra, insertAt);
+  grown.writeUInt32BE(free.size + extra, free.offset);
+  const shifted = walkChunkOffsets(grown, (value) => (value >= BigInt(mdat.offset) ? value + BigInt(extra) : value));
+  assert.ok(shifted > 0, "expected chunk offsets to shift");
+  fs.writeFileSync(filePath, grown);
+}
+
+function walkChunkOffsets(buffer: Buffer, update: (value: bigint) => bigint): number {
+  let updates = 0;
+  const visit = (start: number, end: number): void => {
+    let position = start;
+    while (position + 8 <= end) {
+      let size = buffer.readUInt32BE(position);
+      let headerSize = 8;
+      if (size === 1) {
+        size = Number(buffer.readBigUInt64BE(position + 8));
+        headerSize = 16;
+      } else if (size === 0) size = end - position;
+      const type = buffer.toString("latin1", position + 4, position + 8);
+      const boxEnd = position + size;
+      if (type === "stco" || type === "co64") {
+        const body = position + headerSize;
+        const count = buffer.readUInt32BE(body + 4);
+        const width = type === "co64" ? 8 : 4;
+        for (let index = 0; index < count; index += 1) {
+          const at = body + 8 + index * width;
+          const value = type === "co64" ? buffer.readBigUInt64BE(at) : BigInt(buffer.readUInt32BE(at));
+          const next = update(value);
+          if (next !== value) {
+            if (type === "co64") buffer.writeBigUInt64BE(next, at);
+            else buffer.writeUInt32BE(Number(next), at);
+            updates += 1;
+          }
+        }
+      } else if (["moov", "trak", "mdia", "minf", "stbl", "udta", "edts"].includes(type)) {
+        visit(position + headerSize, boxEnd);
+      } else if (type === "meta") {
+        visit(position + headerSize + 4, boxEnd);
+      } else if (type === "stsd") {
+        visit(position + headerSize + 8, boxEnd);
+      }
+      position = boxEnd;
+    }
+  };
+  visit(0, buffer.length);
+  return updates;
+}
+
+test("MP4 tag-only writes keep mdat bytes and offset when the layout has room", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-mp4-inplace-"));
+  try {
+    const mdatFirst = path.join(tempDir, "mdat-first.m4a");
+    generateAudio(mdatFirst, ["-c:a", "aac", "-f", "mp4"]);
+    await assertMp4AudioStaysPut(mdatFirst);
+
+    const fastStart = path.join(tempDir, "faststart.m4a");
+    const generated = spawnSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+      "-t", "1", "-c:a", "aac", "-movflags", "+faststart", "-f", "mp4", fastStart,
+    ], { windowsHide: true, encoding: "utf-8" });
+    assert.equal(generated.status, 0, generated.stderr);
+    // The stock 8-byte free cannot absorb TagLib's first-write padding. A free
+    // atom large enough to cover that growth must keep mdat at its offset.
+    expandFreeBeforeMdat(fastStart, 4096);
+    await assertMp4AudioStaysPut(fastStart);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+async function assertMp4AudioStaysPut(filePath: string): Promise<void> {
+  const before = mdatPayload(filePath);
+  const inode = fs.statSync(filePath).ino;
+  const first = await writeMediaTagsWithTagLib(filePath, { title: "In place", artist: "Kept Audio" });
+  assert.equal(first.success, true, first.error);
+  const after = mdatPayload(filePath);
+  assert.equal(after.offset, before.offset, `${path.basename(filePath)} mdat moved`);
+  assert.ok(after.payload.equals(before.payload), `${path.basename(filePath)} mdat bytes changed`);
+  assert.equal(fs.statSync(filePath).ino, inode, `${path.basename(filePath)} was replaced`);
+  const second = await writeMediaTagsWithTagLib(filePath, { title: "Still in place" });
+  assert.equal(second.success, true, second.error);
+  const rewritten = mdatPayload(filePath);
+  assert.equal(rewritten.offset, before.offset, `${path.basename(filePath)} mdat moved on the second write`);
+  assert.ok(rewritten.payload.equals(before.payload));
+  assert.equal(fs.statSync(filePath).ino, inode);
+  const tagged = TagLibFile.createFromPath(filePath, undefined, ReadStyle.None);
+  try {
+    assert.equal(tagged.tag.title, "Still in place");
+    assert.deepEqual(tagged.tag.performers, ["Kept Audio"]);
+  } finally {
+    tagged.dispose();
+  }
+  assert.deepEqual(fs.readdirSync(path.dirname(filePath)).filter((name) => name.startsWith(".discogenius-")), []);
+}
+
+test("TagLib rewrites FLAC/MP3 tags in place when padding fits and keeps audio intact", {
+  skip: !hasFfmpeg,
+}, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-taglib-inplace-"));
+  try {
+    for (const format of formats.filter((item) => item.extension === ".flac" || item.extension === ".mp3")) {
+      const filePath = path.join(tempDir, `inplace${format.extension}`);
+      generateAudio(filePath, format.codec);
+      const beforeHash = decodedAudioHash(filePath);
+      // First write adds padding (may need the copy path).
+      assert.equal((await writeMediaTagsWithTagLib(filePath, formatTags(format.extension))).success, true);
+      const inode = fs.statSync(filePath).ino;
+      const size = fs.statSync(filePath).size;
+      const second = await writeMediaTagsWithTagLib(filePath, { title: "Short" });
+      assert.equal(second.success, true);
+      assert.equal(fs.statSync(filePath).ino, inode, `${format.extension} was replaced instead of updated in place`);
+      assert.equal(fs.statSync(filePath).size, size);
+      assert.equal(decodedAudioHash(filePath), beforeHash, `${format.extension} audio changed`);
+      const tagged = TagLibFile.createFromPath(filePath, undefined, ReadStyle.None);
+      try { assert.equal(tagged.tag.title, "Short"); } finally { tagged.dispose(); }
+      assert.deepEqual(fs.readdirSync(tempDir).filter((name) => name.startsWith(".discogenius-")), []);
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("a killed in-place MP4 tail write restores the original file on startup", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-mp4-tail-crash-"));
+  const filePath = path.join(tempDir, "mdat-first.m4a");
+  try {
+    generateAudio(filePath, ["-c:a", "aac", "-f", "mp4"]);
+    await assertKilledInPlaceWriteRestores(filePath, { title: "Torn moov" });
+  } finally {
+    clearInPlaceTagCrashHooks();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("a killed in-place MP4 prefix write restores the original file on startup", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-mp4-prefix-crash-"));
+  const filePath = path.join(tempDir, "faststart.m4a");
+  try {
+    const generated = spawnSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+      "-t", "1", "-c:a", "aac", "-movflags", "+faststart", "-f", "mp4", filePath,
+    ], { windowsHide: true, encoding: "utf-8" });
+    assert.equal(generated.status, 0, generated.stderr);
+    expandFreeBeforeMdat(filePath, 4096);
+    await assertKilledInPlaceWriteRestores(filePath, { title: "Torn prefix" });
+  } finally {
+    clearInPlaceTagCrashHooks();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("a killed in-place FLAC tag write restores the original file on startup", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-flac-crash-"));
+  const filePath = path.join(tempDir, "sample.flac");
+  try {
+    generateAudio(filePath, ["-c:a", "flac"]);
+    // The first write adds padding and may replace the file. The second is in place.
+    assert.equal((await writeMediaTagsWithTagLib(filePath, formatTags(".flac"))).success, true);
+    await assertKilledInPlaceWriteRestores(filePath, { TITLE: "Torn header" });
+  } finally {
+    clearInPlaceTagCrashHooks();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+/** Death after the patched bytes are fsynced and before verify must not leave
+ * a torn file or a backup once recovery has run. */
+async function assertKilledInPlaceWriteRestores(filePath: string, tags: Record<string, string>): Promise<void> {
+  const snapshot = fs.readFileSync(filePath);
+  const inode = fs.statSync(filePath).ino;
+  crashNextInPlaceTagWrite();
+  await assert.rejects(
+    () => writeMediaTagsWithTagLib(filePath, tags),
+    (error: unknown) => isInPlaceTagCrash(error),
+  );
+  assert.equal(fs.statSync(filePath).ino, inode, "the killed write replaced the file instead of patching it");
+  assert.equal(hasPendingInPlaceTagUndo(), true);
+  assert.ok(fs.readdirSync(path.dirname(filePath)).some((name) => name.startsWith(".discogenius-tag-undo-")));
+  const torn = fs.readFileSync(filePath);
+  assert.ok(!torn.equals(snapshot), "the crash hook ran before any byte changed");
+  assert.deepEqual(await recoverInPlaceTagUndos(), []);
+  assert.ok(fs.readFileSync(filePath).equals(snapshot), "recovery did not restore the pre-write bytes");
+  assert.equal(fs.statSync(filePath).ino, inode);
+  assert.equal(hasPendingInPlaceTagUndo(), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(filePath)).filter((name) => name.startsWith(".discogenius-")), []);
+}

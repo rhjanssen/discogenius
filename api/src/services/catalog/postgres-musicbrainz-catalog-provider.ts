@@ -31,12 +31,17 @@ import type {
   CatalogUpcLookupResult,
   CatalogIsrcLookupResult,
   CatalogArtistCreditReleaseGroup,
+  CatalogArtistLocaleAlias,
+  CatalogTrackArtistCredit,
   CatalogVideoRecording,
   LidarrArtist,
   LidarrReleaseGroupDetail,
   LidarrRelease,
 } from "./catalog-provider.js";
 import { CATALOG_DETAIL_BATCH_SIZE, releaseGroupsFromArtist } from "./catalog-provider.js";
+
+/** Track MBIDs per credit query; one indexed lookup per MBID. */
+const TRACK_CREDIT_BATCH_SIZE = 500;
 import type { MusicBrainzReleaseGroupForMatching } from "../metadata/provider-release-group-matcher.js";
 import {
   mapMbArtistToLidarr,
@@ -351,18 +356,26 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       track_gid: string; track_pos: number; track_number: string | null; track_name: string; track_length: number | null;
       recording_gid: string; recording_name: string; recording_length: number | null; video: boolean;
       recording_comment: string | null; isrcs: string | null;
+      old_track_ids: string[]; old_recording_ids: string[];
+      script_iso?: string | null; language_iso?: string | null; amazon_asin?: string | null;
     }>(
       `SELECT
           r.release_group AS rg_id,
           r.id AS edition_id, r.gid AS release_gid, r.name AS release_name, rst.name AS status,
           r.barcode, r.comment AS release_comment,
+          scr.iso_code AS script_iso, lang.iso_code_3 AS language_iso, rm.amazon_asin AS amazon_asin,
           m.position AS medium_pos, mf.name AS format, m.name AS medium_name,
           t.gid AS track_gid, t.position AS track_pos, t.number AS track_number, t.name AS track_name, t.length AS track_length,
           rec.gid AS recording_gid, rec.name AS recording_name, rec.length AS recording_length, rec.video,
           rec.comment AS recording_comment,
+          ARRAY(SELECT redirect.gid::text FROM track_gid_redirect redirect WHERE redirect.new_id=t.id ORDER BY redirect.gid) AS old_track_ids,
+          ARRAY(SELECT redirect.gid::text FROM recording_gid_redirect redirect WHERE redirect.new_id=rec.id ORDER BY redirect.gid) AS old_recording_ids,
           (SELECT string_agg(i.isrc::text, ',') FROM isrc i WHERE i.recording = rec.id) AS isrcs
        FROM release r
        LEFT JOIN release_status rst ON rst.id = r.status
+       LEFT JOIN script scr ON scr.id = r.script
+       LEFT JOIN language lang ON lang.id = r.language
+       LEFT JOIN release_meta rm ON rm.id = r.id
        JOIN medium m ON m.release = r.id
        LEFT JOIN medium_format mf ON mf.id = m.format
        JOIN track t ON t.medium = m.id AND t.is_data_track = false
@@ -400,22 +413,27 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       releaseCountries.set(row.release_gid, list);
     }
 
-    const labelRows = await this.query<{ release_gid: string; label_name: string }>(
-      `SELECT r.gid AS release_gid, lab.name AS label_name
+    const labelRows = await this.query<{ release_gid: string; label_name: string | null; catalog_number: string | null }>(
+      `SELECT r.gid AS release_gid, lab.name AS label_name, rl.catalog_number AS catalog_number
        FROM release r
        JOIN release_label rl ON rl.release = r.id
-       JOIN label lab ON lab.id = rl.label
+       LEFT JOIN label lab ON lab.id = rl.label
        WHERE r.release_group = ANY($1::int[])
        ORDER BY r.gid, rl.id`,
       [ids],
     );
-    const labelsByRelease = new Map<string, Array<{ label?: { name?: string } }>>();
+    const labelsByRelease = new Map<string, Array<{ label?: { name?: string }; catalog_number?: string | null }>>();
     for (const row of labelRows) {
       const list = labelsByRelease.get(row.release_gid) ?? [];
       const name = String(row.label_name || "").trim();
-      if (name && !list.some((entry) => entry.label?.name === name)) {
-        list.push({ label: { name } });
-      }
+      const catalog = String(row.catalog_number || "").trim();
+      if (!name && !catalog) continue;
+      const key = `${name}\0${catalog}`;
+      if (list.some((entry) => `${entry.label?.name || ""}\0${entry.catalog_number || ""}` === key)) continue;
+      list.push({
+        ...(name ? { label: { name } } : {}),
+        ...(catalog ? { catalog_number: catalog } : {}),
+      });
       labelsByRelease.set(row.release_gid, list);
     }
 
@@ -453,6 +471,9 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           // All ISO territories for this release (sorted later in mapping).
           country: (releaseCountries.get(row.release_gid) || []).join(","),
           barcode: row.barcode,
+          asin: String(row.amazon_asin || "").trim() || null,
+          script: String(row.script_iso || "").trim() || null,
+          language: String(row.language_iso || "").trim() || null,
           date: releaseDate.get(row.release_gid) ?? null,
           disambiguation: row.release_comment || null,
           "label-info": labelsByRelease.get(row.release_gid) ?? [],
@@ -476,12 +497,14 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       }
       const track: MbTrack = {
         id: row.track_gid,
+        oldIds: row.old_track_ids,
         number: row.track_number ?? String(row.track_pos),
         position: row.track_pos,
         title: row.track_name,
         length: row.track_length,
         recording: {
           id: row.recording_gid,
+          oldIds: row.old_recording_ids,
           title: row.recording_name,
           length: row.recording_length,
           video: row.video,
@@ -552,7 +575,9 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     }
 
     // Official MB genres are sparse. The folksonomy (`release_group_tag`) is
-    // what Servarr/Lidarr expose as Genres and what files should embed.
+    // what Servarr/Lidarr expose as Genres and what files embed, but only the
+    // tags MusicBrainz recognises as genres: user tags such as
+    // "need composers" or "seen live" are not genres (Picard's genre filter).
     const tagRows = await this.query<{ rg_id: number; tag_name: string }>(
       `SELECT rg.id AS rg_id, t.name AS tag_name
        FROM release_group rg
@@ -561,6 +586,10 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
        WHERE rg.id = ANY($1::int[])
          AND COALESCE(rgt.count, 0) > 0
          AND t.name NOT LIKE '%:%'
+         AND (
+           EXISTS (SELECT 1 FROM genre g WHERE lower(g.name) = lower(t.name))
+           OR EXISTS (SELECT 1 FROM genre_alias ga WHERE lower(ga.name) = lower(t.name))
+         )
        ORDER BY rg.id, rgt.count DESC, t.name`,
       [ids],
     );
@@ -642,6 +671,17 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
     return mapMbRecordingToCatalog(mbRecording);
   }
 
+  async getRelationshipBundle(recordingMbids: string[], releaseMbids: string[]) {
+    const { fetchRelationshipBundle } = await import("./musicbrainz-relationship-query.js");
+    // this.query constrains its row type to pg.QueryResultRow. The relationship
+    // reader asks for its own row shapes, so bridge the two with one cast.
+    return fetchRelationshipBundle(
+      async <T>(sql: string, values: unknown[]) => (await this.query(sql, values)) as T[],
+      recordingMbids,
+      releaseMbids,
+    );
+  }
+
   async lookupByUPC(upc: string): Promise<CatalogUpcLookupResult> {
     const normalized = String(upc || "").replace(/[^0-9]/g, "");
     if (!normalized) return { upc, releases: [] };
@@ -691,6 +731,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
       d: number | null;
       disambiguation: string | null;
       credit_artist_gid: string;
+      credit_artist_name: string;
+      credit_artist_sort_name: string | null;
       credit_name: string;
       join_phrase: string | null;
       credit_position: number;
@@ -711,6 +753,8 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
           rgm.first_release_date_day AS d,
           rg.comment AS disambiguation,
           credit_artist.gid AS credit_artist_gid,
+          credit_artist.name AS credit_artist_name,
+          credit_artist.sort_name AS credit_artist_sort_name,
           acn.name AS credit_name,
           acn.join_phrase,
           acn.position AS credit_position
@@ -745,10 +789,104 @@ export class PostgresMusicBrainzCatalogProvider implements CatalogProvider {
         artistId: row.credit_artist_gid,
         name: row.credit_name,
         joinPhrase: row.join_phrase || "",
+        artistName: row.credit_artist_name || null,
+        artistSortName: row.credit_artist_sort_name || null,
       });
     }
 
     return Array.from(groups.values());
+  }
+
+  /**
+   * Track-level artist credits (what the release prints for each track), in
+   * bounded batches. A redirected (merged) track MBID resolves to its current
+   * track and is returned under the MBID the caller asked for.
+   */
+  async getTrackArtistCredits(trackMbids: string[]): Promise<Map<string, CatalogTrackArtistCredit[]>> {
+    const result = new Map<string, CatalogTrackArtistCredit[]>();
+    const wanted = Array.from(new Set(trackMbids
+      .map((mbid) => String(mbid || "").trim().toLowerCase())
+      .filter((mbid) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(mbid))));
+    for (let offset = 0; offset < wanted.length; offset += TRACK_CREDIT_BATCH_SIZE) {
+      const batch = wanted.slice(offset, offset + TRACK_CREDIT_BATCH_SIZE);
+      const rows = await this.query<{
+        requested_gid: string; position: number; artist_gid: string; artist_name: string;
+        artist_sort_name: string | null; credited_name: string; join_phrase: string | null;
+      }>(
+        `WITH requested AS (
+           SELECT t.gid::text AS requested_gid, t.artist_credit
+           FROM track t WHERE t.gid = ANY($1::uuid[])
+           UNION ALL
+           SELECT redirect.gid::text AS requested_gid, t.artist_credit
+           FROM track_gid_redirect redirect JOIN track t ON t.id = redirect.new_id
+           WHERE redirect.gid = ANY($1::uuid[])
+         )
+         SELECT requested.requested_gid, acn.position, a.gid::text AS artist_gid, a.name AS artist_name,
+                a.sort_name AS artist_sort_name, acn.name AS credited_name, acn.join_phrase
+         FROM requested
+         JOIN artist_credit_name acn ON acn.artist_credit = requested.artist_credit
+         JOIN artist a ON a.id = acn.artist
+         ORDER BY requested.requested_gid, acn.position`,
+        [batch],
+      );
+      for (const row of rows) {
+        const key = String(row.requested_gid).toLowerCase();
+        const list = result.get(key) ?? [];
+        list.push({
+          artistId: row.artist_gid,
+          artistName: String(row.artist_name || row.credited_name || "").trim(),
+          artistSortName: row.artist_sort_name ? String(row.artist_sort_name).trim() || null : null,
+          creditedName: String(row.credited_name || row.artist_name || "").trim(),
+          joinPhrase: String(row.join_phrase ?? ""),
+        });
+        result.set(key, list);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Locale aliases of artists, in bounded batches. Ended aliases are skipped
+   * (Picard ignores them too); aliases without a locale cannot be chosen by
+   * locale and are not returned.
+   */
+  async getArtistLocaleAliases(artistMbids: string[]): Promise<Map<string, CatalogArtistLocaleAlias[]>> {
+    const result = new Map<string, CatalogArtistLocaleAlias[]>();
+    const wanted = Array.from(new Set(artistMbids
+      .map((mbid) => String(mbid || "").trim().toLowerCase())
+      .filter((mbid) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(mbid))));
+    for (let offset = 0; offset < wanted.length; offset += TRACK_CREDIT_BATCH_SIZE) {
+      const batch = wanted.slice(offset, offset + TRACK_CREDIT_BATCH_SIZE);
+      const rows = await this.query<{
+        artist_gid: string; name: string; sort_name: string | null; locale: string;
+        primary_for_locale: boolean; type_name: string | null;
+      }>(
+        `SELECT a.gid::text AS artist_gid, aa.name, aa.sort_name, aa.locale, aa.primary_for_locale,
+                aat.name AS type_name
+         FROM artist a
+         JOIN artist_alias aa ON aa.artist = a.id
+         LEFT JOIN artist_alias_type aat ON aat.id = aa.type
+         WHERE a.gid = ANY($1::uuid[])
+           AND aa.locale IS NOT NULL AND aa.locale <> ''
+           AND NOT aa.ended
+         ORDER BY a.gid, aa.locale, aa.primary_for_locale DESC, aa.id`,
+        [batch],
+      );
+      for (const mbid of batch) result.set(mbid, []);
+      for (const row of rows) {
+        const key = String(row.artist_gid).toLowerCase();
+        const name = String(row.name || "").trim();
+        if (!name) continue;
+        result.get(key)?.push({
+          name,
+          sortName: row.sort_name ? String(row.sort_name).trim() || null : null,
+          locale: String(row.locale).trim(),
+          primaryForLocale: row.primary_for_locale === true,
+          type: row.type_name ? String(row.type_name) : null,
+        });
+      }
+    }
+    return result;
   }
 
   // ---- video recordings (canonical MB identity for is_video=1 rows) ----

@@ -31,6 +31,11 @@ test("command registry exposes canonical command and task metadata", () => {
   const databaseBackup = getCommandDefinition("BackupDatabase");
   assert.equal(databaseBackup.name, "Backup Database");
   assert.equal(databaseBackup.requiresDiskAccess, true);
+  assert.equal(databaseBackup.diskScope, undefined);
+  const retagArtist = getCommandDefinition("RetagArtist");
+  assert.equal(retagArtist.requiresDiskAccess, false);
+  assert.equal(retagArtist.diskScope, "folder");
+  assert.equal(getCommandDefinition("ImportDownload").diskScope, "folder");
   assert.equal(databaseBackup.isTypeExclusive, true);
   assert.ok(commandExecutors.BackupDatabase);
   assert.ok(NON_DOWNLOAD_COMMAND_NAMES.includes("BackupDatabase"));

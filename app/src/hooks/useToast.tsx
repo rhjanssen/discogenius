@@ -11,12 +11,13 @@ import { TOASTER_ID } from "@/components/ui/toaster";
 interface ToastOptions {
   title?: string;
   description?: string;
-  variant?: "default" | "destructive";
+  variant?: "default" | "destructive" | "warning";
   action?: React.ReactNode;
 }
 
 function mapVariantToIntent(variant?: string): ToastIntent {
   if (variant === "destructive") return "error";
+  if (variant === "warning") return "warning";
   return "success";
 }
 
@@ -24,8 +25,8 @@ export function useToast() {
   const { dispatchToast } = useToastController(TOASTER_ID);
 
   const toast = React.useCallback((options: ToastOptions) => {
-    // Only show error toasts as requested by user
-    if (options.variant !== "destructive") {
+    // Success toasts stay hidden. Errors, and provider-login recovery, show.
+    if (options.variant !== "destructive" && options.variant !== "warning") {
       return;
     }
 
@@ -35,7 +36,7 @@ export function useToast() {
         {options.title && <ToastTitle>{options.title}</ToastTitle>}
         {options.description && <ToastBody>{options.description}</ToastBody>}
       </Toast>,
-      { intent, timeout: 5000 }
+      { intent, timeout: options.variant === "warning" ? 10000 : 5000 }
     );
   }, [dispatchToast]);
 

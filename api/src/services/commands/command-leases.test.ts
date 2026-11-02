@@ -67,33 +67,39 @@ test("progress bursts stay in memory and the final outcome preserves the latest 
     assert.equal(JSON.parse(stored.payload).description, "Tagged 99 files");
 });
 
-test("download imports and library file mutations share the disk exclusion rule", async () => {
+test("folder-scoped rename does not block an import or another retag", async () => {
     const { CommandManager } = await import("./command.js");
     const { DOWNLOAD_OR_IMPORT_COMMAND_NAMES } = await import("./command-names.js");
     const rename = queueNamedCommand(queueModule.CommandNames.RenameArtist, { artistId: "artist" });
     claim(rename, "rename-owner", new Date(), 60_000);
     const download = queueNamedCommand(queueModule.CommandNames.DownloadAlbum, { provider: "tidal", providerId: "album" });
     claim(download, "download-owner", new Date(), 60_000);
-    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), false);
-    queueModule.CommandQueueManager.complete(rename, "rename-owner");
     assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
     assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), false, "a reserved import cannot dispatch twice");
     assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagArtist, {}, null, {
         excludeRunningTypes: DOWNLOAD_OR_IMPORT_COMMAND_NAMES,
-    }).canStart, false, "the scheduler must see an import even when it excludes provider downloads");
+    }).canStart, true, "a folder-scoped retag keeps moving while an import runs");
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.BackupDatabase).canStart, false);
     queueModule.CommandQueueManager.complete(download, "download-owner");
-    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagArtist).canStart, true);
+    queueModule.CommandQueueManager.complete(rename, "rename-owner");
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.BackupDatabase).canStart, true);
 });
 
-test("import handoffs yield the disk slot to eligible interactive retags without waiting on delayed retries", () => {
+test("import handoffs yield to an interactive global disk command, not to a retag", () => {
     const download = queueNamedCommand(queueModule.CommandNames.DownloadAlbum, { provider: "tidal", providerId: "album" });
     claim(download, "download-owner", new Date(), 60_000);
     const retag = queueNamedCommand(queueModule.CommandNames.RetagFiles, { ids: [1] });
     dbModule.db.prepare("UPDATE commands SET trigger = 1, priority = 2 WHERE id = ?").run(retag);
-    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), false);
-    assert.notEqual(queueModule.CommandQueueManager.get(download)?.progress_phase, "importing");
-    dbModule.db.prepare("UPDATE commands SET retry_after = '2999-01-01' WHERE id = ?").run(retag);
     assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
+    queueModule.CommandQueueManager.complete(download, "download-owner");
+    const again = queueNamedCommand(queueModule.CommandNames.DownloadAlbum, { provider: "tidal", providerId: "album-2" });
+    claim(again, "download-owner-2", new Date(), 60_000);
+    const move = queueNamedCommand(queueModule.CommandNames.MoveArtist, { artistId: "artist" });
+    dbModule.db.prepare("UPDATE commands SET trigger = 1, priority = 2 WHERE id = ?").run(move);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(again, "download-owner-2"), false);
+    assert.notEqual(queueModule.CommandQueueManager.get(again)?.progress_phase, "importing");
+    dbModule.db.prepare("UPDATE commands SET retry_after = '2999-01-01' WHERE id = ?").run(move);
+    assert.equal(queueModule.CommandQueueManager.claimImportForExecution(again, "download-owner-2"), true);
 });
 
 test("scheduled retags do not hold back a completed download import", () => {
@@ -136,9 +142,11 @@ test("an aged import handoff gets the next disk slot ahead of queued manual main
     const retag = queueNamedCommand(queueModule.CommandNames.RetagFiles, { ids: [1] });
     dbModule.db.prepare("UPDATE commands SET trigger = 1, priority = 2 WHERE id = ?").run(retag);
     const { CommandManager } = await import("./command.js");
-    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagFiles, { ids: [1] }).canStart, false);
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagFiles, { ids: [1] }).canStart, true);
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.BackupDatabase).canStart, false);
     assert.equal(queueModule.CommandQueueManager.claimImportForExecution(download, "download-owner"), true);
-    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagFiles, { ids: [1] }).canStart, false, "the admitted import keeps disk exclusivity");
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.RetagFiles, { ids: [1] }).canStart, true, "an admitted import does not take the global disk slot");
+    assert.equal(CommandManager.canStartCommand(queueModule.CommandNames.BackupDatabase).canStart, false, "global maintenance still waits for the import");
 });
 
 test("interactive scans blocked by running catalog work do not strand import handoffs", () => {
@@ -679,6 +687,13 @@ test("planned shutdown drains a running work unit and refuses new admission", as
     const fixtureUrl = new URL(`./worker/command-worker-liveness.fixture${fixtureExt}`, import.meta.url);
     poolModule.CommandWorkerPool.configureTestWorkerEntry(fixtureUrl.href);
     poolModule.CommandWorkerPool.start();
+    // Cold tsx/module startup can exceed the short drain deadline on Windows.
+    // Complete one unit first so this checks an executing worker's drain,
+    // rather than timing the loader against a production-independent 3s limit.
+    const warmId = queueCommand("complete", 0);
+    const warmJob = claim(warmId, "drain-warmup", new Date(), 10_000);
+    await poolModule.CommandWorkerPool.run(warmJob, { leaseMs: 10_000, heartbeatMs: 50 });
+    assert.equal(queueModule.CommandQueueManager.complete(warmId, "drain-warmup"), true);
     const id = queueCommand("complete", 80);
     const job = claim(id, "drain-owner", new Date(), 2_000);
     const running = poolModule.CommandWorkerPool.run(job, { leaseMs: 2_000, heartbeatMs: 50 });

@@ -23,6 +23,9 @@ interface PlanHeader {
   release_group_mbid: string;
   album_title: string;
   artist_name: string;
+  coverage: number;
+  target_track_count: number;
+  canonical_track_count: number;
 }
 
 interface PlanSource {
@@ -43,6 +46,7 @@ interface PlanTrack {
   position: number;
   provider_track_id: string;
   provider_track_item_id: number;
+  shared_item_conflict: number;
   provider_release_id: string;
   provider_edition_item_id: number;
   provider_audio_variant_id: number;
@@ -56,6 +60,31 @@ export interface AcquisitionDownloadCommand {
   body: DownloadAlbumCommand;
   refId: string;
 }
+
+export type AcquisitionWaitReason = "offer_unavailable" | "missing_sources" | "missing_requested_tracks"
+  | "missing_assignments" | "imported_files_need_verification" | "invalid_library_profile"
+  | "request_identity_conflict" | "library_disabled" | "ambiguous_offer" | "offer_refresh_required";
+
+export function acquisitionWaitMessage(reason: unknown): string | undefined {
+  switch (reason) {
+    case "offer_unavailable": return "Waiting for an available offer";
+    case "missing_sources": return "Offer needs refreshed source information";
+    case "missing_requested_tracks": return "Requested tracks need a refreshed offer";
+    case "missing_assignments": return "Offer needs refreshed track information";
+    case "imported_files_need_verification": return "Imported files need verification";
+    case "invalid_library_profile": return "Library quality profile needs attention";
+    case "request_identity_conflict": return "Request identity needs attention";
+    case "library_disabled": return "Library is disabled";
+    case "ambiguous_offer": return "Offer selection needs attention";
+    case "offer_refresh_required": return "Waiting for the offer to refresh";
+    default: return undefined;
+  }
+}
+
+export type AcquisitionDownloadEvaluation =
+  | { status: "ready"; command: AcquisitionDownloadCommand }
+  | { status: "satisfied"; command: AcquisitionDownloadCommand }
+  | { status: "blocked"; reason: AcquisitionWaitReason };
 
 function sourceQuality(snapshot: string | null): string | null {
   try {
@@ -111,17 +140,30 @@ export function buildAcquisitionDownloadCommand(
   planId: number,
   options: { trackIds?: readonly number[] } = {},
 ): AcquisitionDownloadCommand | null {
+  const result = evaluateAcquisitionDownload(db, planId, { ...options, allowUnverifiedProjection: true });
+  return result.status === "ready" ? result.command : null;
+}
+
+/** Distinguish admission failures without inferring filesystem completion. */
+export function evaluateAcquisitionDownload(
+  db: Database.Database,
+  planId: number,
+  options: { trackIds?: readonly number[]; verifiedTrackIds?: ReadonlySet<number>; allowUnverifiedProjection?: boolean } = {},
+): AcquisitionDownloadEvaluation {
   const header = db.prepare(`
     SELECT
       plan.id AS plan_id,
       plan.provider,
       plan.composition,
       plan.download_mode,
+      plan.coverage,
+      plan.target_track_count,
       library.id AS library_id,
       library.name AS library_name,
       library.root_path,
       quality_profile.allowed_source_formats,
       release.id AS edition_id,
+      (SELECT COUNT(*) FROM Tracks target WHERE target.album_edition_id=release.id) AS canonical_track_count,
       release.mbid AS release_mbid,
       release_group.mbid AS release_group_mbid,
       release_group.title AS album_title,
@@ -140,7 +182,7 @@ export function buildAcquisitionDownloadCommand(
       AND plan.state = 'current'
       AND library.enabled = 1
   `).get(planId) as PlanHeader | undefined;
-  if (!header) return null;
+  if (!header) return { status: "blocked", reason: "offer_unavailable" };
 
   const sources = db.prepare(`
     SELECT
@@ -157,7 +199,7 @@ export function buildAcquisitionDownloadCommand(
     ORDER BY source.sort_order, source.id
   `).all(planId) as PlanSource[];
   const primarySource = sources[0];
-  if (!primarySource) return null;
+  if (!primarySource) return { status: "blocked", reason: "missing_sources" };
 
   let tracks = db.prepare(`
     SELECT
@@ -171,6 +213,16 @@ export function buildAcquisitionDownloadCommand(
       track.position,
       member_item.provider_id AS provider_track_id,
       member_item.id AS provider_track_item_id,
+      CASE WHEN track_match.decision_source = 'automatic' AND EXISTS (
+        SELECT 1
+        FROM ProviderTrackMatches other_match
+        WHERE other_match.provider_edition_match_id = track_match.provider_edition_match_id
+          AND other_match.provider_track_item_id = member_item.id
+          AND other_match.match_state = 'accepted'
+          AND other_match.decision_source = 'automatic'
+          AND other_match.track_id IS NOT NULL
+          AND other_match.track_id != plan_track.track_id
+      ) THEN 1 ELSE 0 END AS shared_item_conflict,
       release_item.provider_id AS provider_release_id,
       release_item.id AS provider_edition_item_id,
       plan_track.provider_audio_variant_id,
@@ -186,7 +238,7 @@ export function buildAcquisitionDownloadCommand(
           AND file.file_class = 'audio'
       ) THEN 1 ELSE 0 END AS complete
     FROM AcquisitionPlanTracks plan_track
-    JOIN Tracks track ON track.id = plan_track.track_id
+    JOIN Tracks track ON track.id = plan_track.track_id AND track.album_edition_id = ?
     JOIN Recordings recording ON recording.id = track.recording_id
     JOIN ProviderTrackMatches track_match
       ON track_match.id = plan_track.provider_track_match_id
@@ -200,18 +252,47 @@ export function buildAcquisitionDownloadCommand(
       ON release_item.id = release_match.provider_edition_item_id
     WHERE plan_track.plan_id = ?
     ORDER BY track.medium_position, track.position, track.id
-  `).all(header.library_id, header.edition_id, planId) as PlanTrack[];
+  `).all(header.library_id, header.edition_id, header.edition_id, planId) as PlanTrack[];
   const requestedTrackIds = new Set(options.trackIds || []);
   if (requestedTrackIds.size > 0) {
+    const assigned = new Set(tracks.map(track => track.track_id));
+    if ([...requestedTrackIds].some(id => !assigned.has(id))) return { status: "blocked", reason: "missing_requested_tracks" };
     tracks = tracks.filter((track) => requestedTrackIds.has(track.track_id));
   }
-  if (tracks.length === 0 || tracks.every((track) => Boolean(track.complete))) return null;
+  if (tracks.length === 0) return { status: "blocked", reason: "missing_assignments" };
+  if (options.verifiedTrackIds === undefined && !options.allowUnverifiedProjection && tracks.some(track => track.complete)) {
+    return { status: "blocked", reason: "imported_files_need_verification" };
+  }
+  // Only the filesystem verifier may authorize skipping imported rows.
+  for (const track of tracks) track.complete = Number(options.verifiedTrackIds?.has(track.track_id) ?? false);
+  const satisfied = tracks.every(track => track.complete);
+  if (satisfied && requestedTrackIds.size === 0 && (header.coverage < header.target_track_count
+      || tracks.length !== header.target_track_count || header.target_track_count !== header.canonical_track_count)) {
+    return { status: "blocked", reason: "missing_assignments" };
+  }
+
+  const missingTracks = tracks.filter((track) => !track.complete);
+  // Matcher version is not a download veto. An older stored plan is blocked
+  // only when this edition still accepts the same provider item for another
+  // canonical track. A duplicate listing of the same track is not a conflict.
+  // A compilation that reuses the item under a different edition match is not
+  // a conflict either: the check stays inside this provider edition match.
+  if (missingTracks.some((track) => track.shared_item_conflict === 1)) {
+    return { status: "blocked", reason: "ambiguous_offer" };
+  }
+  const offeredProviderTracks = new Set<string>();
+  for (const track of missingTracks) {
+    const identity = `${header.provider}:${track.provider_track_id}`;
+    if (offeredProviderTracks.has(identity)) {
+      return { status: "blocked", reason: "ambiguous_offer" };
+    }
+    offeredProviderTracks.add(identity);
+  }
 
   const forceTracks = requestedTrackIds.size > 0
     || header.download_mode === "tracks"
     || tracks.some((track) => Boolean(track.complete));
   const acquisitionMode: DownloadAlbumAcquisitionMode = forceTracks ? "trackOffers" : "album";
-  const missingTracks = tracks.filter((track) => !track.complete);
   const trackOffers: DownloadTrackOffer[] = missingTracks.map((track) => ({
     provider: header.provider,
     providerTrackId: track.provider_track_id,
@@ -240,9 +321,9 @@ export function buildAcquisitionDownloadCommand(
   }));
   const done = tracks.length - missingTracks.length;
   const slot = acquisitionProfileSlot(header.allowed_source_formats);
-  if (!slot) return null;
+  if (!slot) return { status: "blocked", reason: "invalid_library_profile" };
 
-  return {
+  return { status: satisfied ? "satisfied" : "ready", command: {
     name: CommandNames.DownloadAlbum,
     refId: requestedTrackIds.size > 0
       ? `acquisition-plan:${planId}:tracks:${[...requestedTrackIds].sort((a, b) => a - b).join(",")}`
@@ -278,5 +359,5 @@ export function buildAcquisitionDownloadCommand(
         tracks: trackStates,
       },
     },
-  };
+  } };
 }

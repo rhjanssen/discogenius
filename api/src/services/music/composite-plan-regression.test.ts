@@ -26,6 +26,7 @@ import Database from "better-sqlite3";
 import { prepareActiveSchemaEnv, createActiveSchema } from "../../test-support/active-schema-fixture.js";
 prepareActiveSchemaEnv("planning-active");
 import { AcquisitionPlanningService } from "./acquisition-planning-service.js";
+import { PROVIDER_TRACK_MATCHER_VERSION } from "./provider-track-matcher.js";
 import { ProviderReleaseIngestionService } from "../providers/provider-release-ingestion-service.js";
 
 /** A provider album whose tracks carry ISRCs, ingested through the real matcher. */
@@ -47,7 +48,7 @@ function ingestOffer(
 ): void {
   new ProviderReleaseIngestionService(db).ingest({
     canonicalReleaseId: canonicalEditionId,
-    matcherVersion: 1,
+    matcherVersion: PROVIDER_TRACK_MATCHER_VERSION,
     release: {
       provider: "tidal",
       entityType: "release",

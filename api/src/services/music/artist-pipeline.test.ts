@@ -275,3 +275,110 @@ test("ArtistPipelineService for unmonitored artist stops after metadata refresh"
     "1:refresh:unmonitored-mbid",
   ]);
 });
+
+test("queue missing downloads retries SQLITE_BUSY and does not swallow it", async () => {
+  const { seedLibraryArtistMonitoring } = await import("../../test-support/active-schema-fixture.js");
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name, content_hash) VALUES
+      ('busy-queue-mbid', 'Busy Queue Artist', 'hydrated')
+  `).run();
+  seedLibraryArtistMonitoring(dbModule.db, "busy-queue-mbid");
+
+  const originalRefresh = refreshServiceModule.RefreshArtistService.refreshArtist;
+  const originalMatch = refreshServiceModule.RefreshArtistService.matchArtistProviders;
+  const originalScan = diskScanModule.DiskScanService.scan;
+  const originalFill = diskScanModule.DiskScanService.fillMissingMetadataFiles;
+  const originalCurate = curationModule.CurationService.processAll;
+  const originalQueueDownloads = downloadMissingModule.DownloadMissingService.queueMonitoredItems;
+
+  (refreshServiceModule.RefreshArtistService as any).refreshArtist = async (artistId: string) => ({
+    artistMbid: artistId,
+    shouldHydrateCatalog: true,
+    metadataChanged: true,
+    isNewArtist: false,
+    creditedArtistMbids: [],
+  });
+  (refreshServiceModule.RefreshArtistService as any).matchArtistProviders = async () => {};
+  (diskScanModule.DiskScanService as any).scan = async () => ({
+    orphansRemoved: 0, filesIndexed: 0, filesUpdated: 0, artists: 1, unmappedOrphans: 0,
+  });
+  (diskScanModule.DiskScanService as any).fillMissingMetadataFiles = async () => ({ covers: 0, nfo: 0, lyrics: 0 });
+  (curationModule.CurationService as any).processAll = async () => {};
+
+  let calls = 0;
+  (downloadMissingModule.DownloadMissingService as any).queueMonitoredItems = async () => {
+    calls += 1;
+    if (calls === 1) {
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    }
+    return { albums: 2, tracks: 0, videos: 0, alreadyQueued: 0, missingPlans: 0 };
+  };
+
+  try {
+    const result = await pipelineModule.ArtistPipelineService.executePipeline({
+      artistId: "busy-queue-mbid",
+      artistName: "Busy Queue Artist",
+      workflow: "monitoring-intake",
+    });
+    assert.equal(calls, 2);
+    assert.equal(result.downloadsQueued?.albums, 2);
+  } finally {
+    (refreshServiceModule.RefreshArtistService as any).refreshArtist = originalRefresh;
+    (refreshServiceModule.RefreshArtistService as any).matchArtistProviders = originalMatch;
+    (diskScanModule.DiskScanService as any).scan = originalScan;
+    (diskScanModule.DiskScanService as any).fillMissingMetadataFiles = originalFill;
+    (curationModule.CurationService as any).processAll = originalCurate;
+    (downloadMissingModule.DownloadMissingService as any).queueMonitoredItems = originalQueueDownloads;
+  }
+});
+
+test("exhausted SQLITE_BUSY on queue missing downloads is not swallowed", async () => {
+  const { seedLibraryArtistMonitoring } = await import("../../test-support/active-schema-fixture.js");
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name, content_hash) VALUES
+      ('busy-fail-mbid', 'Busy Fail Artist', 'hydrated')
+  `).run();
+  seedLibraryArtistMonitoring(dbModule.db, "busy-fail-mbid");
+
+  const originalRefresh = refreshServiceModule.RefreshArtistService.refreshArtist;
+  const originalMatch = refreshServiceModule.RefreshArtistService.matchArtistProviders;
+  const originalScan = diskScanModule.DiskScanService.scan;
+  const originalFill = diskScanModule.DiskScanService.fillMissingMetadataFiles;
+  const originalCurate = curationModule.CurationService.processAll;
+  const originalQueueDownloads = downloadMissingModule.DownloadMissingService.queueMonitoredItems;
+
+  (refreshServiceModule.RefreshArtistService as any).refreshArtist = async (artistId: string) => ({
+    artistMbid: artistId, shouldHydrateCatalog: true, metadataChanged: false, isNewArtist: false, creditedArtistMbids: [],
+  });
+  (refreshServiceModule.RefreshArtistService as any).matchArtistProviders = async () => {};
+  (diskScanModule.DiskScanService as any).scan = async () => ({
+    orphansRemoved: 0, filesIndexed: 0, filesUpdated: 0, artists: 1, unmappedOrphans: 0,
+  });
+  (diskScanModule.DiskScanService as any).fillMissingMetadataFiles = async () => ({ covers: 0, nfo: 0, lyrics: 0 });
+  (curationModule.CurationService as any).processAll = async () => {};
+  (downloadMissingModule.DownloadMissingService as any).queueMonitoredItems = async () => {
+    throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+  };
+
+  try {
+    await assert.rejects(
+      () => pipelineModule.ArtistPipelineService.executePipeline({
+        artistId: "busy-fail-mbid",
+        artistName: "Busy Fail Artist",
+        workflow: "monitoring-intake",
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "SQLITE_BUSY");
+        return true;
+      },
+    );
+  } finally {
+    (refreshServiceModule.RefreshArtistService as any).refreshArtist = originalRefresh;
+    (refreshServiceModule.RefreshArtistService as any).matchArtistProviders = originalMatch;
+    (diskScanModule.DiskScanService as any).scan = originalScan;
+    (diskScanModule.DiskScanService as any).fillMissingMetadataFiles = originalFill;
+    (curationModule.CurationService as any).processAll = originalCurate;
+    (downloadMissingModule.DownloadMissingService as any).queueMonitoredItems = originalQueueDownloads;
+  }
+});
+

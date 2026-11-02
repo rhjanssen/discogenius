@@ -20,6 +20,7 @@ beforeEach(() => {
     database.db.prepare("DELETE FROM FileMutationJournal").run();
     database.db.prepare("DELETE FROM TrackFiles").run();
     fs.rmSync(path.join(tempDir, "files"), { recursive: true, force: true });
+    fs.rmSync(path.join(tempDir, "tag-undo"), { recursive: true, force: true });
     fs.mkdirSync(path.dirname(source), { recursive: true });
     fs.writeFileSync(source, "untouched audio file fixture");
     fileId = Number(database.db.prepare(`INSERT INTO TrackFiles (file_path, filename, relative_path, library_root, extension, file_type, library_slot)
@@ -27,6 +28,40 @@ beforeEach(() => {
 });
 after(() => closeActiveSchemaDb(database.dbModule, tempDir));
 const prepare = () => journal.prepare("TrackFiles", fileId, source, source, target);
+
+test("a killed in-place tag write blocks disk commands until startup recovery restores the file", async () => {
+    const undo = await import("./in-place-tag-undo.js");
+    const { CommandManager } = await import("../commands/command.js");
+    const original = fs.readFileSync(source);
+    undo.armInPlaceUndo(source, 0, original, original.length);
+    fs.writeFileSync(source, Buffer.concat([Buffer.from([0xff]), original.subarray(1)]));
+    assert.equal(journal.hasPending(), true);
+    assert.equal(CommandManager.canStartCommand("RetagFiles", { ids: [fileId] }).canStart, false);
+    database.dbModule.closeDatabase();
+    database.dbModule.initDatabase();
+    assert.deepEqual(await journal.recoverPending(), []);
+    assert.ok(fs.readFileSync(source).equals(original));
+    assert.equal(journal.hasPending(), false);
+    assert.equal(CommandManager.canStartCommand("RetagFiles", { ids: [fileId] }).canStart, true);
+    assert.deepEqual(fs.readdirSync(path.dirname(source)).filter((name) => name.startsWith(".discogenius-")), []);
+});
+
+test("a verified in-place tag write keeps the new bytes and drops its backup", async () => {
+    const undo = await import("./in-place-tag-undo.js");
+    const original = fs.readFileSync(source);
+    const armed = undo.armInPlaceUndo(source, 0, original, original.length);
+    const updated = Buffer.from(original);
+    updated[0] = updated[0] ^ 0xff;
+    fs.writeFileSync(source, updated);
+    undo.markInPlaceUndoVerified(armed);
+    assert.equal(journal.hasPending(), true);
+    database.dbModule.closeDatabase();
+    database.dbModule.initDatabase();
+    assert.deepEqual(await journal.recoverPending(), []);
+    assert.ok(fs.readFileSync(source).equals(updated));
+    assert.equal(journal.hasPending(), false);
+    assert.deepEqual(fs.readdirSync(path.dirname(source)).filter((name) => name.startsWith(".discogenius-")), []);
+});
 
 test("intent without a filesystem mutation clears safely after reopening the database", async () => {
     await prepare();

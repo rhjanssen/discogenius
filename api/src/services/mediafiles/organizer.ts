@@ -4,11 +4,12 @@ import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
 import { db, withSqliteWriteGate } from "../../database.js";
+import { withAlbumFolder, withAlbumFolders, withHddIoPermit, type DiskAdmissionMeta } from "../commands/disk-admission.js";
 import { Config } from "../config/config.js";
 import { downloadAlbumVideoCover, downloadVideoThumbnail, saveAlbumNfoFile, saveArtistNfoFile, saveVideoNfoFile } from "./metadata-files.js";
 import { streamingProviderManager } from "../providers/index.js";
-import { getNamingConfig, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "../config/naming.js";
-import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
+import { getNamingConfig, joinCappedFileName, renderFileStem, renderRelativePath, resolveArtistFolderFromRecord } from "../config/naming.js";
+import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForImport, resolveArtistFolderForPersistence, shouldReapplyArtistPathTemplate } from "../music/artist-paths.js";
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { LibraryFilesService, removeEmptyParents, resolveVideoTypeSuffix } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
@@ -24,9 +25,18 @@ import {
 } from "../music/managed-artists.js";
 import { renderAudioRelativePathForLibrary } from "./audio-library-path.js";
 import { resolveLibraryFileIdentity } from "./library-file-identity.js";
+import {
+  forgetRetiredLibraryFileRows,
+  listPreviousReleaseTrackFiles,
+  listPreviousVideoFiles,
+  resolveReleaseTrackId,
+  unlinkRetiredLibraryFiles,
+  type RetiredLibraryFile,
+} from "./release-track-replacement.js";
 import { getCanonicalTrackPosition, resolveCanonicalTrackPosition } from "../metadata/canonical-track-position.js";
 import { getCanonicalAlbumMetadata, getCanonicalMediumNaming } from "../metadata/canonical-album-metadata.js";
-import { albumCoverLocalUrl, syncCachedMediaCoverToFile } from "../metadata/media-cover-service.js";
+import { albumCoverLocalUrl, resolveArtistArtwork } from "../metadata/media-cover-service.js";
+import { materializeMediaCoverToFile } from "../metadata/media-cover-materialization.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
 import {
@@ -251,6 +261,13 @@ export type OrganizeResult = {
    * can assign one track's quality to another's row.
    */
   importedTrackFileIds: Record<string, number>;
+  /** Offered tracks this organize did not place, with the failure cause. */
+  trackGaps?: Array<{
+    position: string | null;
+    title: string | null;
+    providerId: string;
+    cause: string;
+  }>;
 };
 
 type OrganizerArtistContext = {
@@ -765,7 +782,7 @@ export class OrganizerService {
     const videoNamingTemplate = path.join(params.artistFolder, naming.video_file);
     const sourceMetrics = await parseAudioFile(params.src);
     const sourceVideoQuality = deriveVideoQuality(sourceMetrics) ?? row.quality ?? null;
-    const destName = `${renderFileStem(naming.video_file, {
+    const destName = joinCappedFileName(renderFileStem(naming.video_file, {
       provider: params.provider,
       artistName: params.artistName,
       artistId: params.artistId,
@@ -782,7 +799,7 @@ export class OrganizerService {
       sampleRate: sourceMetrics.sampleRate || null,
       bitDepth: sourceMetrics.bitDepth || null,
       channels: sourceMetrics.channels || null,
-    })}.mp4`;
+    }), ".mp4");
     const separatedDest = path.join(params.videoRoot, params.artistFolder, destName);
     const artistMetadataId = resolveArtistMetadataId(params.artistId);
     if (artistMetadataId == null) {
@@ -816,21 +833,24 @@ export class OrganizerService {
     }
     this.ensureDir(path.dirname(dest));
 
+    let derivedVideoQuality = sourceVideoQuality;
+    let albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
+    let libraryFileId: number | null = null;
+    await this.holdImportFolders([params.src, dest], async () => {
     if (path.extname(params.src).toLowerCase() !== ".mp4") {
-      const success = await convertToMp4(params.src, dest);
+      const success = await withHddIoPermit(this.importDiskMeta(), () => convertToMp4(params.src, dest));
       if (!success) {
         throw new Error(`[Organizer] MP4 conversion failed for bundled video ${params.src}`);
       }
       try { fs.rmSync(params.src, { force: true }); } catch { /* stale source is harmless */ }
     } else {
-      this.moveFileCrossDevice(params.src, dest);
+      await this.moveFileCrossDevice(params.src, dest);
     }
 
-    const metrics = await parseAudioFile(dest);
-    const derivedVideoQuality = deriveVideoQuality(metrics) ?? row.quality ?? null;
-    const albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
+    const metrics = await withHddIoPermit(this.importDiskMeta(), () => parseAudioFile(dest));
+    derivedVideoQuality = deriveVideoQuality(metrics) ?? row.quality ?? null;
+    albumIdForFile = params.releaseGroupMbid || row.release_group_mbid || null;
 
-    let libraryFileId: number | null = null;
     await withSqliteWriteGate(() => db.transaction(() => {
       // Refresh ONLY the provider VIDEO offer's own facts (never canonical ids,
       // never INSERT OR REPLACE). Match authority belongs to the matcher: the
@@ -882,6 +902,7 @@ export class OrganizerService {
         console.warn(`[Organizer] Failed to record bundled-video import history for ${params.providerTrackId}:`, historyError);
       }
     })(), "import:media-commit");
+    });
 
     await this.ensureVideoThumbnailSidecar({
       artistId: params.artistId,
@@ -996,93 +1017,38 @@ export class OrganizerService {
   }
 
   /**
-   * Remove old library files for a media item when a new file replaces them.
-   * This handles the case where the extension changes (e.g. .m4a → .flac during upgrade)
-   * so the new file goes to a different path and the old file would be orphaned.
-   *
-   * Replacement is slot-scoped: the stereo and spatial copies of the same
-   * canonical track share a media identity but are siblings, never
-   * replacements — without the slot constraint a spatial import would delete
-   * the freshly imported stereo file (and vice versa).
+   * Previous file of this release track only. Stereo and spatial stay
+   * siblings: a spatial import must not retire the stereo copy.
+   * Listing happens before the folder lock so the old file's folder can be
+   * held without nesting locks. Bytes are removed under the HDD permit;
+   * the row delete stays inside the write gate.
    */
-  private static cleanupOldMediaFiles(
-    mediaId: string,
-    newFilePath: string,
-    fileType: "track" | "video",
-    librarySlot: string | null,
-    provider?: string | null,
-  ) {
-    const identity = resolveLibraryFileIdentity({
-      mediaId,
-      fileType,
-      librarySlot,
-      provider,
+  private static previousReleaseTrackFiles(params: {
+    trackMbid: string | null;
+    releaseMbid: string | null;
+    mediumPosition: number | null;
+    position: number | null;
+    librarySlot: string | null;
+    newFilePath: string;
+  }): RetiredLibraryFile[] {
+    const librarySlot = params.librarySlot === "spatial"
+      ? "spatial"
+      : params.librarySlot === "stereo"
+        ? "stereo"
+        : null;
+    if (!librarySlot) return [];
+    const trackId = resolveReleaseTrackId({
+      trackMbid: params.trackMbid,
+      releaseMbid: params.releaseMbid,
+      mediumPosition: params.mediumPosition,
+      position: params.position,
     });
-    if (!identity.provider || !identity.providerEntityType || !identity.providerId) {
-      return;
-    }
-
-    const oldFiles = db.prepare(
-      `SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id, file_path, library_root, quality
-       FROM TrackFiles
-       WHERE provider = ?
-         AND provider_entity_type = ?
-         AND provider_id = ?
-         AND file_type = ?
-         AND library_slot IS ?
-         AND file_path != ?`
-    ).all(identity.provider, identity.providerEntityType, identity.providerId, fileType, librarySlot, newFilePath) as Array<{
-      id: number;
-      artist_id: number;
-      album_id: number | null;
-      media_id: number | null;
-      file_path: string;
-      library_root: string;
-      quality: string | null;
-    }>;
-    const normalizedNewFilePath = path.resolve(newFilePath);
-
-    for (const old of oldFiles) {
-      try {
-        const resolvedFilePath = resolveStoredLibraryPath({
-          filePath: old.file_path,
-          libraryRoot: old.library_root,
-        });
-        const isSameResolvedFile = path.resolve(resolvedFilePath) === normalizedNewFilePath;
-
-        if (!isSameResolvedFile && fs.existsSync(resolvedFilePath)) {
-          fs.rmSync(resolvedFilePath, { force: true });
-          console.log(`[Organizer] Deleted old ${fileType} file (replaced by upgrade): ${resolvedFilePath}`);
-
-          try {
-            recordHistoryEvent({
-              artistId: old.artist_id,
-              albumId: old.album_id,
-              mediaId: old.media_id,
-              libraryFileId: old.id,
-              eventType: HISTORY_EVENT_TYPES.TrackFileDeleted,
-              quality: old.quality,
-              data: {
-                deletedPath: resolvedFilePath,
-                replacementPath: newFilePath,
-                fileType,
-              },
-            });
-          } catch (historyError) {
-            console.warn(`[Organizer] Failed to record replacement delete history for ${resolvedFilePath}:`, historyError);
-          }
-
-          // Clean up empty parent directories left behind
-          const libraryRoot = this.resolveLibraryRoot(resolvedFilePath, old.library_root);
-          if (libraryRoot) {
-            removeEmptyParents(path.dirname(resolvedFilePath), libraryRoot);
-          }
-        }
-        db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(old.id);
-      } catch (e) {
-        console.warn(`[Organizer] Failed to delete old ${fileType} file: ${old.file_path}`, e);
-      }
-    }
+    if (trackId == null) return [];
+    return listPreviousReleaseTrackFiles({
+      trackId,
+      librarySlot,
+      newFilePath: params.newFilePath,
+    });
   }
 
   private static normalizeResolvedPath(filePath: string): string {
@@ -1103,8 +1069,8 @@ export class OrganizerService {
   }
 
   /**
-   * Reconcile a static video thumbnail from the canonical recording's cached
-   * MediaCover origin. Refresh/match owns provider access and network I/O.
+   * Reconcile a static video thumbnail from the canonical recording's selected
+   * artwork source. Source selection remains in refresh/match.
    */
   private static async ensureVideoThumbnailSidecar(params: {
     artistId: string;
@@ -1287,7 +1253,7 @@ export class OrganizerService {
 
       try {
         if (!hasExpectedSidecar) {
-          this.moveFileCrossDevice(resolvedFilePath, expectedPath);
+          await this.moveFileCrossDevice(resolvedFilePath, expectedPath);
           hasExpectedSidecar = true;
 
           const sourceRoot = this.resolveLibraryRoot(resolvedFilePath, sidecar.library_root);
@@ -1351,6 +1317,29 @@ export class OrganizerService {
     return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalized);
   }
 
+  /** The destination folder names its release (`{mbid-…}`); the caller's
+   * release must agree with it. Without a known release nothing is moved. */
+  private static resolveSidecarFolderRelease(
+    expectedPath: string,
+    releaseMbid?: string | null,
+    releaseGroupMbid?: string | null,
+  ): { releaseMbid: string; releaseGroupMbid: string | null } | null {
+    const folderMbid = [...path.basename(path.dirname(expectedPath)).matchAll(/\{mbid-([0-9a-f-]{36})\}/gi)]
+      .map((match) => match[1].toLowerCase()).pop() ?? null;
+    const requested = String(releaseMbid || "").trim().toLowerCase() || null;
+    if (requested && folderMbid && requested !== folderMbid) {
+      // The folder on disk is what the sidecar sits in; it decides.
+      console.warn(`[Organizer] Sidecar release ${requested} differs from folder release ${folderMbid}; using the folder for ${expectedPath}`);
+    }
+    const mbid = folderMbid ?? requested;
+    if (!mbid) return null;
+    const edition = db.prepare(`SELECT album.mbid AS release_group_mbid FROM AlbumEditions edition
+      LEFT JOIN Albums album ON album.id = edition.release_group_id WHERE edition.mbid = ?`)
+      .get(mbid) as { release_group_mbid: string | null } | undefined;
+    if (!edition && mbid !== requested) return null;
+    return { releaseMbid: mbid, releaseGroupMbid: edition?.release_group_mbid ?? (String(releaseGroupMbid || "").trim() || null) };
+  }
+
   private static async relocateSingletonSidecar(params: {
     artistId: string;
     albumId?: string | null;
@@ -1359,8 +1348,16 @@ export class OrganizerService {
     fileType: "cover" | "video_cover" | "nfo";
     quality?: string | null;
     namingTemplate?: string | null;
+    /** The exact release the destination folder belongs to. Album-level
+     * sidecars are owned by one release; another release's file is never
+     * moved here or re-owned. Required whenever albumId is given. */
+    releaseMbid?: string | null;
+    releaseGroupMbid?: string | null;
   }): Promise<string> {
     const normalizedExpectedPath = this.normalizeResolvedPath(params.expectedPath);
+    const release = params.albumId
+      ? this.resolveSidecarFolderRelease(params.expectedPath, params.releaseMbid, params.releaseGroupMbid)
+      : null;
     const artistMbid = resolveArtistMbid(params.artistId);
     if (!artistMbid) {
       throw new Error(`[Organizer] Cannot resolve canonical artist MBID for ${params.artistId}`);
@@ -1373,18 +1370,14 @@ export class OrganizerService {
       ? db.prepare(`
         SELECT id, file_path, library_root
         FROM MetadataFiles
-        WHERE (
-            canonical_release_group_mbid = ?
-            OR canonical_release_mbid = ?
-            OR provider_id = ?
-          )
+        WHERE (canonical_release_mbid = ? OR file_path = ?)
           AND canonical_track_mbid IS NULL
           AND canonical_recording_mbid IS NULL
           AND library_slot = ?
           AND COALESCE(library_root, '') = COALESCE(?, '')
           AND file_type = ?
         ORDER BY CASE WHEN file_path = ? THEN 0 ELSE 1 END, last_updated DESC, id DESC
-      `).all(params.albumId, params.albumId, params.albumId, slotValue, params.libraryRoot, params.fileType, params.expectedPath)
+      `).all(release?.releaseMbid ?? null, params.expectedPath, slotValue, params.libraryRoot, params.fileType, params.expectedPath)
       : db.prepare(`
         SELECT id, file_path, library_root
         FROM MetadataFiles
@@ -1432,15 +1425,17 @@ export class OrganizerService {
             continue;
           }
           if (!hasExpectedSidecar) {
-            this.ensureDir(destDir);
-            fs.copyFileSync(resolvedFilePath, params.expectedPath);
+            await withAlbumFolders([sourceDir, destDir], this.importDiskMeta(), () => withHddIoPermit(this.importDiskMeta(), async () => {
+              this.ensureDir(destDir);
+              fs.copyFileSync(resolvedFilePath, params.expectedPath);
+            }));
             hasExpectedSidecar = true;
           }
           continue;
         }
 
         if (!hasExpectedSidecar) {
-          this.moveFileCrossDevice(resolvedFilePath, params.expectedPath);
+          await this.moveFileCrossDevice(resolvedFilePath, params.expectedPath);
           hasExpectedSidecar = true;
         } else {
           fs.rmSync(resolvedFilePath, { force: true });
@@ -1466,24 +1461,22 @@ export class OrganizerService {
         quality: params.quality || null,
         namingTemplate: params.namingTemplate || null,
         expectedPath: params.expectedPath,
+        canonicalReleaseGroupMbid: release?.releaseGroupMbid ?? null,
+        canonicalReleaseMbid: release?.releaseMbid ?? null,
       });
 
-      if (params.albumId) {
+      if (params.albumId && release) {
         const leftover = db.prepare(`
           SELECT id, file_path, library_root
           FROM MetadataFiles
-          WHERE (
-              canonical_release_group_mbid = ?
-              OR canonical_release_mbid = ?
-              OR provider_id = ?
-            )
+          WHERE canonical_release_mbid = ?
             AND canonical_track_mbid IS NULL
             AND canonical_recording_mbid IS NULL
             AND library_slot = ?
             AND COALESCE(library_root, '') = COALESCE(?, '')
             AND file_type = ?
             AND file_path != ?
-        `).all(params.albumId, params.albumId, params.albumId, slotValue, params.libraryRoot, params.fileType, params.expectedPath) as Array<{
+        `).all(release.releaseMbid, slotValue, params.libraryRoot, params.fileType, params.expectedPath) as Array<{
           id: number;
           file_path: string;
           library_root: string;
@@ -1497,7 +1490,7 @@ export class OrganizerService {
             await withSqliteWriteGate(() => db.prepare("DELETE FROM MetadataFiles WHERE id = ?").run(row.id), "import:sidecar-facts");
           }
         }
-      } else {
+      } else if (!params.albumId) {
         await withSqliteWriteGate(() => db.prepare(`
           DELETE FROM MetadataFiles
           WHERE artist_id = ?
@@ -1517,14 +1510,22 @@ export class OrganizerService {
     return params.expectedPath;
   }
 
-  private static cleanupSiblingMediaVariants(newFilePath: string, fileType: "track" | "video") {
+  /**
+   * Remove same-name, same-extension media siblings that differ only in path
+   * spelling (case). File I/O only: call under the album-folder lock and an HDD
+   * I/O permit, before the SQLite write gate. Returns the paths it removed so
+   * the caller's write transaction can forget their rows with
+   * `forgetSiblingMediaVariantRows`.
+   */
+  private static unlinkSiblingMediaVariants(newFilePath: string): string[] {
     const targetPath = path.resolve(newFilePath);
     const targetDir = path.dirname(targetPath);
     const targetStem = path.parse(targetPath).name;
     if (!fs.existsSync(targetDir)) {
-      return;
+      return [];
     }
 
+    const removed: string[] = [];
     for (const entry of fs.readdirSync(targetDir, { withFileTypes: true })) {
       if (!entry.isFile()) {
         continue;
@@ -1542,44 +1543,56 @@ export class OrganizerService {
       }
 
       try {
-        const siblingLibraryFiles = db.prepare(
-          `SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id, quality
-           FROM TrackFiles
-           WHERE file_path = ? AND file_type = ?`
-        ).all(siblingPath, fileType) as Array<{
-          id: number;
-          artist_id: number;
-          album_id: number | null;
-          media_id: number | null;
-          quality: string | null;
-        }>;
-
-        for (const siblingRow of siblingLibraryFiles) {
-          try {
-            recordHistoryEvent({
-              artistId: siblingRow.artist_id,
-              albumId: siblingRow.album_id,
-              mediaId: siblingRow.media_id,
-              libraryFileId: siblingRow.id,
-              eventType: HISTORY_EVENT_TYPES.TrackFileDeleted,
-              quality: siblingRow.quality,
-              data: {
-                deletedPath: siblingPath,
-                replacementPath: newFilePath,
-                fileType,
-              },
-            });
-          } catch (historyError) {
-            console.warn(`[Organizer] Failed to record sibling ${fileType} delete history for ${siblingPath}:`, historyError);
-          }
-        }
-
+        // On a case-insensitive filesystem the "sibling" is the new file itself.
+        const sibling = fs.statSync(siblingPath);
+        const target = fs.existsSync(targetPath) ? fs.statSync(targetPath) : null;
+        if (target && sibling.ino === target.ino && sibling.dev === target.dev) continue;
         fs.rmSync(siblingPath, { force: true });
-        db.prepare("DELETE FROM TrackFiles WHERE file_path = ? AND file_type = ?").run(siblingPath, fileType);
-        console.log(`[Organizer] Deleted conflicting ${fileType} variant: ${siblingPath}`);
+        removed.push(siblingPath);
+        console.log(`[Organizer] Deleted conflicting media variant: ${siblingPath}`);
       } catch (error) {
-        console.warn(`[Organizer] Failed to delete conflicting ${fileType} variant: ${siblingPath}`, error);
+        console.warn(`[Organizer] Failed to delete conflicting media variant: ${siblingPath}`, error);
       }
+    }
+    return removed;
+  }
+
+  /** Database half of `unlinkSiblingMediaVariants`. Runs inside the import write transaction. */
+  private static forgetSiblingMediaVariantRows(removedPaths: readonly string[], newFilePath: string, fileType: "track" | "video") {
+    for (const siblingPath of removedPaths) {
+      const siblingLibraryFiles = db.prepare(
+        `SELECT id, artist_metadata_id AS artist_id, NULL AS album_id, provider_id AS media_id, quality
+         FROM TrackFiles
+         WHERE file_path = ? AND file_type = ?`
+      ).all(siblingPath, fileType) as Array<{
+        id: number;
+        artist_id: number;
+        album_id: number | null;
+        media_id: number | null;
+        quality: string | null;
+      }>;
+
+      for (const siblingRow of siblingLibraryFiles) {
+        try {
+          recordHistoryEvent({
+            artistId: siblingRow.artist_id,
+            albumId: siblingRow.album_id,
+            mediaId: siblingRow.media_id,
+            libraryFileId: siblingRow.id,
+            eventType: HISTORY_EVENT_TYPES.TrackFileDeleted,
+            quality: siblingRow.quality,
+            data: {
+              deletedPath: siblingPath,
+              replacementPath: newFilePath,
+              fileType,
+            },
+          });
+        } catch (historyError) {
+          console.warn(`[Organizer] Failed to record sibling ${fileType} delete history for ${siblingPath}:`, historyError);
+        }
+      }
+
+      db.prepare("DELETE FROM TrackFiles WHERE file_path = ? AND file_type = ?").run(siblingPath, fileType);
     }
   }
 
@@ -1724,9 +1737,27 @@ export class OrganizerService {
     return null;
   }
 
-  private static moveFileCrossDevice(sourcePath: string, destPath: string) {
-    this.ensureDir(path.dirname(destPath));
+  private static importDiskMeta(): DiskAdmissionMeta {
+    return { role: "import", commandId: 0, reason: "import album file" };
+  }
 
+  /** Hold every album folder a placement touches until `fn` finishes, including its database write. */
+  private static holdImportFolders<T>(files: readonly string[], fn: () => Promise<T>): Promise<T> {
+    return withAlbumFolders(files.map((file) => path.dirname(file)), OrganizerService.importDiskMeta(), fn);
+  }
+
+  private static describeOrganizeTrackFailure(error: unknown, destFile: string): string {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    const message = error instanceof Error ? error.message : String(error);
+    if (code === "ENAMETOOLONG" || /ENAMETOOLONG|name too long/i.test(message)) {
+      const name = path.basename(destFile);
+      return `path component too long (${Buffer.byteLength(name, "utf8")} bytes): ${name}`;
+    }
+    return message;
+  }
+
+  private static moveFileBytes(sourcePath: string, destPath: string): void {
+    this.ensureDir(path.dirname(destPath));
     try {
       fs.renameSync(sourcePath, destPath);
       return;
@@ -1745,8 +1776,17 @@ export class OrganizerService {
 
     fs.rmSync(sourcePath, { force: true });
   }
+
+  private static async moveFileCrossDevice(sourcePath: string, destPath: string): Promise<void> {
+    const meta = this.importDiskMeta();
+    await withAlbumFolders([path.dirname(sourcePath), path.dirname(destPath)], meta, () =>
+      withHddIoPermit(meta, async () => {
+        this.moveFileBytes(sourcePath, destPath);
+      }));
+  }
   private static async upsertLibraryFile(params: Parameters<typeof OrganizerService.persistLibraryFile>[0]): Promise<number> {
-    return withSqliteWriteGate(() => this.persistLibraryFile(params), "import:file-record");
+    return withAlbumFolder(path.dirname(params.filePath), this.importDiskMeta(), () =>
+      withSqliteWriteGate(() => this.persistLibraryFile(params), "import:file-record"));
   }
 
   private static persistLibraryFile(params: {
@@ -1956,11 +1996,6 @@ export class OrganizerService {
       const artistMbId = artistContext.artistMbId;
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
-      const artistFolder = resolveArtistFolderFromRecord({
-        name: resolvedArtistName,
-        mbid: artistMbId || null,
-        path: artistContext.artistPath || null,
-      });
 
       const requestedSlot = requestedTarget?.slot || raw.slot || canonicalContext?.slot;
       if (requestedSlot !== "stereo" && requestedSlot !== "spatial") {
@@ -1968,6 +2003,12 @@ export class OrganizerService {
       }
       const isSpatial = requestedSlot === "spatial";
       const targetRoot = requestedTarget?.rootPath || (isSpatial ? spatialRoot : musicRoot);
+      const artistFolder = resolveArtistFolderForImport({
+        artistId,
+        artistName: resolvedArtistName,
+        artistMbId,
+        existingPath: artistContext.artistPath || null,
+      }, targetRoot);
       const canonicalAlbumForNaming = getCanonicalAlbumMetadata({
         canonicalReleaseGroupMbid: jobReleaseGroupMbid || album.mb_release_group_id,
         canonicalReleaseMbid: jobReleaseMbid || album.mbid,
@@ -2068,6 +2109,7 @@ export class OrganizerService {
 
       const renderedTrackDirs: string[] = [];
       const destFiles: Array<{ trackId: string; destFile: string; ext: string }> = [];
+      const trackGaps: NonNullable<OrganizeResult["trackGaps"]> = [];
       const importedStereoTrackFileIds: number[] = [];
       // provider track id -> exact TrackFiles row created/updated for it.
       const importedTrackFileIds: Record<string, number> = {};
@@ -2271,7 +2313,7 @@ export class OrganizerService {
         const trackArtistMbId = trackArtist?.mbid ? String(trackArtist.mbid) : artistMbId;
         const metrics = await parseAudioFile(srcFile);
         const derivedQuality = deriveQuality(ext, metrics);
-        if (!metrics.codec || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
+        if (!metrics.codec || derivedQuality === "UNKNOWN" || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
           throw new Error("Probed audio does not match the requested library slot");
         }
 
@@ -2320,7 +2362,7 @@ export class OrganizerService {
           musicRoot,
           spatialRoot,
           mustDisambiguate: this.hasConflictingMediaDestination(
-            path.join(targetRoot, artistFolder, `${baseRelativeTrackPath}${ext}`),
+            path.join(targetRoot, artistFolder, joinCappedFileName(baseRelativeTrackPath, ext)),
             trackId,
             "track",
           ),
@@ -2333,7 +2375,16 @@ export class OrganizerService {
           renderedTrackDirs.push(trackDirRel);
         }
 
-        const destFile = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
+        const destFile = path.join(targetRoot, artistFolder, joinCappedFileName(relativeTrackPath, ext));
+        try {
+        const previousReleaseTracks = this.previousReleaseTrackFiles({
+          trackMbid: canonicalIdentity.canonicalTrackMbid,
+          releaseMbid: canonicalIdentity.canonicalReleaseMbid,
+          mediumPosition: volumeNumber,
+          position: trackNumber,
+          librarySlot: canonicalIdentity.librarySlot,
+          newFilePath: destFile,
+        });
         onProgress?.({
           phase: "importing",
           currentFileNum: destFiles.length + 1,
@@ -2346,24 +2397,36 @@ export class OrganizerService {
           statusMessage: `Importing ${trackTitle}`,
         });
 
-        this.moveFileCrossDevice(srcFile, destFile);
+        let importedTrackFileId: number | null = null;
+        await this.holdImportFolders([
+          srcFile,
+          destFile,
+          ...previousReleaseTracks.map((row) => row.resolvedPath),
+        ], async () => {
+        await this.moveFileCrossDevice(srcFile, destFile);
 
         for (const lyricExtension of LYRIC_SIDECAR_EXTENSIONS) {
           const srcLyricFile = srcFile.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
           const destLyricFile = destFile.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
           if (fs.existsSync(srcLyricFile)) {
-            this.moveFileCrossDevice(srcLyricFile, destLyricFile);
+            await this.moveFileCrossDevice(srcLyricFile, destLyricFile);
           }
         }
 
         // Fingerprinting and embedded tags are applied by the post-organize
         // import finalizer after MusicBrainz identity is resolved.
         const fileFingerprint: string | null = null;
+        const { retiredReleaseTracks, removedSiblings } = await withHddIoPermit(
+          this.importDiskMeta(),
+          async () => ({
+            retiredReleaseTracks: unlinkRetiredLibraryFiles(previousReleaseTracks, destFile, "track"),
+            removedSiblings: this.unlinkSiblingMediaVariants(destFile),
+          }),
+        );
 
         // Batch all per-track DB writes in a single transaction.
         // This reduces ~5-6 auto-commits per track to 1 committed batch.
         const mediaIdStr = trackRow?.id ? String(trackRow.id) : trackId;
-        let importedTrackFileId: number | null = null;
         await withSqliteWriteGate(() => db.transaction(() => {
           const libraryFileId = this.persistLibraryFile({
             artistId,
@@ -2412,17 +2475,10 @@ export class OrganizerService {
             console.warn(`[Organizer] Failed to record track import history for ${mediaIdStr}:`, historyError);
           }
 
-          if (mediaIdStr) {
-            this.cleanupOldMediaFiles(
-              mediaIdStr,
-              destFile,
-              "track",
-              canonicalIdentity.librarySlot ?? null,
-              canonicalIdentity.provider,
-            );
-            this.cleanupSiblingMediaVariants(destFile, "track");
-          }
+          forgetRetiredLibraryFileRows(retiredReleaseTracks, destFile, "track");
+          this.forgetSiblingMediaVariantRows(removedSiblings, destFile, "track");
         })(), "import:media-commit");
+        });
 
         if (metadataConfig.save_lyrics && trackId) {
           try {
@@ -2491,6 +2547,28 @@ export class OrganizerService {
           trackStatus: "completed",
           statusMessage: `Imported ${trackTitle}`,
         });
+        } catch (error) {
+          const cause = this.describeOrganizeTrackFailure(error, destFile);
+          const provider = canonicalContext?.provider || raw.provider || getDefaultStreamingSource();
+          trackGaps.push({
+            position: trackNumber != null ? `${volumeNumber ?? 1}-${trackNumber}` : null,
+            title: trackTitle,
+            providerId: `${provider}:${trackId}`,
+            cause,
+          });
+          onProgress?.({
+            phase: "importing",
+            currentFileNum: destFiles.length + 1,
+            totalFiles: totalImportableTracks,
+            currentTrack: trackTitle,
+            currentTrackNum: trackNumber ?? null,
+            currentVolumeNum: volumeNumber ?? null,
+            currentProviderTrackId: trackId ? String(trackId) : null,
+            trackStatus: "error",
+            statusMessage: cause,
+          });
+          console.warn(`[Organizer] Failed to import offered track ${trackId}: ${cause}`);
+        }
       }
 
       onProgress?.({
@@ -2518,11 +2596,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture) {
-        // Materialize only the cached full-resolution master. Network artwork
-        // acquisition is centralized in refresh/match workflows, so a cache miss
-        // is harmless here and can be reconciled by a later metadata backfill.
+        // Import materializes the selected full-resolution source in the library.
         try {
-          syncCachedMediaCoverToFile({
+          await resolveArtistArtwork({ artistMbid: artistMbId || artistId });
+          await materializeMediaCoverToFile({
             libraryRoot: targetRoot,
             entityId: artistMbId || artistId,
             coverEntity: "Artist",
@@ -2544,7 +2621,7 @@ export class OrganizerService {
             });
           }
         } catch (error) {
-          console.warn(`[Organizer] Failed to materialize cached artist picture for ${artistId}; import already complete:`, error);
+          console.warn(`[Organizer] Failed to materialize selected artist picture for ${artistId}; import already complete:`, error);
         }
       }
 
@@ -2556,20 +2633,21 @@ export class OrganizerService {
           expectedPath: albumCoverPath,
           libraryRoot: targetRoot,
           fileType: "cover",
+          releaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid || null,
+          releaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || null,
         });
       }
       if (metadataConfig.save_album_cover) {
-        // Materialize only the canonical album's cached full-resolution master.
-        // This path neither chooses a provider nor performs network I/O.
+        // Fetch only artwork already selected by the canonical refresh/match workflow.
         try {
-          const syncResult = syncCachedMediaCoverToFile({
+          const syncResult = await materializeMediaCoverToFile({
             libraryRoot: targetRoot,
             entityId: jobReleaseMbid || canonicalContext?.releaseMbid,
             coverEntity: "Edition",
             coverTypes: "cover",
             outputPath: albumCoverPath,
           });
-          if (syncResult === "missing") syncCachedMediaCoverToFile({
+          if (syncResult === "missing") await materializeMediaCoverToFile({
             entityId: canonicalContext?.releaseGroupMbid, coverEntity: "Album", outputPath: albumCoverPath,
           });
           if (fs.existsSync(albumCoverPath)) {
@@ -2610,6 +2688,8 @@ export class OrganizerService {
           expectedPath: albumVideoCoverPath,
           libraryRoot: targetRoot,
           fileType: "video_cover",
+          releaseMbid: jobReleaseMbid || canonicalContext?.releaseMbid || null,
+          releaseGroupMbid: jobReleaseGroupMbid || canonicalContext?.releaseGroupMbid || null,
         });
       }
       if (metadataConfig.save_album_cover && albumVideoCoverId && !fs.existsSync(albumVideoCoverPath)) {
@@ -2748,6 +2828,7 @@ export class OrganizerService {
         type: "album",
         providerId,
         processedTrackIds: [...destFiles.map((file) => file.trackId), ...bundledVideoIds],
+        trackGaps,
         totalTracksInStaging: files.length,
         expectedTracks,
         importedTrackFileIds,
@@ -2893,11 +2974,6 @@ export class OrganizerService {
       const artistMbId = artistContext.artistMbId;
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
-      const artistFolder = resolveArtistFolderFromRecord({
-        name: resolvedArtistName,
-        mbid: artistMbId || null,
-        path: artistContext.artistPath || null,
-      });
 
       const requestedSlot = requestedTarget?.slot || raw.slot;
       if (requestedSlot !== "stereo" && requestedSlot !== "spatial") {
@@ -2905,6 +2981,12 @@ export class OrganizerService {
       }
       const isSpatial = requestedSlot === "spatial";
       const targetRoot = requestedTarget?.rootPath || (isSpatial ? spatialRoot : musicRoot);
+      const artistFolder = resolveArtistFolderForImport({
+        artistId,
+        artistName: resolvedArtistName,
+        artistMbId,
+        existingPath: artistContext.artistPath || null,
+      }, targetRoot);
 
       const jobCanonicalTrackMbid = String(raw.canonicalTrackMbid || "").trim() || null;
       const jobCanonicalRecordingMbid = String(raw.canonicalRecordingMbid || "").trim() || null;
@@ -2960,7 +3042,7 @@ export class OrganizerService {
       const trackNamingTemplate = path.join(artistFolder, trackTemplate);
       const metrics = await parseAudioFile(src);
       const derivedQuality = deriveQuality(ext, metrics);
-        if (!metrics.codec || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
+        if (!metrics.codec || derivedQuality === "UNKNOWN" || isSpatialAudioQuality(derivedQuality) !== isSpatial) {
           throw new Error("Probed audio does not match the requested library slot");
         }
 
@@ -3016,28 +3098,48 @@ export class OrganizerService {
         musicRoot,
         spatialRoot,
         mustDisambiguate: this.hasConflictingMediaDestination(
-          path.join(targetRoot, artistFolder, `${renderedTrackPath}${ext}`),
+          path.join(targetRoot, artistFolder, joinCappedFileName(renderedTrackPath, ext)),
           providerId,
           "track",
         ),
       });
 
-      const dest = path.join(targetRoot, artistFolder, `${relativeTrackPath}${ext}`);
-      this.moveFileCrossDevice(src, dest);
+      const dest = path.join(targetRoot, artistFolder, joinCappedFileName(relativeTrackPath, ext));
+      const previousReleaseTracks = this.previousReleaseTrackFiles({
+        trackMbid: trackIdentity.canonicalTrackMbid,
+        releaseMbid: trackIdentity.canonicalReleaseMbid,
+        mediumPosition: volumeNumber,
+        position: trackNumber,
+        librarySlot: trackIdentity.librarySlot,
+        newFilePath: dest,
+      });
+      let importedTrackFileId: number | null = null;
+      await this.holdImportFolders([
+        src,
+        dest,
+        ...previousReleaseTracks.map((row) => row.resolvedPath),
+      ], async () => {
+      await this.moveFileCrossDevice(src, dest);
 
       for (const lyricExtension of LYRIC_SIDECAR_EXTENSIONS) {
         const srcLyricFile = src.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
         const destLyricFile = dest.replace(new RegExp(`\\${ext}$`, "i"), lyricExtension);
         if (fs.existsSync(srcLyricFile)) {
-          this.moveFileCrossDevice(srcLyricFile, destLyricFile);
+          await this.moveFileCrossDevice(srcLyricFile, destLyricFile);
         }
       }
 
       // Fingerprinting and embedded tags are applied by the post-organize
       // import finalizer after MusicBrainz identity is resolved.
       const fileFingerprint: string | null = null;
+      const { retiredReleaseTracks, removedSiblings } = await withHddIoPermit(
+        this.importDiskMeta(),
+        async () => ({
+          retiredReleaseTracks: unlinkRetiredLibraryFiles(previousReleaseTracks, dest, "track"),
+          removedSiblings: this.unlinkSiblingMediaVariants(dest),
+        }),
+      );
       // Batch all per-track DB writes in a single transaction.
-      let importedTrackFileId: number | null = null;
       await withSqliteWriteGate(() => db.transaction(() => {
         const libraryFileId = this.persistLibraryFile({
           artistId,
@@ -3086,11 +3188,12 @@ export class OrganizerService {
           console.warn(`[Organizer] Failed to record track import history for ${providerId}:`, historyError);
         }
 
-        // Keep the track branch aligned with album/video organization so quality
-        // changes replace the previous file instead of leaving duplicates behind.
-        this.cleanupOldMediaFiles(providerId, dest, "track", trackIdentity.librarySlot ?? null, streamingProviderId);
-        this.cleanupSiblingMediaVariants(dest, "track");
+        // Same release track only. A shared provider id or recording must not
+        // retire another album's file.
+        forgetRetiredLibraryFileRows(retiredReleaseTracks, dest, "track");
+        this.forgetSiblingMediaVariantRows(removedSiblings, dest, "track");
       })(), "import:media-commit");
+      });
 
       if (metadataConfig.save_lyrics) {
         try {
@@ -3149,11 +3252,10 @@ export class OrganizerService {
         });
       }
       if (metadataConfig.save_artist_picture) {
-        // Materialize only the cached full-resolution master. Network artwork
-        // acquisition is centralized in refresh/match workflows, so a cache miss
-        // is harmless here and can be reconciled by a later metadata backfill.
+        // Import materializes the selected full-resolution source in the library.
         try {
-          syncCachedMediaCoverToFile({
+          await resolveArtistArtwork({ artistMbid: artistMbId || artistId });
+          await materializeMediaCoverToFile({
             libraryRoot: targetRoot,
             entityId: artistMbId || artistId,
             coverEntity: "Artist",
@@ -3175,7 +3277,7 @@ export class OrganizerService {
             });
           }
         } catch (error) {
-          console.warn(`[Organizer] Failed to materialize cached artist picture for ${artistId}; import already complete:`, error);
+          console.warn(`[Organizer] Failed to materialize selected artist picture for ${artistId}; import already complete:`, error);
         }
       }
 
@@ -3191,19 +3293,20 @@ export class OrganizerService {
           expectedPath: albumCoverPath,
           libraryRoot: targetRoot,
           fileType: "cover",
+          releaseMbid: trackIdentity.canonicalReleaseMbid || null,
+          releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || null,
         });
       }
       if (metadataConfig.save_album_cover) {
-        // Materialize only the canonical album's cached full-resolution master.
-        // This path neither chooses a provider nor performs network I/O.
-        const syncResult = syncCachedMediaCoverToFile({
+        // Fetch only artwork already selected by the canonical refresh/match workflow.
+        const syncResult = await materializeMediaCoverToFile({
           libraryRoot: targetRoot,
           entityId: trackIdentity.canonicalReleaseMbid,
           coverEntity: "Edition",
           coverTypes: "cover",
           outputPath: albumCoverPath,
         });
-        if (syncResult === "missing") syncCachedMediaCoverToFile({
+        if (syncResult === "missing") await materializeMediaCoverToFile({
           entityId: trackIdentity.canonicalReleaseGroupMbid, coverEntity: "Album", outputPath: albumCoverPath,
         });
         if (fs.existsSync(albumCoverPath)) {
@@ -3241,6 +3344,8 @@ export class OrganizerService {
           expectedPath: albumVideoCoverPath,
           libraryRoot: targetRoot,
           fileType: "video_cover",
+          releaseMbid: trackIdentity.canonicalReleaseMbid || null,
+          releaseGroupMbid: trackIdentity.canonicalReleaseGroupMbid || null,
         });
       }
       if (metadataConfig.save_album_cover && albumVideoCoverId && !fs.existsSync(albumVideoCoverPath)) {
@@ -3496,17 +3601,19 @@ export class OrganizerService {
 
       const resolvedArtistName = artistName || "Unknown Artist";
       const naming = getNamingConfig();
-      const artistFolder = resolveArtistFolderFromRecord({
-        name: resolvedArtistName,
-        mbid: artistMbId || null,
-        path: artistPath || null,
-      });
+      const videoRoot = Config.getVideoPath();
+      const artistFolder = resolveArtistFolderForImport({
+        artistId,
+        artistName: resolvedArtistName,
+        artistMbId,
+        existingPath: artistPath || null,
+      }, videoRoot || Config.getMusicPath());
       const videoNamingTemplate = path.join(artistFolder, naming.video_file);
 
       const ext = path.extname(src);
       const sourceMetrics = await parseAudioFile(src);
       const sourceVideoQuality = deriveVideoQuality(sourceMetrics) ?? video.quality ?? null;
-      const separatedDestName = `${renderFileStem(naming.video_file, {
+      const separatedDestName = joinCappedFileName(renderFileStem(naming.video_file, {
         provider: videoProvider,
         artistName: resolvedArtistName,
         artistId,
@@ -3523,7 +3630,7 @@ export class OrganizerService {
         sampleRate: sourceMetrics.sampleRate || null,
         bitDepth: sourceMetrics.bitDepth || null,
         channels: sourceMetrics.channels || null,
-      })}.mp4`;
+      }), ".mp4");
       const separatedDest = path.join(videoRoot, artistFolder, separatedDestName);
       const artistMetadataId = resolveArtistMetadataId(artistId);
       if (artistMetadataId == null) {
@@ -3564,23 +3671,35 @@ export class OrganizerService {
         };
       }
       this.ensureDir(path.dirname(dest));
+      const previousVideos = listPreviousVideoFiles({
+        provider: videoProvider,
+        providerVideoId: providerId,
+        newFilePath: dest,
+      });
 
+      let derivedVideoQuality = sourceVideoQuality;
+      let libraryFileId: number | null = null;
       // Convert to MP4 directly from source into destination if not already MP4
+      await this.holdImportFolders([
+        src,
+        dest,
+        ...previousVideos.map((row) => row.resolvedPath),
+      ], async () => {
       if (ext !== '.mp4') {
         console.log(`[Organizer] Converting video ${src} to ${dest}...`);
-        const success = await convertToMp4(src, dest);
+        const success = await withHddIoPermit(this.importDiskMeta(), () => convertToMp4(src, dest));
         if (!success) {
           throw new Error(`[Organizer] MP4 conversion failed for ${src}`);
         }
         // Cleanup the parsed source TS/MKV file if successful
         try { fs.rmSync(src, { force: true }); } catch (e) { console.warn('Failed to delete source video', e); }
       } else {
-        this.moveFileCrossDevice(src, dest);
+        await this.moveFileCrossDevice(src, dest);
       }
 
       // Analyze file quality/resolution from the actual downloaded file.
-      const metrics = await parseAudioFile(dest);
-      const derivedVideoQuality = deriveVideoQuality(metrics) ?? video.quality ?? null;
+      const metrics = await withHddIoPermit(this.importDiskMeta(), () => parseAudioFile(dest));
+      derivedVideoQuality = deriveVideoQuality(metrics) ?? video.quality ?? null;
       const videoIdentity = resolveLibraryFileIdentity({
         artistId,
         albumId: video.album_id ? String(video.album_id) : null,
@@ -3592,9 +3711,15 @@ export class OrganizerService {
         providerEntityType: "video",
         providerId,
       });
+      const { retiredVideos, removedSiblings } = await withHddIoPermit(
+        this.importDiskMeta(),
+        async () => ({
+          retiredVideos: unlinkRetiredLibraryFiles(previousVideos, dest, "video"),
+          removedSiblings: this.unlinkSiblingMediaVariants(dest),
+        }),
+      );
 
       // Batch all per-video DB writes in a single transaction.
-      let libraryFileId: number | null = null;
       await withSqliteWriteGate(() => db.transaction(() => {
         libraryFileId = this.persistLibraryFile({
           artistId,
@@ -3643,10 +3768,10 @@ export class OrganizerService {
           console.warn(`[Organizer] Failed to record video import history for ${providerId}:`, historyError);
         }
 
-        // Clean up any other old files for this video (handles extension changes beyond .ts → .mp4)
-        this.cleanupOldMediaFiles(providerId, dest, "video", videoIdentity.librarySlot ?? null, videoProvider);
-        this.cleanupSiblingMediaVariants(dest, "video");
+        forgetRetiredLibraryFileRows(retiredVideos, dest, "video");
+        this.forgetSiblingMediaVariantRows(removedSiblings, dest, "video");
       })(), "import:media-commit");
+      });
 
       await this.ensureVideoThumbnailSidecar({
         artistId,

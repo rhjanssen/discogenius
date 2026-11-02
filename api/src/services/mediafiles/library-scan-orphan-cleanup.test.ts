@@ -348,6 +348,63 @@ test("an unavailable root preserves tracked and unmapped inventory", async () =>
   } finally { db.prepare("DELETE FROM UnmappedFiles WHERE library_root=?").run(offline); }
 });
 
+test("an empty mount point preserves tracked and unmapped ownership", async () => {
+  seedCanonicalArtistGraph();
+  insertMissingTrackFile("track-1", "recording-1", "offline.flac", null);
+  const empty = fs.mkdtempSync(path.join(tempDir, "empty-mount-"));
+  db.prepare("UPDATE TrackFiles SET library_root=?, file_path=? WHERE filename='offline.flac'")
+    .run(empty, path.join(empty, "offline.flac"));
+  db.prepare(`INSERT INTO UnmappedFiles (file_path,relative_path,library_root,filename,extension,file_size)
+      VALUES (?, 'review.flac', ?, 'review.flac', 'flac', 1)`).run(path.join(empty, "review.flac"), empty);
+  try {
+    const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid='artist-mbid'").get() as { id: number };
+    await assert.rejects(DiskScanService.scan({ artistIds: [String(artist.id)] }), /root unavailable or empty/);
+    await assert.rejects(DiskScanService.pruneUnmappedFiles(), /root unavailable or empty/);
+    assert.equal((db.prepare("SELECT count(*) n FROM TrackFiles").get() as { n: number }).n, 1);
+    assert.ok(db.prepare("SELECT 1 FROM UnmappedFiles WHERE library_root=?").get(empty));
+  } finally { fs.rmdirSync(empty); }
+});
+
+test("tracked files reappearing during writer contention retain ownership", async () => {
+  seedCanonicalArtistGraph();
+  insertMissingTrackFile("track-1", "recording-1", "reappeared.wav", null);
+  const file = path.join(tempDir, "reappeared.wav");
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:orphan-file-reappears");
+  await ready;
+  const timer = setTimeout(() => { writePcmWav(file); release(); }, 30);
+  try {
+    const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid='artist-mbid'").get() as { id: number };
+    const result = await DiskScanService.scan({ artistIds: [String(artist.id)], trackUnmappedFiles: false });
+    assert.equal(result.orphansRemoved, 0);
+    assert.ok(db.prepare("SELECT 1 FROM TrackFiles WHERE filename='reappeared.wav'").get());
+  } finally { clearTimeout(timer); release(); await blocker; fs.rmSync(file, { force: true }); }
+});
+
+test("review files reappearing during writer contention retain their ignore decision", async () => {
+  const file = path.join(tempDir, "review-reappeared.wav");
+  db.prepare(`INSERT INTO UnmappedFiles (file_path,relative_path,library_root,filename,extension,file_size,ignored)
+      VALUES (?, 'review-reappeared.wav', ?, 'review-reappeared.wav', 'wav', 1, 1)`).run(file, tempDir);
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>(resolve => { acquired = resolve; });
+  const blocker = dbModule.withSqliteWriteGate(() => {
+    acquired();
+    return new Promise<void>(resolve => { release = resolve; });
+  }, "test:review-file-reappears");
+  await ready;
+  const timer = setTimeout(() => { writePcmWav(file); release(); }, 30);
+  try {
+    assert.equal(await DiskScanService.pruneUnmappedFiles(), 0);
+    assert.deepEqual(db.prepare("SELECT ignored FROM UnmappedFiles WHERE file_path=?").get(file), { ignored: 1 });
+  } finally { clearTimeout(timer); release(); await blocker; fs.rmSync(file, { force: true }); }
+});
+
 test("scan waits for an active database writer before updating changed and verified file facts", async () => {
   seedCanonicalArtistGraph();
   const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number };

@@ -24,6 +24,8 @@ import type {
 } from "../../utils/queue-history-query.js";
 import { resolveRequestedVideoOffer } from "../music/video-offer-resolver.js";
 import { formatDisambiguatedTitle } from "../../utils/display-title.js";
+import { acquisitionWaitMessage } from "../music/acquisition-download-command.js";
+import { authHoldMessageFromPayload } from "../providers/provider-auth-state.js";
 
 type QueueJobRow = {
   id: number;
@@ -708,7 +710,7 @@ function parsePayloadValue(value: unknown): Record<string, unknown> {
 function waitRowToQueueJob(row: WaitQueueJoinedRow): QueueJobRow {
   const waitPayload = parsePayloadValue(row.wait_payload);
   const commandPayload = parsePayloadValue(row.command_payload);
-  const payload = {
+  const payload: Record<string,unknown> = {
     ...waitPayload,
     ...commandPayload,
     provider: row.provider ?? commandPayload.provider ?? waitPayload.provider,
@@ -723,6 +725,22 @@ function waitRowToQueueJob(row: WaitQueueJoinedRow): QueueJobRow {
     artist_id: row.artist_id ?? commandPayload.artist_id ?? waitPayload.artist_id,
     artistId: row.artist_id ?? commandPayload.artistId ?? waitPayload.artistId,
   };
+  if (row.command_id === null) {
+    // A waiting request has no running attempt. Keep persisted recovery evidence
+    // intact, but do not advertise its old active track, rate or status message.
+    const saved=parsePayloadValue(payload.downloadState);
+    if (Object.keys(saved).length) {
+      const display={...saved,state:"queued"} as Record<string,unknown>;
+      for (const key of ["statusMessage","currentTrack","currentProviderTrackId","currentTrackNum",
+        "currentVolumeNum","trackProgress","trackStatus","speed","eta"]) delete display[key];
+      if (Array.isArray(saved.tracks)) display.tracks=saved.tracks.map(value=>{
+        if (!value || typeof value!=="object" || Array.isArray(value)) return value;
+        const track=value as Record<string,unknown>;
+        return track.status==="downloading" || track.status==="importing" ? {...track,status:"queued"} : track;
+      });
+      payload.downloadState=display;
+    }
+  }
   const status = row.command_status === "started" || row.command_status === "failed"
     ? row.command_status
     : "queued";
@@ -1369,7 +1387,9 @@ export class DownloadQueueQueryService {
         : getOptionalNumber(job.payload?.volumeNumber) ?? undefined,
       trackProgress: typeof downloadState.trackProgress === "number" ? downloadState.trackProgress : undefined,
       trackStatus: getOptionalString(downloadState.trackStatus) as QueueItemContract["trackStatus"] | undefined,
-      statusMessage: getOptionalString(downloadState.statusMessage) ?? undefined,
+      statusMessage: authHoldMessageFromPayload(job.payload?.authHold)
+        ?? getOptionalString(downloadState.statusMessage)
+        ?? acquisitionWaitMessage(job.payload?.acquisitionWaitReason),
       state: getOptionalString(downloadState.state) as QueueItemContract["state"] | undefined,
       outcome: (() => {
         const outcome = getOptionalString(downloadState.outcome);

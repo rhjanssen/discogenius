@@ -11,8 +11,10 @@ import {
 
 export async function persistRootReviewCandidates(candidates: ImportCandidate[]) {
     if (candidates.length === 0) {
-        return;
+        return 0;
     }
+    let added = 0;
+    const existingReview = db.prepare("SELECT 1 FROM UnmappedFiles WHERE file_path = ?");
 
     const upsertUnmappedFile = db.prepare(`
         INSERT INTO UnmappedFiles (
@@ -76,6 +78,7 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
                     bitsPerSample: merged.bitDepth,
                     numberOfChannels: merged.channels,
                     codec: merged.codec,
+                    codecProfile: merged.codecProfile,
                 }, file.extension);
             }
 
@@ -84,6 +87,7 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
             // those reads were in flight. Preserve an existing ignore decision.
             await withSqliteWriteGate(() => {
             if (owned(file.path)) return;
+            const alreadyReviewed = Boolean(existingReview.get(file.path));
             upsertUnmappedFile.run(
                 file.path,
                 path.relative(candidate.group.rootPath, file.path),
@@ -103,7 +107,9 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
                 metrics.audioQuality,
                 candidate.matches[0]?.rejections?.join("; ") || "Manual review required after root folder scan",
             );
+            if (!alreadyReviewed) added++;
             }, "scan:root-review-file");
         }
     }
+    return added;
 }
