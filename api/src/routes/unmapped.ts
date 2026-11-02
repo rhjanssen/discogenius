@@ -277,6 +277,32 @@ router.post("/identify", async (req, res) => {
 });
 
 /**
+ * POST /api/unmapped/auto-import
+ * Body: { ids: number[], dryRun?: boolean }
+ * Matches each folder like Lidarr (release id, then tag distance against
+ * official catalog releases). dryRun reports the planned monitor, rename,
+ * retag, and cover actions and does not queue work or touch files.
+ */
+router.post("/auto-import", async (req, res) => {
+    try {
+        const body = getObjectBody(req.body);
+        rejectUnknownKeys(body, ["ids", "dryRun"]);
+        if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+            return res.status(400).json({ error: "dryRun must be a boolean" });
+        }
+        const ids = getRequiredIntegerArray(body, "ids");
+        const result = await unmappedFilesService.autoImportByIds(ids, { dryRun: body.dryRun === true });
+        res.json(result);
+    } catch (error: any) {
+        if (isRequestValidationError(error)) {
+            return res.status(400).json({ error: error.message });
+        }
+        console.error("[Unmapped API] Error auto-importing files:", error);
+        res.status(500).json({ error: error.message || "Failed to auto-import files" });
+    }
+});
+
+/**
  * POST /api/unmapped/bulk-map
  * Provider-keyed bulk mapping was retired in favor of typed canonical imports.
  */

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldTagManuallyImportedFiles } from "./manual-import-service.js";
+import { shouldApplyCanonicalImportTags, shouldTagManuallyImportedFiles } from "./manual-import-service.js";
 
 test("shouldTagManuallyImportedFiles follows Lidarr's existing-file tag policies", () => {
   assert.equal(shouldTagManuallyImportedFiles({ write_audio_tags_policy: "no" } as any), false);
@@ -12,4 +12,10 @@ test("shouldTagManuallyImportedFiles follows Lidarr's existing-file tag policies
   // Sync is All Files plus the metadata-refresh retag pass. Existing files are
   // therefore tagged at import just as they are under All Files.
   assert.equal(shouldTagManuallyImportedFiles({ write_audio_tags_policy: "sync" } as any), true);
+});
+
+test("auto-import writes standard tags even when the policy only tags new downloads", () => {
+  const policy = { write_audio_tags_policy: "new_files" } as any;
+  assert.equal(shouldApplyCanonicalImportTags(policy, false), false);
+  assert.equal(shouldApplyCanonicalImportTags(policy, true), true);
 });

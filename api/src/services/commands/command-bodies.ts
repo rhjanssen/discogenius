@@ -376,6 +376,11 @@ export interface ImportProviderArtistsCommand extends CommandBodyCommon {
 export interface ImportUnmappedFilesCommand extends CommandBodyCommon {
   /** @deprecated Provider-keyed manual imports are rejected at the handler boundary. */
   items?: Array<{ id: number; providerId: string }>;
+  /**
+   * Auto-import of foreign files writes the standard tags and cover even when
+   * the library policy only tags Discogenius's own new downloads.
+   */
+  applyStandardTags?: boolean;
   canonical?: {
     libraryId: number;
     editionId: number;
