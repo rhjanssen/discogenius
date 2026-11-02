@@ -48,6 +48,15 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Install ffmpeg and mutagen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python3 -m pip install --break-system-packages 'mutagen==1.47.0'
+          if [ -x /usr/local/bin/python3 ]; then
+            /usr/local/bin/python3 -m pip install --break-system-packages 'mutagen==1.47.0'
+          fi
+
       - name: Validate release
         run: yarn ci
 
