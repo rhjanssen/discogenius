@@ -196,7 +196,7 @@ dbModule.db.prepare(`
   assert.equal(byKey.get("musicbrainz_releasegroupid"), "release-group-mbid-1");
   assert.equal(byKey.get("musicbrainz_releasetrackid"), "track-mbid-1");
   assert.equal(byKey.get("release_status"), "official");
-  assert.equal(byKey.get("release_type"), "album; compilation");
+  assert.equal(byKey.get("release_type"), "album;compilation");
   assert.equal(byKey.get("itunesadvisory"), "1");
   assert.equal(byKey.get("replaygain_track_gain"), "-7.31 dB");
   assert.equal(byKey.get("replaygain_track_peak"), "0.967717");

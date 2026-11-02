@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sys
 
 from mutagen.flac import FLAC, Picture
@@ -99,11 +100,34 @@ def mp4_key(raw_key: str) -> str:
     return MP4_STRING_KEYS.get(raw_key.lower(), raw_key)
 
 
+def compact_tag_key(key: str) -> str:
+    lowered = key.lower()
+    if lowered.startswith("----:") or lowered.startswith("txxx:"):
+        lowered = lowered.rsplit(":", 1)[-1]
+    return re.sub(r"[^a-z0-9]", "", lowered)
+
+
+def is_release_type_key(key: str) -> bool:
+    return compact_tag_key(key) in {"releasetype", "musicbrainzalbumtype"}
+
+
+def release_type_values(value: str) -> list[str]:
+    shielded = re.sub(r"mixtape/street", "\0", value, flags=re.IGNORECASE)
+    values = []
+    for part in shielded.split(";"):
+        restored = part.replace("\0", "mixtape/street").strip()
+        if restored:
+            values.append(restored)
+    return values
+
+
 def mp4_value(key: str, value: str):
     if key in {"rtng", "stik"}:
         return [int(value)]
     if key in {"----:com.apple.iTunes:ISRC", "----:com.apple.iTunes:MusicBrainz Artist Id", "----:com.apple.iTunes:MusicBrainz Album Artist Id"}:
         return [part.strip().encode("utf-8") for part in value.split(";") if part.strip()]
+    if is_release_type_key(key):
+        return [part.encode("utf-8") for part in release_type_values(value)]
     if key.startswith("----:"):
         return [value.encode("utf-8")]
     if key in {"trkn", "disk"}:
@@ -149,10 +173,14 @@ def write_metadata(media_path: str, payload_path: str) -> None:
         audio.pop(str(key), None)
     for key, value in payload.get("tags", {}).items():
         if str(value):
-            values = str(value).split(";") if str(key).lower() in {
-                "isrc", "musicbrainz_artistid", "musicbrainz_albumartistid"
-            } else [str(value)]
-            audio[str(key)] = [value.strip() for value in values if value.strip()]
+            raw_key = str(key)
+            if is_release_type_key(raw_key):
+                values = release_type_values(str(value))
+            elif raw_key.lower() in {"isrc", "musicbrainz_artistid", "musicbrainz_albumartistid"}:
+                values = [part.strip() for part in str(value).split(";") if part.strip()]
+            else:
+                values = [str(value)]
+            audio[raw_key] = [part.strip() for part in values if part.strip()]
     audio.save()
     classes[extension](media_path)
 

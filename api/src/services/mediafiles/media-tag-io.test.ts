@@ -5,17 +5,22 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
+  ByteVector,
   File as TagLibFile,
   Id3v2FrameClassType,
   Id3v2Tag,
   Id3v2UserTextInformationFrame,
+  Mpeg4AppleDataBoxFlagType,
   Mpeg4AppleTag,
   ReadStyle,
+  StringType,
   TagTypes,
   XiphComment,
 } from "node-taglib-sharp";
 import {
+  MULTI_VALUE_TAG_KEYS,
   clearMediaTagsWithTagLib,
+  splitReleaseTypeValues,
   writeMediaTagsWithTagLib,
 } from "./media-tag-io.js";
 
@@ -305,6 +310,100 @@ test("TagLib work files do not exceed the filesystem name limit for long media n
     );
     assert.equal(decodedAudioHash(filePath), beforeHash);
     assert.deepEqual(fs.readdirSync(tempDir), [path.basename(filePath)]);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release_type is a multi-value tag and preserves mixtape/street", () => {
+  assert.equal(MULTI_VALUE_TAG_KEYS.has("release_type"), true);
+  assert.deepEqual(splitReleaseTypeValues("album;remix"), ["album", "remix"]);
+  assert.deepEqual(splitReleaseTypeValues("album; compilation"), ["album", "compilation"]);
+  assert.deepEqual(
+    splitReleaseTypeValues("album;mixtape/street"),
+    ["album", "mixtape/street"],
+  );
+});
+
+for (const format of [
+  { extension: ".flac", codec: ["-c:a", "flac"] },
+  { extension: ".opus", codec: ["-c:a", "libopus"] },
+] as const) {
+  test(`${format.extension} writes one RELEASETYPE field per MusicBrainz type`, { skip: !hasFfmpeg }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-release-type-"));
+    try {
+      const filePath = path.join(tempDir, `sample${format.extension}`);
+      generateAudio(filePath, format.codec);
+      const beforeHash = decodedAudioHash(filePath);
+      const result = await writeMediaTagsWithTagLib(filePath, { RELEASETYPE: "album;remix" });
+      assert.equal(result.success, true, result.error);
+      const file = TagLibFile.createFromPath(filePath, undefined, ReadStyle.None);
+      try {
+        const tag = file.getTag(TagTypes.Xiph, false) as XiphComment;
+        assert.deepEqual(tag.getField("RELEASETYPE"), ["album", "remix"]);
+      } finally {
+        file.dispose();
+      }
+      assert.equal(decodedAudioHash(filePath), beforeHash);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const version of [3, 4]) {
+  test(`MusicBrainz Album Type follows Picard's ID3v2.${version} multi-value form`, { skip: !hasFfmpeg }, async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-id3-release-type-"));
+    try {
+      const mediaPath = path.join(tempDir, "sample.mp3");
+      generateAudio(mediaPath, ["-c:a", "libmp3lame", "-id3v2_version", String(version)]);
+      const beforeHash = decodedAudioHash(mediaPath);
+      const result = await writeMediaTagsWithTagLib(mediaPath, {
+        "TXXX:MusicBrainz Album Type": "album;remix",
+      });
+      assert.equal(result.success, true, result.error);
+      const bytes = fs.readFileSync(mediaPath);
+      if (version === 4) {
+        assert.ok(bytes.includes(Buffer.from("album\0remix", "utf8")));
+      } else {
+        const joined = "album/remix";
+        assert.ok(bytes.includes(Buffer.from(joined, "utf8")) || bytes.includes(Buffer.from(joined, "utf16le")));
+        assert.equal(bytes.includes(Buffer.from("album\0remix", "utf8")), false);
+      }
+      assert.equal(decodedAudioHash(mediaPath), beforeHash);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("M4A writes each release type as its own freeform atom and leaves genre whole", { skip: !hasFfmpeg }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-m4a-release-type-"));
+  try {
+    const filePath = path.join(tempDir, "sample.m4a");
+    generateAudio(filePath, ["-c:a", "aac", "-f", "mp4"]);
+    const beforeHash = decodedAudioHash(filePath);
+    const genre = "Drum & Bass / Jungle";
+    const result = await writeMediaTagsWithTagLib(filePath, {
+      "----:com.apple.iTunes:MusicBrainz Album Type": "album;remix",
+      genre,
+    });
+    assert.equal(result.success, true, result.error);
+    const file = TagLibFile.createFromPath(filePath, undefined, ReadStyle.None);
+    try {
+      const tag = file.getTag(TagTypes.Apple, false) as Mpeg4AppleTag;
+      assert.deepEqual(tag.getItunesStrings("com.apple.iTunes", "MusicBrainz Album Type"), ["album", "remix"]);
+      assert.equal(
+        tag.getFirstQuickTimeData(
+          ByteVector.fromString("\xa9gen", StringType.Latin1),
+          Mpeg4AppleDataBoxFlagType.ContainsText,
+        )?.toString(StringType.UTF8),
+        genre,
+      );
+    } finally {
+      file.dispose();
+    }
+    assert.equal(decodedAudioHash(filePath), beforeHash);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
