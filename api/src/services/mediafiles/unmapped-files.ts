@@ -134,7 +134,7 @@ export class UnmappedFilesService {
         private readonly importService: ImportService = new ImportService(),
         private readonly identifyByAcoustId = identifyAudioFileByAcoustId,
         private readonly readEmbeddedRecordingMbid = readEmbeddedMusicBrainzRecordingMbid,
-        private readonly readTags: (filePath: string) => Promise<Record<string, string>> = readIdentityTags,
+        private readonly readTags: (filePath: string) => Promise<PlanningIdentity> = readIdentityTags,
     ) { }
 
     listFiles(limit?: number, offset?: number): { items: UnmappedFile[]; total: number } {
@@ -912,12 +912,14 @@ export class UnmappedFilesService {
         }));
         const autoFiles: AutoImportFile[] = [];
         for (const file of files) {
+            const identity = await this.readTags(file.file_path);
+            const storedDuration = file.duration != null && file.duration > 0 ? file.duration : null;
             autoFiles.push({
                 id: file.id,
                 libraryRoot: libraryRootPathFor(file.file_path, libraries) ?? file.library_root,
                 ignored: file.ignored,
-                durationSeconds: file.duration ?? null,
-                tags: await this.readTags(file.file_path),
+                durationSeconds: identity.durationSeconds ?? storedDuration,
+                tags: identity.tags,
             });
         }
 
@@ -1071,10 +1073,17 @@ function yearOf(date: string | null): number | null {
     return match ? Number(match[1]) : null;
 }
 
+export type PlanningIdentity = {
+    tags: Record<string, string>;
+    /** Seconds from the file itself. Null when the container does not say. */
+    durationSeconds: number | null;
+};
+
 /** Identity tags in the names planFolderAutoImport reads. Empty when the file cannot be parsed. */
-async function readIdentityTags(filePath: string): Promise<Record<string, string>> {
+async function readIdentityTags(filePath: string): Promise<PlanningIdentity> {
     try {
-        const { common } = await mm.parseFile(filePath, { skipCovers: true, duration: false });
+        const parsed = await mm.parseFile(filePath, { skipCovers: true, duration: true });
+        const { common } = parsed;
         const tags: Record<string, string> = {};
         const put = (key: string, value: unknown) => {
             if (value !== undefined && value !== null && String(value).trim()) tags[key] = String(value);
@@ -1091,8 +1100,10 @@ async function readIdentityTags(filePath: string): Promise<Record<string, string
         put("ARTIST", common.artist);
         put("MUSICBRAINZ_ALBUMARTISTID", common.musicbrainz_albumartistid?.[0]);
         put("DATE", common.year);
-        return tags;
+        const probed = parsed.format.duration;
+        const durationSeconds = typeof probed === "number" && Number.isFinite(probed) && probed > 0 ? probed : null;
+        return { tags, durationSeconds };
     } catch {
-        return {};
+        return { tags: {}, durationSeconds: null };
     }
 }

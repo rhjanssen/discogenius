@@ -99,7 +99,7 @@ function service(): InstanceType<typeof UnmappedFilesService> {
         new ImportService(),
         async () => ({ recordingIds: [] }) as unknown as AcoustIdIdentificationResult,
         async () => null,
-        async (filePath) => tags.get(filePath) ?? {},
+        async (filePath) => ({ tags: tags.get(filePath) ?? {}, durationSeconds: null }),
     );
 }
 

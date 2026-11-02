@@ -140,6 +140,30 @@ test("track length: free up to 10 s, full penalty at 40 s", () => {
     const mb = { id: 1, title: "X", position: 1, mediumPosition: 1, durationMs: 100_000, recordingMbid: null };
     assert.equal(lidarrTrackDistance(local, mb, 1).penalties.get("track_length")?.[0], 0);
     assert.equal(lidarrTrackDistance({ ...local, durationSeconds: 140 }, mb, 1).penalties.get("track_length")?.[0], 1);
+    assert.equal(lidarrTrackDistance({ ...local, durationSeconds: null }, mb, 1).penalties.has("track_length"), false);
+});
+
+test("a file with no length keeps the closer title, not the release that has no lengths", () => {
+    const file: AutoImportFile = {
+        id: 1,
+        libraryRoot: "/music/stereo",
+        ignored: false,
+        durationSeconds: null,
+        tags: { ALBUM: "1989", ALBUMARTIST: "Taylor Swift", TRACK: "1", TITLE: "Blank Space" },
+    };
+    const withLengths = candidate(7, "1989", [["Blank Space", 231]]);
+    const withoutLengths = candidate(8, "1989", [["Blank Spac", 1]]);
+    withoutLengths.tracks[0].durationMs = null;
+    const plan = planFolderAutoImport({
+        files: [file],
+        libraries,
+        findRelease,
+        folderArtistMbid: ART,
+        fingerprints: none,
+        findCandidates: () => [withoutLengths, withLengths],
+    });
+    assert.equal(plan.decision, "import", plan.decision === "review" ? plan.reason : "");
+    assert.equal(plan.decision === "import" && plan.editionId, 7);
 });
 
 test("bootlegs only when the status filter includes them and a provider offers the release", () => {

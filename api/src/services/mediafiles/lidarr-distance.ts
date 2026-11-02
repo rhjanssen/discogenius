@@ -138,7 +138,12 @@ export function totalTrackNumber(track: MbTrack, all: MbTrack[]): number {
 export function trackDistance(local: LocalTrackInfo, mb: MbTrack, total: number): Distance {
     const dist = new Distance();
     const mbLength = (mb.durationMs ?? 0) / 1000;
-    if (mbLength > 0) dist.addRatio("track_length", Math.abs((local.durationSeconds ?? 0) - mbLength) - 10, 30);
+    // An unknown local length is missing evidence, not a length of zero.
+    // Scoring it as 0s fully penalizes every catalog track that has a length,
+    // so a release with no lengths would win.
+    if (local.durationSeconds != null && mbLength > 0) {
+        dist.addRatio("track_length", Math.abs(local.durationSeconds - mbLength) - 10, 30);
+    }
     dist.addString("track_title", cleanTrackTitle(local.title ?? ""), mb.title);
     if ((local.trackNumber ?? 0) > 0 && mb.position > 0) {
         dist.addBool("track_index", local.trackNumber !== mb.position && local.trackNumber !== total);
