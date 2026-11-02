@@ -29,7 +29,12 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - `app/` — React + Vite + Fluent UI v9 + TanStack Query
 - `e2e/` — Playwright tests
 - `config/` — runtime state (TOML config, SQLite DB, provider tokens) — never commit
-- `.ref_*` — read-only reference checkouts; consult them, never import from them
+- `.ref_*` — read-only reference checkouts; consult them, never import from them. They are provided
+  by the Cloud Agent environment (not this repo); look here first when copying
+  an approach from another project: `.ref_apple-music-downloader`,
+  `.ref_arr_scripts`, `.ref_fluentui`, `.ref_immich`, `.ref_jellyfin`,
+  `.ref_kodi`, `.ref_lidarr`, `.ref_musicbrainz-docker`, `.ref_picard`,
+  `.ref_qbittorrent`, `.ref_tidarr`, `.ref_tiddl`, `.ref_yt-dlp`.
 - `docs/LIDARR_STRUCTURE_ALIGNMENT.md` is a historical folder-mapping reference.
 
 ## Architecture & development rules
