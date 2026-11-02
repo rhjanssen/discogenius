@@ -377,26 +377,29 @@ for (const version of [3, 4]) {
   });
 }
 
-test("M4A writes release type and genre as separate data atoms", { skip: !hasFfmpeg }, async () => {
+test("M4A writes each release type as its own freeform atom and leaves genre whole", { skip: !hasFfmpeg }, async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-m4a-release-type-"));
   try {
     const filePath = path.join(tempDir, "sample.m4a");
     generateAudio(filePath, ["-c:a", "aac", "-f", "mp4"]);
     const beforeHash = decodedAudioHash(filePath);
+    const genre = "Drum & Bass / Jungle";
     const result = await writeMediaTagsWithTagLib(filePath, {
       "----:com.apple.iTunes:MusicBrainz Album Type": "album;remix",
-      genre: "Indie Rock / Alternative",
+      genre,
     });
     assert.equal(result.success, true, result.error);
     const file = TagLibFile.createFromPath(filePath, undefined, ReadStyle.None);
     try {
       const tag = file.getTag(TagTypes.Apple, false) as Mpeg4AppleTag;
       assert.deepEqual(tag.getItunesStrings("com.apple.iTunes", "MusicBrainz Album Type"), ["album", "remix"]);
-      const genres = tag.getQuickTimeData(
-        ByteVector.fromString("\xa9gen", StringType.Latin1),
-        Mpeg4AppleDataBoxFlagType.ContainsText,
-      ).map((data) => data.toString(StringType.UTF8).replace(/\0+$/g, ""));
-      assert.deepEqual(genres, ["Indie Rock", "Alternative"]);
+      assert.equal(
+        tag.getFirstQuickTimeData(
+          ByteVector.fromString("\xa9gen", StringType.Latin1),
+          Mpeg4AppleDataBoxFlagType.ContainsText,
+        )?.toString(StringType.UTF8),
+        genre,
+      );
     } finally {
       file.dispose();
     }

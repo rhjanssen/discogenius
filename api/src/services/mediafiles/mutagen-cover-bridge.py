@@ -126,9 +126,6 @@ def mp4_value(key: str, value: str):
         return [int(value)]
     if key in {"----:com.apple.iTunes:ISRC", "----:com.apple.iTunes:MusicBrainz Artist Id", "----:com.apple.iTunes:MusicBrainz Album Artist Id"}:
         return [part.strip().encode("utf-8") for part in value.split(";") if part.strip()]
-    if key in {"\xa9gen", "genre"}:
-        genres = [part.strip() for part in re.split(r"\s+/\s+", value) if part.strip()]
-        return genres or [value]
     if is_release_type_key(key):
         return [part.encode("utf-8") for part in release_type_values(value)]
     if key.startswith("----:"):

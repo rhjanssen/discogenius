@@ -97,20 +97,26 @@ function isMultiValueTagKey(key: string): boolean {
   return false;
 }
 
+const MIXTAPE_STREET_SHIELD = "\u0000";
+
+function unshieldMixtapeStreet(value: string): string {
+  return value.split(MIXTAPE_STREET_SHIELD).join("mixtape/street");
+}
+
 /** Split a release-type string on `;`. `mixtape/street` stays one MusicBrainz type. */
 export function splitReleaseTypeValues(value: string): string[] {
-  const shielded = value.replace(/mixtape\/street/gi, "\u0000");
+  const shielded = value.replace(/mixtape\/street/gi, MIXTAPE_STREET_SHIELD);
   return shielded
     .split(";")
-    .map((part) => part.replace(/\u0000/g, "mixtape/street").trim())
+    .map((part) => unshieldMixtapeStreet(part).trim())
     .filter(Boolean);
 }
 
 export function releaseTypeTokens(value: string): string[] {
-  const shielded = value.replace(/mixtape\/street/gi, "\u0000");
+  const shielded = value.replace(/mixtape\/street/gi, MIXTAPE_STREET_SHIELD);
   return shielded
     .split(/[;/]/)
-    .map((part) => part.replace(/\u0000/g, "mixtape/street").trim().toLowerCase())
+    .map((part) => unshieldMixtapeStreet(part).trim().toLowerCase())
     .filter(Boolean);
 }
 
@@ -118,10 +124,6 @@ function sameReleaseTypeValues(actual: string, expected: string): boolean {
   const left = releaseTypeTokens(actual);
   const right = releaseTypeTokens(expected);
   return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function splitMp4Genres(value: string): string[] {
-  return value.split(/\s+\/\s+/).map((part) => part.trim()).filter(Boolean);
 }
 
 function isArtistIdList(key: string): boolean {
@@ -469,17 +471,6 @@ function setMp4Value(tag: Mpeg4AppleTag, rawKey: string, value: string): void {
     return;
   }
   const box = MP4_TEXT_KEYS[lower];
-  if (box === "\xa9gen") {
-    // setQuickTimeStrings joins with "; " into one data atom. Plex/iTunes read
-    // one genre per ©gen data atom, same as repeated Vorbis GENRE values.
-    const genres = splitMp4Genres(value);
-    tag.setQuickTimeData(
-      mp4BoxType(box),
-      (genres.length > 0 ? genres : [value]).map((genre) => ByteVector.fromString(genre, StringType.UTF8)),
-      Mpeg4AppleDataBoxFlagType.ContainsText,
-    );
-    return;
-  }
   if (box) {
     tag.setQuickTimeString(mp4BoxType(box), value);
     return;
@@ -525,12 +516,6 @@ function readMp4Value(tag: Mpeg4AppleTag, rawKey: string): string {
 function readMp4TextAtom(tag: Mpeg4AppleTag, box: string): string {
   // TagLib's string-list getter splits text on semicolons and trims every
   // segment. Comments and lyrics are single UTF-8 values, not artist lists.
-  if (box === "\xa9gen") {
-    const genres = tag.getQuickTimeData(mp4BoxType(box), Mpeg4AppleDataBoxFlagType.ContainsText)
-      .map((data) => data.toString(StringType.UTF8).replace(/\0+$/g, "").trim())
-      .filter(Boolean);
-    return genres.join(" / ");
-  }
   return tag.getFirstQuickTimeData(mp4BoxType(box), Mpeg4AppleDataBoxFlagType.ContainsText)
     ?.toString(StringType.UTF8) ?? "";
 }
