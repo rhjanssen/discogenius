@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   AudioTagService,
   buildEmbeddedLyricsManagedTag,
+  formatReleaseTypeTag,
   getCurrentTagValue,
   isAudioTagMaintenanceEnabled,
   isTagValueEqual,
@@ -509,6 +510,45 @@ test("getCurrentTagValue extracts all managed tags from common and native metada
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "musicbrainz_releasetrackid", label: "MusicBrainz Release Track ID", ffmpegKey: "musicbrainz_releasetrackid", targetValue: "" }), "trk-202");
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "isrc", label: "ISRC", ffmpegKey: "isrc", targetValue: "" }), "GBAYE7500001");
   assert.equal(getCurrentTagValue(metadata, lookup, { key: "copyright", label: "Copyright", ffmpegKey: "copyright", targetValue: "" }), "(P) 1976 Phonogram Ltd.");
+});
+
+test("formatReleaseTypeTag writes MusicBrainz primary then secondary types", () => {
+  assert.equal(formatReleaseTypeTag("Album", JSON.stringify(["Remix"])), "album;remix");
+  assert.equal(formatReleaseTypeTag("Album", JSON.stringify(["Compilation"])), "album;compilation");
+  assert.equal(formatReleaseTypeTag("Album", JSON.stringify(["Album", "Live", "Remix"])), "album;live;remix");
+  assert.equal(formatReleaseTypeTag("Album", JSON.stringify(["Mixtape/Street"])), "album;mixtape/street");
+  assert.equal(formatReleaseTypeTag("Single", "Remix"), "single;remix");
+  assert.equal(formatReleaseTypeTag(null, JSON.stringify(["Remix"])), "remix");
+  assert.equal(formatReleaseTypeTag(null, null), null);
+});
+
+test("release type retag fingerprint differs from the old single joined field", () => {
+  assert.equal(isTagValueEqual("release_type", "album; compilation", "album;compilation"), false);
+  assert.equal(isTagValueEqual("release_type", "album; remix", "album;remix"), false);
+  assert.equal(isTagValueEqual("release_type", "album;remix", "album;remix"), true);
+  assert.equal(isTagValueEqual("release_type", "album/remix", "album;remix"), true);
+  assert.equal(isTagValueEqual("release_type", "album/mixtape/street", "album;mixtape/street"), true);
+  assert.equal(isTagValueEqual("release_type", "album", "album"), true);
+});
+
+test("getCurrentTagValue keeps a legacy release type distinct from separate values", () => {
+  const legacy = {
+    common: { releasetype: ["album; compilation"] },
+    native: {},
+    format: {},
+    quality: { warnings: [] },
+  } as any;
+  const separate = {
+    common: { releasetype: ["album", "remix"] },
+    native: {},
+    format: {},
+    quality: { warnings: [] },
+  } as any;
+  const tag = { key: "release_type", label: "Release Type", ffmpegKey: "release_type", targetValue: "" };
+  assert.equal(getCurrentTagValue(legacy, new Map(), tag), "album; compilation");
+  assert.equal(getCurrentTagValue(separate, new Map(), tag), "album;remix");
+  assert.equal(isTagValueEqual("release_type", getCurrentTagValue(legacy, new Map(), tag), "album;compilation"), false);
+  assert.equal(isTagValueEqual("release_type", getCurrentTagValue(separate, new Map(), tag), "album;remix"), true);
 });
 
 test("isTagValueEqual compares multi-value tags and dates with semantic tolerance", () => {

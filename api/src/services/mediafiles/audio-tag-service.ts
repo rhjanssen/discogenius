@@ -1,5 +1,5 @@
 import fs from "fs";
-import { nativeMediaTagKeys } from "./media-tag-io.js";
+import { nativeMediaTagKeys, releaseTypeTokens } from "./media-tag-io.js";
 import { withMediaFileLock } from "./media-file-lock.js";
 import { parseRecordingIsrcs } from "../music/recording-coverage-units.js";
 import os from "node:os";
@@ -435,6 +435,49 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * MusicBrainz primary type, then each secondary type, lowercase and de-duplicated.
+ * Serialized with `;` and no space (`album;remix`) so it does not match the old
+ * single-field value `album; compilation` and a retag rewrites those files.
+ */
+export function formatReleaseTypeTag(
+  primaryType: string | null | undefined,
+  secondaryTypesRaw: string | null | undefined,
+): string | null {
+  const types: string[] = [];
+  const push = (value: string) => {
+    const type = value.trim().toLowerCase();
+    if (type && !types.includes(type)) types.push(type);
+  };
+  if (primaryType) push(primaryType);
+  const raw = String(secondaryTypesRaw || "").trim();
+  if (raw) {
+    let secondary: string[] = [];
+    if (raw.startsWith("[")) {
+      secondary = parseJsonStringList(raw);
+    } else {
+      secondary = raw.split(/[;,]/);
+    }
+    for (const type of secondary) push(type);
+  }
+  return types.length > 0 ? types.join(";") : null;
+}
+
+function restoreReleaseTypeParts(parts: string[]): string[] {
+  const restored: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const current = parts[index] || "";
+    const next = parts[index + 1] || "";
+    if (current.toLowerCase() === "mixtape" && next.toLowerCase() === "street") {
+      restored.push("mixtape/street");
+      index += 1;
+      continue;
+    }
+    restored.push(current);
+  }
+  return restored;
+}
+
 /** Parse Albums.genres / AlbumEditions.label JSON arrays into trimmed strings. */
 function parseJsonStringList(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -497,6 +540,16 @@ function normalizeComparableValue(value: string | null): string | null {
 }
 
 export function isTagValueEqual(tagKey: string, current: string | null, target: string | null): boolean {
+  if (tagKey === "release_type") {
+    const currentText = (current || "").trim();
+    const targetText = (target || "").trim();
+    if (currentText.toLowerCase() === targetText.toLowerCase()) return true;
+    // One field written as "album; compilation" is the old fingerprint. It must
+    // stay unequal to the multi-value form "album;compilation" so a retag
+    // rewrites the file. ID3v2.3's slash-joined readback is the same list.
+    if (/;\s/.test(currentText) && !/;\s/.test(targetText)) return false;
+    return releaseTypeTokens(currentText).join(";") === releaseTypeTokens(targetText).join(";");
+  }
   if (tagKey === "isrc") {
     const actual = parseRecordingIsrcs(current).sort();
     const expected = parseRecordingIsrcs(target).sort();
@@ -1151,8 +1204,18 @@ export function getCurrentTagValue(metadata: mm.IAudioMetadata, lookup: Map<stri
       return statusVal || (fallback() ? fallback()!.toLowerCase() : null);
     }
     case "release_type": {
-      const typeVal = Array.isArray(common.releasetype) ? common.releasetype.join("; ") : common.releasetype;
-      return normalizeValue(typeVal) || fallback();
+      const raw = common.releasetype;
+      const parts = (Array.isArray(raw) ? raw : raw ? [raw] : [])
+        .flatMap((item) => String(item).split("\u0000"))
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const restored = restoreReleaseTypeParts(parts);
+      if (restored.length === 0) return fallback();
+      // A single stored field keeps its original text, including the legacy
+      // "album; compilation" spacing that forces a retag. Separate values
+      // serialize as album;remix.
+      if (restored.length === 1) return restored[0];
+      return restored.join(";");
     }
     case "musicbrainz_recordingid":
       if (Object.keys(metadata.native || {}).some(format => format.startsWith("ID3v2"))) {
@@ -2545,23 +2608,7 @@ export class AudioTagService {
         });
       }
 
-      let releaseType: string | null = null;
-      if (row.release_primary_type) {
-        let secondaryList: string[] = [];
-        if (row.release_secondary_types) {
-          try {
-            secondaryList = JSON.parse(row.release_secondary_types)
-              .map((t: string) => t.toLowerCase())
-              .filter(Boolean);
-          } catch {
-            // ignore
-          }
-        }
-        const primary = row.release_primary_type.toLowerCase();
-
-        const typeSet = new Set<string>([primary, ...secondaryList]);
-        releaseType = Array.from(typeSet).join("; ");
-      }
+      const releaseType = formatReleaseTypeTag(row.release_primary_type, row.release_secondary_types);
       if (releaseType) {
         tags.push({
           key: "release_type",

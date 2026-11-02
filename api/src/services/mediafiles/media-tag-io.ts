@@ -70,6 +70,60 @@ const MP4_TEXT_KEYS: Record<string, string> = {
   isrc: "isrc",
 };
 
+/**
+ * Logical tag keys written as one value per field. `release_type` is the
+ * catalog key; the other entries are the native names the container writers
+ * pass into {@link tagValues} (Vorbis RELEASETYPE, ID3/MP4 MusicBrainz Album Type).
+ */
+export const MULTI_VALUE_TAG_KEYS = new Set([
+  "release_type",
+  "releasetype",
+  "musicbrainz album type",
+  "musicbrainz_albumtype",
+]);
+
+function compactTagKey(key: string): string {
+  let normalized = key.trim().toLowerCase();
+  if (normalized.startsWith("txxx:")) normalized = normalized.slice(5);
+  if (normalized.startsWith("----:com.apple.itunes:")) normalized = normalized.slice("----:com.apple.itunes:".length);
+  return normalized.replace(/[^a-z0-9]/g, "");
+}
+
+function isMultiValueTagKey(key: string): boolean {
+  const compact = compactTagKey(key);
+  for (const known of MULTI_VALUE_TAG_KEYS) {
+    if (compactTagKey(known) === compact) return true;
+  }
+  return false;
+}
+
+/** Split a release-type string on `;`. `mixtape/street` stays one MusicBrainz type. */
+export function splitReleaseTypeValues(value: string): string[] {
+  const shielded = value.replace(/mixtape\/street/gi, "\u0000");
+  return shielded
+    .split(";")
+    .map((part) => part.replace(/\u0000/g, "mixtape/street").trim())
+    .filter(Boolean);
+}
+
+export function releaseTypeTokens(value: string): string[] {
+  const shielded = value.replace(/mixtape\/street/gi, "\u0000");
+  return shielded
+    .split(/[;/]/)
+    .map((part) => part.replace(/\u0000/g, "mixtape/street").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function sameReleaseTypeValues(actual: string, expected: string): boolean {
+  const left = releaseTypeTokens(actual);
+  const right = releaseTypeTokens(expected);
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function splitMp4Genres(value: string): string[] {
+  return value.split(/\s+\/\s+/).map((part) => part.trim()).filter(Boolean);
+}
+
 function isArtistIdList(key: string): boolean {
   return /musicbrainz(?:album)?artistid$/i.test(key.replace(/[^a-z0-9]/gi, ""));
 }
@@ -77,6 +131,7 @@ function isArtistIdList(key: string): boolean {
 function tagValues(key: string, value: string): string[] {
   if (key.toLowerCase() === "isrc") return parseRecordingIsrcs(value);
   if (isArtistIdList(key)) return [...new Set(value.split(/[;,/\s]+/).filter(Boolean))];
+  if (isMultiValueTagKey(key)) return splitReleaseTypeValues(value);
   return value ? [value] : [];
 }
 
@@ -414,6 +469,17 @@ function setMp4Value(tag: Mpeg4AppleTag, rawKey: string, value: string): void {
     return;
   }
   const box = MP4_TEXT_KEYS[lower];
+  if (box === "\xa9gen") {
+    // setQuickTimeStrings joins with "; " into one data atom. Plex/iTunes read
+    // one genre per ©gen data atom, same as repeated Vorbis GENRE values.
+    const genres = splitMp4Genres(value);
+    tag.setQuickTimeData(
+      mp4BoxType(box),
+      (genres.length > 0 ? genres : [value]).map((genre) => ByteVector.fromString(genre, StringType.UTF8)),
+      Mpeg4AppleDataBoxFlagType.ContainsText,
+    );
+    return;
+  }
   if (box) {
     tag.setQuickTimeString(mp4BoxType(box), value);
     return;
@@ -459,6 +525,12 @@ function readMp4Value(tag: Mpeg4AppleTag, rawKey: string): string {
 function readMp4TextAtom(tag: Mpeg4AppleTag, box: string): string {
   // TagLib's string-list getter splits text on semicolons and trims every
   // segment. Comments and lyrics are single UTF-8 values, not artist lists.
+  if (box === "\xa9gen") {
+    const genres = tag.getQuickTimeData(mp4BoxType(box), Mpeg4AppleDataBoxFlagType.ContainsText)
+      .map((data) => data.toString(StringType.UTF8).replace(/\0+$/g, "").trim())
+      .filter(Boolean);
+    return genres.join(" / ");
+  }
   return tag.getFirstQuickTimeData(mp4BoxType(box), Mpeg4AppleDataBoxFlagType.ContainsText)
     ?.toString(StringType.UTF8) ?? "";
 }
@@ -533,6 +605,14 @@ function verifyTagLibValues(
     if (["isrc", "tsrc", "----:com.apple.itunes:isrc"].includes(key.toLowerCase())) {
       if (parseRecordingIsrcs(actual).sort().join(";") !== parseRecordingIsrcs(expected).sort().join(";")) {
         throw new Error(`ISRC verification failed for ${key}`);
+      }
+      continue;
+    }
+    if (isMultiValueTagKey(key)) {
+      // ID3v2.3 stores the list as one slash-joined string. Vorbis and MP4
+      // read back as separate values joined with "; ". Compare the type list.
+      if (!sameReleaseTypeValues(actual, expected)) {
+        throw new Error(`Release type verification failed for ${key}`);
       }
       continue;
     }
