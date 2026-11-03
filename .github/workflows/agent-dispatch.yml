@@ -185,12 +185,14 @@ jobs:
       - name: Bootstrap environment (scripts/agent-env/install.sh)
         run: bash scripts/agent-env/install.sh
 
-      - name: Configure Antigravity CLI Subscription OAuth (~/.gemini/antigravity-cli/antigravity-oauth-token)
+      - name: Configure Antigravity CLI Subscription OAuth (~/.gemini/jetski-standalone-oauth-token)
         run: |
           mkdir -p ~/.gemini/antigravity-cli
           if [ -n "$GEMINI_OAUTH_CREDS_JSON" ]; then
+            printf '%s\n' "$GEMINI_OAUTH_CREDS_JSON" > ~/.gemini/jetski-standalone-oauth-token
             printf '%s\n' "$GEMINI_OAUTH_CREDS_JSON" > ~/.gemini/antigravity-cli/antigravity-oauth-token
-            chmod 600 ~/.gemini/antigravity-cli/antigravity-oauth-token
+            printf '%s\n' "$GEMINI_OAUTH_CREDS_JSON" > ~/.gemini/antigravity-oauth-token
+            chmod 600 ~/.gemini/jetski-standalone-oauth-token ~/.gemini/antigravity-cli/antigravity-oauth-token ~/.gemini/antigravity-oauth-token
           fi
           cat << 'EOF' > ~/.gemini/antigravity-cli/jetski_state.pbtxt
           post_onboarding: {
