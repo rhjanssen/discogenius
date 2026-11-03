@@ -35,6 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: write
   contents: write
   issues: write
   pull-requests: write
@@ -185,29 +186,25 @@ jobs:
       - name: Bootstrap environment (scripts/agent-env/install.sh)
         run: bash scripts/agent-env/install.sh
 
-      - name: Configure Gemini CLI Subscription OAuth (~/.gemini/oauth_creds.json)
+      - name: Configure Antigravity CLI Subscription OAuth (~/.gemini/antigravity-cli/antigravity-oauth-token)
         run: |
-          mkdir -p ~/.gemini
+          mkdir -p ~/.gemini/antigravity-cli
           if [ -n "$GEMINI_OAUTH_CREDS_JSON" ]; then
-            printf '%s\n' "$GEMINI_OAUTH_CREDS_JSON" > ~/.gemini/oauth_creds.json
-            chmod 600 ~/.gemini/oauth_creds.json
-            cat << 'EOF' > ~/.gemini/settings.json
-          {
-            "contextFileName": "AGENTS.md",
-            "security": {
-              "auth": {
-                "selectedType": "oauth-personal"
-              }
-            }
-          }
-          EOF
-          else
-            cat << 'EOF' > ~/.gemini/settings.json
-          {
-            "contextFileName": "AGENTS.md"
-          }
-          EOF
+            printf '%s\n' "$GEMINI_OAUTH_CREDS_JSON" > ~/.gemini/antigravity-cli/antigravity-oauth-token
+            chmod 600 ~/.gemini/antigravity-cli/antigravity-oauth-token
           fi
+          cat << 'EOF' > ~/.gemini/antigravity-cli/jetski_state.pbtxt
+          post_onboarding: {
+            completed_steps: POST_ONBOARDING_STEP_TYPE_MANAGER_WELCOME
+            completed_steps: POST_ONBOARDING_STEP_TYPE_USAGE_MODE
+            completed_steps: POST_ONBOARDING_STEP_TYPE_AGENT_CONFIGURATION
+            completed_steps: POST_ONBOARDING_STEP_TYPE_ADD_WORKSPACE
+          }
+          installation_uuid: "3cc90750-e88d-41e7-bbc2-60770ca24809"
+          migrations: { key: 3 value: MIGRATION_STATUS_COMPLETED }
+          migrations: { key: 4 value: MIGRATION_STATUS_COMPLETED }
+          migrations: { key: 5 value: MIGRATION_STATUS_COMPLETED }
+          EOF
 
       - name: Prepare or resume issue branch (agent/issue-N)
         run: |
@@ -221,15 +218,14 @@ jobs:
             git checkout -b "$BRANCH"
           fi
 
-      - name: Install & Run Gemini CLI on Issue/PR
+      - name: Install & Run Antigravity CLI (agy) on Issue/PR
         id: run_gemini
         continue-on-error: true
         env:
-          GEMINI_DEFAULT_AUTH_TYPE: ${{ secrets.GEMINI_OAUTH_CREDS_JSON != '' && 'oauth-personal' || '' }}
-          GEMINI_CLI_TRUST_WORKSPACE: "true"
-          GEMINI_FORCE_FILE_STORAGE: "true"
+          SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 22"
         run: |
-          npm install -g @google/gemini-cli
+          curl -fsSL https://antigravity.google/cli/install.sh | bash
+          export PATH="$HOME/.local/bin:$PATH"
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
           TITLE=$(echo "$ISSUE_JSON" | jq -r .title)
           BODY=$(echo "$ISSUE_JSON" | jq -r .body)
@@ -246,7 +242,7 @@ jobs:
           ${EXTRA_PROMPT}"
 
           set +e
-          gemini -p "$PROMPT" --yolo 2>&1 | tee /tmp/gemini-agent.log
+          agy -p "$PROMPT" --dangerously-skip-permissions 2>&1 | tee /tmp/gemini-agent.log
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
 
