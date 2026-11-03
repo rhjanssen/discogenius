@@ -44,7 +44,6 @@ jobs:
   route:
     name: Route & Check Agent Quota
     runs-on: ubuntu-24.04
-    # Prevent infinite loops from bot comments unless it is an explicit handover trigger
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'issues' ||
@@ -65,7 +64,7 @@ jobs:
       issue_number: ${{ steps.decide.outputs.issue_number }}
       extra_prompt: ${{ steps.decide.outputs.extra_prompt }}
     steps:
-      - name: Determine target agent & check quota flags
+      - name: Determine target agent & check cloud quota state
         id: decide
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,6 +75,9 @@ jobs:
           INPUT_ISSUE: ${{ inputs.issue_number }}
           INPUT_PROMPT: ${{ inputs.prompt }}
           ISSUE_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+          QUOTA_VAR: ${{ vars.AGENT_QUOTA_STATUS }}
+          HAS_GEMINI_AUTH: ${{ secrets.GEMINI_OAUTH_CREDS_JSON != '' || secrets.GEMINI_API_KEY != '' }}
+          HAS_CLAUDE_AUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.ANTHROPIC_API_KEY != '' }}
         run: |
           set -euo pipefail
           NUM="${ISSUE_NUM:-$INPUT_ISSUE}"
@@ -91,7 +93,6 @@ jobs:
               agent:cursor|cursor) REQUESTED="cursor" ;;
               agent:auto)          REQUESTED="auto" ;;
               *)
-                # Assigned event: check if issue carries an agent:* or ready label
                 if [ "${{ github.event.action }}" = "assigned" ] && [ -n "$NUM" ]; then
                   LABELS=$(gh issue view "$NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name' || true)
                   if echo "$LABELS" | grep -qxE 'agent:gemini|gemini'; then REQUESTED="gemini";
@@ -110,17 +111,26 @@ jobs:
             fi
           fi
 
-          # Resolve 'auto': prefer Claude or Gemini first; reserve Cursor (shared with Grok Bot) as last resort
-          if [ "$REQUESTED" = "auto" ] && [ -n "$NUM" ]; then
-            LABELS=$(gh issue view "$NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name' || true)
+          # Resolve 'auto': prefer Claude & Gemini first; reserve Cursor (shared with Grok Bot) as last resort
+          if [ "$REQUESTED" = "auto" ]; then
+            LABELS=""
+            if [ -n "$NUM" ]; then
+              LABELS=$(gh issue view "$NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name' || true)
+            fi
+            NOW_EPOCH=$(date +%s)
+            CLAUDE_COOL_UNTIL=$(echo "${QUOTA_VAR:-{}}" | jq -r '.claudeCooldownUntil // 0' 2>/dev/null || echo 0)
+            GEMINI_COOL_UNTIL=$(echo "${QUOTA_VAR:-{}}" | jq -r '.geminiCooldownUntil // 0' 2>/dev/null || echo 0)
+
             CLAUDE_EXHAUSTED=0
             GEMINI_EXHAUSTED=0
             echo "$LABELS" | grep -qx 'quota-exhausted:claude' && CLAUDE_EXHAUSTED=1 || true
             echo "$LABELS" | grep -qx 'quota-exhausted:gemini' && GEMINI_EXHAUSTED=1 || true
+            [ "$CLAUDE_COOL_UNTIL" -gt "$NOW_EPOCH" ] 2>/dev/null && CLAUDE_EXHAUSTED=1 || true
+            [ "$GEMINI_COOL_UNTIL" -gt "$NOW_EPOCH" ] 2>/dev/null && GEMINI_EXHAUSTED=1 || true
 
-            if [ "$GEMINI_EXHAUSTED" -eq 0 ] && [ -n "${{ secrets.GEMINI_API_KEY }}" ]; then
+            if [ "$GEMINI_EXHAUSTED" -eq 0 ] && [ "$HAS_GEMINI_AUTH" = "true" ]; then
               REQUESTED="gemini"
-            elif [ "$CLAUDE_EXHAUSTED" -eq 0 ] && { [ -n "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" ] || [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; }; then
+            elif [ "$CLAUDE_EXHAUSTED" -eq 0 ] && [ "$HAS_CLAUDE_AUTH" = "true" ]; then
               REQUESTED="claude"
             elif [ "$GEMINI_EXHAUSTED" -eq 0 ]; then
               REQUESTED="gemini"
@@ -141,13 +151,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   gemini-agent:
-    name: Gemini CLI Agent (Cached Full VM)
+    name: Gemini CLI Agent (Subscription OAuth + Cached Full VM)
     needs: route
     if: needs.route.outputs.target_agent == 'gemini'
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GEMINI_OAUTH_CREDS_JSON: ${{ secrets.GEMINI_OAUTH_CREDS_JSON }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
       EXTRA_PROMPT: ${{ needs.route.outputs.extra_prompt }}
@@ -174,6 +185,30 @@ jobs:
       - name: Bootstrap environment (scripts/agent-env/install.sh)
         run: bash scripts/agent-env/install.sh
 
+      - name: Configure Gemini CLI Subscription OAuth (~/.gemini/oauth_creds.json)
+        run: |
+          mkdir -p ~/.gemini
+          if [ -n "$GEMINI_OAUTH_CREDS_JSON" ]; then
+            printf '%s\n' "$GEMINI_OAUTH_CREDS_JSON" > ~/.gemini/oauth_creds.json
+            chmod 600 ~/.gemini/oauth_creds.json
+            cat << 'EOF' > ~/.gemini/settings.json
+          {
+            "contextFileName": "AGENTS.md",
+            "security": {
+              "auth": {
+                "selectedType": "oauth-personal"
+              }
+            }
+          }
+          EOF
+          else
+            cat << 'EOF' > ~/.gemini/settings.json
+          {
+            "contextFileName": "AGENTS.md"
+          }
+          EOF
+          fi
+
       - name: Prepare or resume issue branch (agent/issue-N)
         run: |
           git config user.name "gemini-cli[bot]"
@@ -189,6 +224,8 @@ jobs:
       - name: Install & Run Gemini CLI on Issue/PR
         id: run_gemini
         continue-on-error: true
+        env:
+          GEMINI_DEFAULT_AUTH_TYPE: ${{ secrets.GEMINI_OAUTH_CREDS_JSON != '' && 'oauth-personal' || '' }}
         run: |
           npm install -g @google/gemini-cli
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
@@ -233,10 +270,10 @@ jobs:
             --remove-label "agent:gemini" || true
 
           gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
-            --body "⚠️ **Gemini CLI reached its usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to @claude (\`agent:claude\`) to pick up where Gemini left off."
+            --body "⚠️ **Gemini CLI reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to @claude (\`agent:claude\`) to pick up where Gemini left off."
 
   claude-agent:
-    name: Claude Code Agent (Cached Full VM)
+    name: Claude Code Agent (Subscription OAuth + Cached Full VM)
     needs: route
     if: needs.route.outputs.target_agent == 'claude'
     runs-on: ubuntu-24.04
@@ -329,7 +366,7 @@ jobs:
             --remove-label "agent:claude" || true
 
           gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
-            --body "⚠️ **Claude reached its usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to @gemini-cli (\`agent:gemini\`) to pick up where Claude left off."
+            --body "⚠️ **Claude reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to @gemini-cli (\`agent:gemini\`) to pick up where Claude left off."
 
   cursor-agent:
     name: Cursor Cloud Agent Dispatch (Fallback / Explicit)

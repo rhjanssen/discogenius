@@ -165,16 +165,42 @@ function checkGitHubExhaustedLabels() {
   return exhausted;
 }
 
-export function getAgentUsageStatus() {
+function readGitHubQuotaVar() {
+  try {
+    const raw = execFileSync('gh', ['variable', 'get', 'AGENT_QUOTA_STATUS', '--repo', REPO], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function writeGitHubQuotaVar(payload) {
+  try {
+    execFileSync(
+      'gh',
+      ['variable', 'set', 'AGENT_QUOTA_STATUS', '--repo', REPO, '--body', JSON.stringify(payload)],
+      { stdio: 'ignore' },
+    );
+  } catch {
+    // ignore if gh lacks permission in a restricted environment
+  }
+}
+
+export function getAgentUsageStatus({ syncToGitHub = true } = {}) {
   const state = loadLocalCooldownState();
   const ghExhausted = checkGitHubExhaustedLabels();
+  const ghQuotaVar = readGitHubQuotaVar();
   const claudeTelemetry = readClaudePlanUsage();
   const claudeExe = findClaudeExecutable();
 
-  // 1. Evaluate Claude status
+  // 1. Evaluate Claude status (fall back to GitHub-synced telemetry when running inside Grok Bot's Cloud VM)
   const claudeCooldown = isCooldownActive(state.cooldowns?.claude) ? state.cooldowns.claude : null;
-  const claude5h = claudeTelemetry?.fiveHourPercent ?? null;
-  const claude7d = claudeTelemetry?.sevenDayPercent ?? null;
+  const claude5h = claudeTelemetry?.fiveHourPercent ?? ghQuotaVar?.claude?.fiveHourUsagePercent ?? null;
+  const claude7d = claudeTelemetry?.sevenDayPercent ?? ghQuotaVar?.claude?.sevenDayUsagePercent ?? null;
+  const claudeSampledAt = claudeTelemetry?.sampledAt ?? ghQuotaVar?.claude?.sampledAt ?? null;
   const claudeOutByTelemetry = (claude5h !== null && claude5h >= 98) || (claude7d !== null && claude7d >= 99);
   const claudeAvailable = !claudeCooldown && !ghExhausted.claude && !claudeOutByTelemetry;
 
@@ -214,7 +240,7 @@ export function getAgentUsageStatus() {
     recommendationReason = 'All agents (Claude, Gemini, Cursor) are currently in quota cooldown.';
   }
 
-  return {
+  const result = {
     checkedAt: new Date().toISOString(),
     recommendedAgent: recommended,
     recommendationReason,
@@ -226,7 +252,7 @@ export function getAgentUsageStatus() {
         sharesQuotaWithGrokBot: false,
         fiveHourUsagePercent: claude5h,
         sevenDayUsagePercent: claude7d,
-        telemetrySampledAt: claudeTelemetry?.sampledAt ?? null,
+        telemetrySampledAt: claudeSampledAt,
         localCliInstalled: Boolean(claudeExe),
         localCliPath: claudeExe,
         cooldown: claudeCooldown,
@@ -266,6 +292,23 @@ export function getAgentUsageStatus() {
       },
     },
   };
+
+  if (syncToGitHub && claudeTelemetry) {
+    writeGitHubQuotaVar({
+      updatedAt: result.checkedAt,
+      recommendedAgent: recommended,
+      claude: {
+        available: claudeAvailable,
+        fiveHourUsagePercent: claude5h,
+        sevenDayUsagePercent: claude7d,
+        sampledAt: claudeSampledAt,
+      },
+      gemini: { available: geminiAvailable },
+      cursor: { available: cursorAvailable, sharesQuotaWithGrokBot: true },
+    });
+  }
+
+  return result;
 }
 
 // CLI entrypoint
