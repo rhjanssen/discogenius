@@ -248,7 +248,15 @@ jobs:
               printf "%s" "$GEMINI_OAUTH_CREDS_JSON" | secret-tool store --label="gemini:antigravity" service gemini username antigravity
               printf "%s" "$GEMINI_OAUTH_CREDS_JSON" | secret-tool store --label="gemini:antigravity" service "gemini:antigravity" username antigravity
             fi
-            agy --log-file /tmp/agy-debug.log -p "$1" --dangerously-skip-permissions
+            # Model fallback chain: each model has its own quota bucket on the Antigravity subscription.
+            for MODEL in gemini-4-argon-high gemini-3.8-flash-high claude-sonnet-5-5-high; do
+              echo "[agy] trying model $MODEL"
+              agy --model "$MODEL" --log-file /tmp/agy-debug.log -p "$1" --dangerously-skip-permissions 2>&1 | tee -a /tmp/agy-run.log
+              RC=${PIPESTATUS[0]}
+              if ! tail -n 40 /tmp/agy-run.log | grep -qiE "RESOURCE_EXHAUSTED|quota reached"; then exit $RC; fi
+              echo "[agy] $MODEL quota exhausted, falling back"
+            done
+            exit 1
           ' _ "$PROMPT" 2>&1 | tee /tmp/gemini-agent.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ "$EXIT_CODE" -ne 0 ] && [ -f /tmp/agy-debug.log ]; then
@@ -257,7 +265,7 @@ jobs:
           fi
           set -e
 
-          if grep -qiE 'RESOURCE_EXHAUSTED|quota exceeded|429|rate.?limit|out of usage' /tmp/gemini-agent.log; then
+          if [ "$EXIT_CODE" -ne 0 ] && tail -n 60 /tmp/gemini-agent.log | grep -qiE 'RESOURCE_EXHAUSTED|quota reached|quota exceeded|out of usage'; then
             echo "quota_exhausted=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
@@ -288,7 +296,12 @@ jobs:
             --remove-label "agent:gemini" || true
 
           gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
-            --body "⚠️ **Gemini CLI reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to ${NEXT_MENTION} (\`${NEXT_LABEL}\`) to pick up where Gemini left off."
+            --body "⚠️ **Gemini / Antigravity reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to ${NEXT_MENTION} (\`${NEXT_LABEL}\`) to pick up where Gemini left off."
+
+          # Events created with GITHUB_TOKEN never trigger workflows, so start the next agent explicitly.
+          gh workflow run agent-dispatch.yml --repo "${{ github.repository }}" \
+            -f agent="${NEXT_LABEL#agent:}" -f issue_number="$ISSUE_NUMBER" \
+            -f prompt="Continue from branch ${BRANCH} (WIP saved by Gemini after quota exhaustion). Follow AGENTS.md and HANDOFF.md." || true
 
   claude-agent:
     name: Claude Code Agent (Subscription OAuth + Cached Full VM)
@@ -403,6 +416,11 @@ jobs:
 
           gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
             --body "⚠️ **Claude reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to ${NEXT_MENTION} (\`${NEXT_LABEL}\`) to pick up where Claude left off."
+
+          # Events created with GITHUB_TOKEN never trigger workflows, so start the next agent explicitly.
+          gh workflow run agent-dispatch.yml --repo "${{ github.repository }}" \
+            -f agent="${NEXT_LABEL#agent:}" -f issue_number="$ISSUE_NUMBER" \
+            -f prompt="Continue from branch ${BRANCH} (WIP saved by Claude after quota exhaustion). Follow AGENTS.md and HANDOFF.md." || true
 
   cursor-agent:
     name: Cursor Cloud Agent Dispatch (Fallback / Explicit)
