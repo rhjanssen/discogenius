@@ -257,7 +257,7 @@ jobs:
           echo "quota_exhausted=false" >> "$GITHUB_OUTPUT"
           exit "$EXIT_CODE"
 
-      - name: Save WIP & Auto-Failover to Claude if Gemini ran out of usage
+      - name: Save WIP & Auto-Failover if Gemini ran out of usage
         if: steps.run_gemini.outputs.quota_exhausted == 'true'
         run: |
           BRANCH="agent/issue-${ISSUE_NUMBER}"
@@ -267,12 +267,21 @@ jobs:
           fi
           git push -u origin "$BRANCH" || true
 
+          LABELS=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json labels -q '.labels[].name' || true)
+          if echo "$LABELS" | grep -qx 'quota-exhausted:claude'; then
+            NEXT_LABEL="agent:cursor"
+            NEXT_MENTION="@cursor"
+          else
+            NEXT_LABEL="agent:claude"
+            NEXT_MENTION="@claude"
+          fi
+
           gh issue edit "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
-            --add-label "quota-exhausted:gemini,agent:claude" \
+            --add-label "quota-exhausted:gemini,${NEXT_LABEL}" \
             --remove-label "agent:gemini" || true
 
           gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
-            --body "⚠️ **Gemini CLI reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to @claude (\`agent:claude\`) to pick up where Gemini left off."
+            --body "⚠️ **Gemini CLI reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to ${NEXT_MENTION} (\`${NEXT_LABEL}\`) to pick up where Gemini left off."
 
   claude-agent:
     name: Claude Code Agent (Subscription OAuth + Cached Full VM)
@@ -362,7 +371,7 @@ jobs:
           echo "quota_exhausted=false" >> "$GITHUB_OUTPUT"
           exit "$EXIT_CODE"
 
-      - name: Save WIP & Auto-Failover to Gemini if Claude ran out of usage
+      - name: Save WIP & Auto-Failover if Claude ran out of usage
         if: steps.run_claude.outputs.quota_exhausted == 'true'
         run: |
           BRANCH="agent/issue-${ISSUE_NUMBER}"
@@ -372,12 +381,21 @@ jobs:
           fi
           git push -u origin "$BRANCH" || true
 
+          LABELS=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json labels -q '.labels[].name' || true)
+          if echo "$LABELS" | grep -qx 'quota-exhausted:gemini'; then
+            NEXT_LABEL="agent:cursor"
+            NEXT_MENTION="@cursor"
+          else
+            NEXT_LABEL="agent:gemini"
+            NEXT_MENTION="@gemini-cli"
+          fi
+
           gh issue edit "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
-            --add-label "quota-exhausted:claude,agent:gemini" \
+            --add-label "quota-exhausted:claude,${NEXT_LABEL}" \
             --remove-label "agent:claude" || true
 
           gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
-            --body "⚠️ **Claude reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to @gemini-cli (\`agent:gemini\`) to pick up where Claude left off."
+            --body "⚠️ **Claude reached its subscription usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to ${NEXT_MENTION} (\`${NEXT_LABEL}\`) to pick up where Claude left off."
 
   cursor-agent:
     name: Cursor Cloud Agent Dispatch (Fallback / Explicit)
