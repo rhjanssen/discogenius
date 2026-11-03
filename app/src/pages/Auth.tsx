@@ -34,6 +34,7 @@ import {
 import { useToast } from "@/hooks/useToast";
 import { useTheme } from "@/providers/themeContext";
 import { useUltraBlurContext } from "@/providers/UltraBlurContext";
+import { darkTheme, lightTheme } from "@/theme/theme";
 import { UltraBlurBackground } from "@/ultrablur/UltraBlurBackground";
 import type { AuthStatusContract } from "@contracts/auth";
 import { ProviderMark } from "@/components/ui/ProviderMark";
@@ -295,7 +296,7 @@ const useStyles = makeStyles({
   providerSoonTag: {
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalS}`,
     borderRadius: tokens.borderRadiusSmall,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: tokens.colorNeutralStencil1Alpha,
     color: tokens.colorNeutralForeground2,
     fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
@@ -433,27 +434,14 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalXXS,
   },
-  tidalButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    color: tokens.colorNeutralForeground1,
-    border: `${tokens.strokeWidthThin} solid rgba(255, 255, 255, 0.12)`,
-    boxShadow: 'none',
-    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.08)', color: tokens.colorNeutralForeground1 },
+  twoFactorForm: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    marginTop: tokens.spacingVerticalM,
   },
-  appleButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-  },
-  amazonButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-  },
-  spotifyButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-  },
-  youtubeButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-  },
-  deezerButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+  wrapperWaitingOffset: {
+    marginTop: tokens.spacingVerticalXL,
   },
   skipButton: {
     alignSelf: 'center',
@@ -462,7 +450,7 @@ const useStyles = makeStyles({
     fontWeight: tokens.fontWeightSemibold,
   },
   panelFooter: {
-    borderTop: `${tokens.strokeWidthThin} solid rgba(255, 255, 255, 0.12)`,
+    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     paddingTop: tokens.spacingVerticalM,
     display: 'flex',
     justifyContent: 'center',
@@ -708,13 +696,39 @@ const Auth = () => {
     }
 
     try {
+      const popupTheme = isDarkMode ? darkTheme : lightTheme;
       popup.document.title = "Discogenius TIDAL Login";
+      const styleEl = popup.document.createElement("style");
+      styleEl.textContent = `
+        body {
+          font-family: ${popupTheme.fontFamilyBase};
+          display: flex;
+          min-height: 100vh;
+          margin: 0;
+          align-items: center;
+          justify-content: center;
+          background: ${popupTheme.colorNeutralBackground1};
+          color: ${popupTheme.colorNeutralForeground1};
+        }
+        .dg-popup-content {
+          max-width: 320px;
+          text-align: center;
+          line-height: ${popupTheme.lineHeightBase300};
+        }
+        .dg-popup-title {
+          font-size: ${popupTheme.fontSizeBase500};
+          margin: 0 0 ${popupTheme.spacingVerticalM};
+        }
+        .dg-popup-body {
+          margin: 0;
+          color: ${popupTheme.colorNeutralForeground2};
+        }
+      `;
+      popup.document.head.appendChild(styleEl);
       popup.document.body.innerHTML = `
-        <div style="font-family: sans-serif; display: flex; min-height: 100vh; margin: 0; align-items: center; justify-content: center; background: #0b0d10; color: #f5f7fa;">
-          <div style="max-width: 320px; text-align: center; line-height: 1.5;">
-            <h1 style="font-size: 20px; margin: 0 0 12px;">Opening TIDAL</h1>
-            <p style="margin: 0; color: #c7ccd3;">Discogenius is requesting a device code and will redirect you automatically.</p>
-          </div>
+        <div class="dg-popup-content">
+          <h1 class="dg-popup-title">Opening TIDAL</h1>
+          <p class="dg-popup-body">Discogenius is requesting a device code and will redirect you automatically.</p>
         </div>
       `;
       popup.opener = null;
@@ -1319,7 +1333,7 @@ const Auth = () => {
                         </div>
 
                         {wrapperStatus.status === "waiting_for_2fa" ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
+                          <div className={styles.twoFactorForm}>
                             <Field label="Verification Code" hint="Enter the 2FA code sent to your Apple device.">
                               <Input
                                 value={wrapper2faCode}
@@ -1334,13 +1348,13 @@ const Auth = () => {
                             </Button>
                           </div>
                         ) : (
-                          <div className={styles.waitingText} style={{ marginTop: '20px' }}>
+                          <div className={mergeClasses(styles.waitingText, styles.wrapperWaitingOffset)}>
                             <Spinner size="tiny" />
                             <Text size={200}>{wrapperStatus.message || "Checking status..."}</Text>
                           </div>
                         )}
 
-                        <div className={styles.credentialActions} style={{ marginTop: '20px' }}>
+                        <div className={mergeClasses(styles.credentialActions, styles.wrapperWaitingOffset)}>
                           <Button appearance="subtle" onClick={() => {
                             if (wrapperPollRef.current) {
                               clearInterval(wrapperPollRef.current);

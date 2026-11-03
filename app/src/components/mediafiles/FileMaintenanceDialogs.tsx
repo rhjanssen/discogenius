@@ -283,6 +283,25 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     marginBottom: tokens.spacingVerticalS,
   },
+  emptyValueIcon: {
+    fontSize: "13px",
+    flexShrink: 0,
+  },
+  oldPathIcon: {
+    color: tokens.colorPaletteRedForeground2,
+    flexShrink: 0,
+  },
+  newPathIcon: {
+    color: tokens.colorPaletteGreenForeground2,
+    flexShrink: 0,
+  },
+  headerIcon: {
+    flexShrink: 0,
+  },
+  headerPath: {
+    overflowWrap: "anywhere",
+    minWidth: 0,
+  },
 });
 
 function TagValueDisplay({ value, isNew = false }: { value: string | null; isNew?: boolean }) {
@@ -290,7 +309,7 @@ function TagValueDisplay({ value, isNew = false }: { value: string | null; isNew
   if (!value || value.trim() === "" || value === "0") {
     return (
       <span className={styles.emptyValue}>
-        <Prohibited16Regular style={{ fontSize: 13, flexShrink: 0 }} />
+        <Prohibited16Regular className={styles.emptyValueIcon} />
         <span>∅ (empty)</span>
       </span>
     );
@@ -440,7 +459,7 @@ export function RenamePreviewDialog({
                           </span>
                         </div>
                         <div className={styles.pathLine}>
-                          <SubtractCircle16Filled style={{ color: tokens.colorPaletteRedForeground2, flexShrink: 0 }} />
+                          <SubtractCircle16Filled className={styles.oldPathIcon} />
                           <span className={styles.oldPath}>{item.file_path}</span>
                         </div>
                         {item.missing ? (
@@ -464,7 +483,7 @@ export function RenamePreviewDialog({
                           </div>
                         ) : (
                           <div className={styles.pathLine}>
-                            <AddCircle16Filled style={{ color: tokens.colorPaletteGreenForeground2, flexShrink: 0 }} />
+                            <AddCircle16Filled className={styles.newPathIcon} />
                             <span className={styles.newPath}>{item.expected_path ?? "target path unavailable"}</span>
                           </div>
                         )}
@@ -568,8 +587,8 @@ export function RetagPreviewDialog({
                       />
                       <div className={styles.item}>
                         <div className={styles.headerLine}>
-                          <Record20Regular style={{ flexShrink: 0 }} />
-                          <span style={{ overflowWrap: "anywhere", minWidth: 0 }}>{item.path}</span>
+                          <Record20Regular className={styles.headerIcon} />
+                          <span className={styles.headerPath}>{item.path}</span>
                         </div>
                         {item.missing ? (
                           <div className={styles.warningBanner}>

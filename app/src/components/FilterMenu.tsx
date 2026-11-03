@@ -114,6 +114,15 @@ const useStyles = makeStyles({
             display: "none",
         },
     },
+    sectionLabel: {
+        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+        fontWeight: tokens.fontWeightSemibold,
+        fontSize: tokens.fontSizeBase100,
+        color: tokens.colorNeutralForeground3,
+    },
+    inactiveIcon: {
+        opacity: 0.3,
+    },
 });
 
 const QUALITY_TIER_OPTIONS = ['MAX', 'HIGH', 'NORMAL', 'LOW'] as const;
@@ -139,12 +148,6 @@ const FilterMenu = ({
     trigger,
 }: FilterMenuProps) => {
     const styles = useStyles();
-    const sectionLabelStyle = {
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-        fontWeight: tokens.fontWeightSemibold,
-        fontSize: tokens.fontSizeBase100,
-        color: tokens.colorNeutralForeground3,
-    } as const;
 
     const hasLibraryFilter = libraryFilter !== undefined && onLibraryFilterChange;
     const hasProviderFilter = Boolean(onProviderFilterChange && (providerOptions?.length ?? 0) > 0);
@@ -240,30 +243,30 @@ const FilterMenu = ({
                     {/* Library Type Filter */}
                     {hasLibraryFilter && (
                         <>
-                            <Text style={sectionLabelStyle}>
+                            <Text className={styles.sectionLabel}>
                                 LIBRARY TYPE
                             </Text>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('all')}
-                                icon={libraryFilter === 'all' ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                icon={libraryFilter === 'all' ? <Checkmark24 /> : <Circle24 className={styles.inactiveIcon} />}
                             >
                                 All Types
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('stereo')}
-                                icon={libraryFilter === 'stereo' ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                icon={libraryFilter === 'stereo' ? <Checkmark24 /> : <Circle24 className={styles.inactiveIcon} />}
                             >
                                 Stereo Only
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('spatial')}
-                                icon={libraryFilter === 'spatial' ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                icon={libraryFilter === 'spatial' ? <Checkmark24 /> : <Circle24 className={styles.inactiveIcon} />}
                             >
                                 Spatial Only
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onLibraryFilterChange?.('video')}
-                                icon={libraryFilter === 'video' ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                icon={libraryFilter === 'video' ? <Checkmark24 /> : <Circle24 className={styles.inactiveIcon} />}
                             >
                                 Videos Only
                             </MenuItem>
@@ -274,12 +277,12 @@ const FilterMenu = ({
                     {/* Provider Filter */}
                     {hasProviderFilter && (
                         <>
-                            <Text style={sectionLabelStyle}>
+                            <Text className={styles.sectionLabel}>
                                 PROVIDER
                             </Text>
                             <MenuItem
                                 onClick={() => onProviderFilterChange?.(undefined)}
-                                icon={!providerFilter ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                icon={!providerFilter ? <Checkmark24 /> : <Circle24 className={styles.inactiveIcon} />}
                             >
                                 All Providers
                             </MenuItem>
@@ -287,7 +290,7 @@ const FilterMenu = ({
                                 <MenuItem
                                     key={option.id}
                                     onClick={() => onProviderFilterChange?.(option.id)}
-                                    icon={providerFilter === option.id ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                    icon={providerFilter === option.id ? <Checkmark24 /> : <Circle24 className={styles.inactiveIcon} />}
                                 >
                                     {option.name}
                                 </MenuItem>
@@ -299,12 +302,12 @@ const FilterMenu = ({
                     {/* Quality Filter */}
                     {hasQualityFilter && (
                         <>
-                            <Text style={sectionLabelStyle}>
+                            <Text className={styles.sectionLabel}>
                                 QUALITY
                             </Text>
                             <MenuItem
                                 onClick={() => onQualityTierFilterChange?.(undefined)}
-                                icon={!qualityTierFilter ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                icon={!qualityTierFilter ? <Checkmark24 /> : <Circle24 className={styles.inactiveIcon} />}
                             >
                                 All Qualities
                             </MenuItem>
@@ -312,7 +315,7 @@ const FilterMenu = ({
                                 <MenuItem
                                     key={tier}
                                     onClick={() => onQualityTierFilterChange?.(tier)}
-                                    icon={qualityTierFilter === tier ? <Checkmark24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                    icon={qualityTierFilter === tier ? <Checkmark24 /> : <Circle24 className={styles.inactiveIcon} />}
                                 >
                                     {tier}
                                 </MenuItem>
@@ -324,7 +327,7 @@ const FilterMenu = ({
                     {/* Monitoring Status */}
                     {hasStatusFilters && (
                         <>
-                            <Text style={sectionLabelStyle}>
+                            <Text className={styles.sectionLabel}>
                                 MONITORING
                             </Text>
                             <MenuItemCheckbox
@@ -348,7 +351,7 @@ const FilterMenu = ({
                     {/* Lock Status */}
                     {hasStatusFilters && showLockFilter && (
                         <>
-                            <Text style={sectionLabelStyle}>
+                            <Text className={styles.sectionLabel}>
                                 LOCK
                             </Text>
                             <MenuItemCheckbox
@@ -372,7 +375,7 @@ const FilterMenu = ({
                     {/* Download Status */}
                     {hasStatusFilters && showDownloadFilter && (
                         <>
-                            <Text style={sectionLabelStyle}>
+                            <Text className={styles.sectionLabel}>
                                 DOWNLOAD
                             </Text>
                             <MenuItemCheckbox
@@ -396,18 +399,18 @@ const FilterMenu = ({
                     {/* View Mode */}
                     {hasViewMode && (
                         <>
-                            <Text style={sectionLabelStyle}>
+                            <Text className={styles.sectionLabel}>
                                 VIEW
                             </Text>
                             <MenuItem
                                 onClick={() => onViewModeChange?.('grid')}
-                                icon={viewMode === 'grid' ? <Grid24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                icon={viewMode === 'grid' ? <Grid24 /> : <Circle24 className={styles.inactiveIcon} />}
                             >
                                 Grid
                             </MenuItem>
                             <MenuItem
                                 onClick={() => onViewModeChange?.('list')}
-                                icon={viewMode === 'list' ? <AppsListDetail24 /> : <Circle24 style={{ opacity: 0.3 }} />}
+                                icon={viewMode === 'list' ? <AppsListDetail24 /> : <Circle24 className={styles.inactiveIcon} />}
                             >
                                 List
                             </MenuItem>
