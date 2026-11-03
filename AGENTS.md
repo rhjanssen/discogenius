@@ -119,6 +119,26 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   `winget install` or test inside the Docker container (the Dockerfile bundles
   `ffmpeg` + `libchromaprint-tools` for fpcalc).
 
+## Cloud agent environment (Cursor and Claude Code)
+- Both cloud agents use the same scripts so work can move between them:
+  `scripts/agent-env/install.sh` (yarn install, `.ref_*` clones, library dirs;
+  idempotent, `SKIP_REFS=1` skips the clones) and `scripts/agent-env/start.sh`
+  (dev stack on API `127.0.0.1:3737` + Vite `127.0.0.1:8080` with repo-local
+  `library/` and `downloads/` roots; exits 0 when both are already up).
+- Cursor `environment.json`: `install` = `cd /agent/repos/discogenius && bash
+  scripts/agent-env/install.sh`, `start` = `cd /agent/repos/discogenius && bash
+  scripts/agent-env/start.sh`.
+- Claude Code on the web: the environment setup script runs one directory above
+  the checkout, so it is `cd discogenius && bash scripts/agent-env/install.sh`.
+  There is no start hook: run `bash scripts/agent-env/start.sh` as a background
+  process when you need the running app. `CLAUDE.md` imports this file.
+- Containers without IPv6 cannot bind Vite's default `::`; `start.sh` then sets
+  `DISCOGENIUS_DEV_HOST=0.0.0.0`.
+- Cloud agents cannot reach the LAN (NAS, local MusicBrainz mirror, live
+  container), have no provider tokens unless set as secrets, and have no `tiddl`.
+  Use the public catalogue route there; live-server work stays with an agent on
+  the LAN.
+
 ## Validation checklist
 - `yarn --cwd api build` after backend changes; `yarn --cwd app build` after
   frontend changes.

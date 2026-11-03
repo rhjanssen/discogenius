@@ -69,7 +69,7 @@ jobs:
 
   playwright-smoke:
     name: Playwright Smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.58 cannot install chromium on ubuntu-latest (26.04)
     needs: checks
     if: needs.checks.result == 'success'
     permissions:

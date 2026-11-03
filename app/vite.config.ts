@@ -48,7 +48,9 @@ export default defineConfig(({ mode }) => {
     },
     envDir: repoRoot,
     server: {
-      host: "::",
+      // "::" listens dual-stack. Containers without IPv6 (e.g. some cloud
+      // agent sandboxes) fail with EAFNOSUPPORT, so allow an override.
+      host: process.env.DISCOGENIUS_DEV_HOST?.trim() || "::",
       port: DEV_SERVER_PORT,
       proxy: {
         '/api': {
