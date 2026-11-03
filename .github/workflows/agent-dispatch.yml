@@ -52,7 +52,6 @@ jobs:
       (
         (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
         (
-          contains(github.event.comment.body, '@gemini-cli') ||
           contains(github.event.comment.body, '@gemini') ||
           contains(github.event.comment.body, '@claude') ||
           contains(github.event.comment.body, '@cursor') ||
@@ -105,7 +104,7 @@ jobs:
                 ;;
             esac
           else
-            if echo "$COMMENT_BODY" | grep -qiE '@gemini-cli|@gemini'; then REQUESTED="gemini";
+            if echo "$COMMENT_BODY" | grep -qiE '@gemini'; then REQUESTED="gemini";
             elif echo "$COMMENT_BODY" | grep -qiE '@claude'; then REQUESTED="claude";
             elif echo "$COMMENT_BODY" | grep -qiE '@cursor'; then REQUESTED="cursor";
             elif echo "$COMMENT_BODY" | grep -qiE '@agent-auto'; then REQUESTED="auto";
@@ -152,7 +151,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   gemini-agent:
-    name: Gemini CLI Agent (Subscription OAuth + Cached Full VM)
+    name: Gemini / Antigravity Agent (Subscription OAuth + Cached Full VM)
     needs: route
     if: needs.route.outputs.target_agent == 'gemini'
     runs-on: ubuntu-24.04

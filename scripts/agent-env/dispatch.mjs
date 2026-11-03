@@ -4,7 +4,7 @@
  *
  * Priority policy:
  *   1. Claude (claude-cloud / claude-gh / label 'agent:claude' / '@claude')
- *   2. Gemini / Antigravity (gemini-gh / antigravity / label 'agent:gemini' / '@gemini-cli')
+ *   2. Gemini / Antigravity (gemini / antigravity / label 'agent:gemini' / '@gemini')
  *   3. Cursor Cloud (cursor-cloud / label 'agent:cursor' / '@cursor') — LAST RESORT
  *      because Cursor shares subscription usage with Grok Bot (Product Owner).
  *
@@ -12,7 +12,7 @@
  *   node scripts/agent-env/dispatch.mjs status
  *   node scripts/agent-env/dispatch.mjs --to auto         --issue 42
  *   node scripts/agent-env/dispatch.mjs --to claude-cloud --issue 42
- *   node scripts/agent-env/dispatch.mjs --to gemini-gh    --issue 42
+ *   node scripts/agent-env/dispatch.mjs --to gemini       --issue 42
  *   node scripts/agent-env/dispatch.mjs --to antigravity  --issue 42
  *   node scripts/agent-env/dispatch.mjs --to cursor-cloud --issue 42
  */
@@ -218,23 +218,19 @@ async function dispatchToTarget(target, item, fullPrompt, args) {
 
     case 'antigravity': {
       setAgentLabelOnGitHub(number, 'gemini', args.dryRun);
-      console.log(`[dispatch] Launching local Google Antigravity / Gemini CLI...`);
+      console.log(`[dispatch] Launching local Google Antigravity CLI (agy)...`);
       if (args.dryRun) {
-        console.log(`Would run: agy -p <prompt> (or gemini -p <prompt>)`);
+        console.log(`Would run: agy -p <prompt> --dangerously-skip-permissions`);
         return { ok: true };
       }
-      let res = spawnSync('agy', ['-p', fullPrompt], {
+      const agyBin =
+        process.platform === 'win32' && process.env.LOCALAPPDATA
+          ? `${process.env.LOCALAPPDATA}\\agy\\bin\\agy.exe`
+          : 'agy';
+      const res = spawnSync(agyBin, ['-p', fullPrompt, '--dangerously-skip-permissions'], {
         encoding: 'utf8',
         stdio: ['inherit', 'pipe', 'pipe'],
-        shell: process.platform === 'win32',
       });
-      if (res.error) {
-        res = spawnSync('gemini', ['-p', fullPrompt, '--yolo'], {
-          encoding: 'utf8',
-          stdio: ['inherit', 'pipe', 'pipe'],
-          shell: process.platform === 'win32',
-        });
-      }
       const combined = `${res.stdout || ''}\n${res.stderr || ''}`;
       if (res.stdout) process.stdout.write(res.stdout);
       if (res.stderr) process.stderr.write(res.stderr);

@@ -124,7 +124,7 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   criteria, and manages the backlog via GitHub Issues on `rhjanssen/discogenius`
   (using labels such as `ready`, `in-progress`, `needs-review`) alongside
   `docs/TASKS.md`. Reviews and merges PRs.
-- **Developer Agents (Cursor, Claude Code, Google Antigravity, Gemini CLI, Codex)**:
+- **Developer Agents (Cursor, Claude Code, Google Antigravity / Gemini, Codex)**:
   pick up the next `ready` issue (or task assigned via `HANDOFF.md`), work on a
   dedicated branch, verify with `yarn ci` (and against the running container when
   on the LAN), and open a PR. Propose findings before larger fix rounds instead
@@ -146,7 +146,7 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
     - Cursor Cloud VM (fallback only): `node scripts/agent-env/dispatch.mjs --to cursor-cloud --issue <N>`
   - **Automatic mid-task failover**: all agents work on branch `agent/issue-<N>`. If Claude or Gemini hits its usage limit mid-run, `.github/workflows/agent-dispatch.yml` (and `dispatch.mjs`) automatically commits & pushes WIP to `origin/agent/issue-<N>`, labels `quota-exhausted:<agent>`, and triggers the other agent (`claude` ↔ `gemini`) to resume from `agent/issue-<N>` and `HANDOFF.md`.
 
-## Cloud & local agent environment (Cursor, Claude Code, Antigravity, Gemini CLI)
+## Cloud & local agent environment (Cursor, Claude Code, Google Antigravity / Gemini)
 - All agents share the same setup scripts and rules so work can move freely
   between them:
   `scripts/agent-env/install.sh` (`ffmpeg` + `fpcalc` check, `yarn install`,
@@ -161,10 +161,9 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   above the checkout, so it is `cd discogenius && bash scripts/agent-env/install.sh`.
   There is no start hook: run `bash scripts/agent-env/start.sh` as a background
   process when you need the running app. `CLAUDE.md` imports this file.
-- **Google Antigravity & Gemini CLI**: Antigravity loads `AGENTS.md` and
-  `.agents/skills.json` (`skills/*/SKILL.md`) natively; `.gemini/settings.json`
-  points Gemini CLI (`run-gemini-cli`) at `AGENTS.md` so no duplicate `GEMINI.md`
-  is needed.
+- **Google Antigravity (`agy`) / Gemini**: loads `AGENTS.md` and
+  `.agents/skills.json` (`skills/*/SKILL.md`) natively both locally and in
+  GitHub Actions (`@gemini` / `agent:gemini`).
 - Containers without IPv6 cannot bind Vite's default `::`; `start.sh` then sets
   `DISCOGENIUS_DEV_HOST=0.0.0.0`.
 - Cloud agents cannot reach the LAN (NAS `192.168.1.50`, local MusicBrainz mirror
