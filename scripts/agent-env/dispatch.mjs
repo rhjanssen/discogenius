@@ -158,9 +158,15 @@ async function dispatchToTarget(target, item, fullPrompt, args) {
         console.error('[dispatch] --issue or --pr <num> is required for claude-gh.');
         return { ok: false };
       }
-      setAgentLabelOnGitHub(number, 'claude', args.dryRun);
-      console.log(`[dispatch] Triggering @claude on GitHub #${number}...`);
+      console.log(`[dispatch] Triggering @claude (and label 'in-progress') on GitHub #${number}...`);
       if (!args.dryRun) {
+        try {
+          execFileSync('gh', ['issue', 'edit', String(number), '--repo', REPO, '--add-label', 'in-progress'], {
+            stdio: 'ignore',
+          });
+        } catch {
+          // ignore
+        }
         execFileSync(
           'gh',
           [
@@ -184,9 +190,15 @@ async function dispatchToTarget(target, item, fullPrompt, args) {
         // If no issue number is given, fall back to local Antigravity / Gemini
         return dispatchToTarget('antigravity', item, fullPrompt, args);
       }
-      setAgentLabelOnGitHub(number, 'gemini', args.dryRun);
-      console.log(`[dispatch] Triggering @gemini (and label 'agent:gemini') on GitHub #${number}...`);
+      console.log(`[dispatch] Triggering @gemini (and label 'in-progress') on GitHub #${number}...`);
       if (!args.dryRun) {
+        try {
+          execFileSync('gh', ['issue', 'edit', String(number), '--repo', REPO, '--add-label', 'in-progress'], {
+            stdio: 'ignore',
+          });
+        } catch {
+          // ignore
+        }
         execFileSync(
           'gh',
           [
