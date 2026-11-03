@@ -133,13 +133,18 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   `HANDOFF.md` at the end of its session with the current branch, what is done,
   what is half-done, what was verified against the running container, and open
   questions for the PO. Keep it a short overwritten note, never a growing log.
-- **Cross-agent delegation (`scripts/agent-env/dispatch.mjs`)**: any agent or
-  operator can hand off a GitHub Issue or task to another agent's cloud VM or
-  runner:
-  - **Claude Cloud VM (`claude.ai/code`)**: `node scripts/agent-env/dispatch.mjs --to claude-cloud --issue <N>` (runs `claude --cloud "<prompt>"` or falls back to `@claude` on GitHub).
-  - **Cursor Cloud VM**: `node scripts/agent-env/dispatch.mjs --to cursor-cloud --issue <N>` (calls `POST https://api.cursor.com/v1/agents` with `CURSOR_API_KEY`).
-  - **Google Antigravity (local PC / homelab LAN)**: `node scripts/agent-env/dispatch.mjs --to antigravity --issue <N>` (runs `agy -p "<prompt>"`, or spawn an isolated worktree subagent via `Workspace: "share"`).
-  - **GitHub Action triggers**: `node scripts/agent-env/dispatch.mjs --to claude-gh --issue <N>` (`@claude`) or `--to gemini-gh --issue <N>` (`@gemini-cli`).
+- **Cross-agent delegation & quota-aware routing (`scripts/agent-env/usage-status.mjs` & `dispatch.mjs` + `.github/workflows/agent-dispatch.yml`)**:
+  - **Priority rule**: **Cursor shares subscription quota with Grok Bot (Product Owner)**. Always route dev work to **Claude** or **Gemini / Antigravity** first, and reserve **Cursor** only as a last resort when both Claude and Gemini are out of usage.
+  - **Check live usage limits**: `node scripts/agent-env/usage-status.mjs` (or `--json`). Reads Claude's live 5h/7d rolling usage % from `%APPDATA%/Claude/plan-usage-history.json`, local cooldown state (`config/.agent-usage-state.json`), and GitHub `quota-exhausted:*` labels, and outputs `recommendedAgent`.
+  - **Trigger via GitHub Labels (Issues or PRs)**: add label `agent:auto` (auto-routes to Claude/Gemini), `agent:claude`, `agent:gemini`, or `agent:cursor`. Assigning an issue that carries one of these labels (or `ready`) also triggers `.github/workflows/agent-dispatch.yml`.
+  - **Trigger via GitHub Comments (`@mention`)**: comment `@agent-auto`, `@claude`, `@gemini-cli` (or `@gemini`), or `@cursor` on any Issue or PR.
+  - **Trigger via CLI (`scripts/agent-env/dispatch.mjs`)**:
+    - Auto-route (Claude/Gemini first, Cursor last, with automatic failover): `node scripts/agent-env/dispatch.mjs --to auto --issue <N>`
+    - Claude Cloud VM (`claude.ai/code`): `node scripts/agent-env/dispatch.mjs --to claude-cloud --issue <N>`
+    - Gemini CLI / GitHub Action (cached full VM): `node scripts/agent-env/dispatch.mjs --to gemini-gh --issue <N>`
+    - Local Antigravity / Gemini CLI (LAN access): `node scripts/agent-env/dispatch.mjs --to antigravity --issue <N>`
+    - Cursor Cloud VM (fallback only): `node scripts/agent-env/dispatch.mjs --to cursor-cloud --issue <N>`
+  - **Automatic mid-task failover**: all agents work on branch `agent/issue-<N>`. If Claude or Gemini hits its usage limit mid-run, `.github/workflows/agent-dispatch.yml` (and `dispatch.mjs`) automatically commits & pushes WIP to `origin/agent/issue-<N>`, labels `quota-exhausted:<agent>`, and triggers the other agent (`claude` ↔ `gemini`) to resume from `agent/issue-<N>` and `HANDOFF.md`.
 
 ## Cloud & local agent environment (Cursor, Claude Code, Antigravity, Gemini CLI)
 - All agents share the same setup scripts and rules so work can move freely

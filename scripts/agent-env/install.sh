@@ -25,6 +25,15 @@ if command -v apt-get >/dev/null 2>&1; then
   fi
 fi
 
+# Ensure python3 mutagen==1.47.0 is installed for API audio tag tests.
+if command -v python3 >/dev/null 2>&1; then
+  if ! python3 -c "import mutagen" >/dev/null 2>&1; then
+    python3 -m pip install --quiet --break-system-packages 'mutagen==1.47.0' 2>/dev/null \
+      || python3 -m pip install --quiet 'mutagen==1.47.0' 2>/dev/null \
+      || echo "warn: could not auto-install python3 mutagen" >&2
+  fi
+fi
+
 yarn install --frozen-lockfile || yarn install || exit $?
 
 # Read-only reference checkouts (see AGENTS.md "Layout"). Gitignored.

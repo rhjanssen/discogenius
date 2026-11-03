@@ -1,0 +1,373 @@
+name: Multi-Agent Dispatch (Gemini, Claude, Cursor)
+
+on:
+  issues:
+    types: [labeled, assigned]
+  pull_request:
+    types: [labeled, assigned]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: "Target agent (auto prefers Claude/Gemini and reserves Cursor for Grok Bot)"
+        required: true
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - gemini
+          - claude
+          - cursor
+      issue_number:
+        description: "GitHub Issue or PR number"
+        required: true
+        type: string
+      prompt:
+        description: "Optional extra instructions"
+        required: false
+        type: string
+
+concurrency:
+  group: agent-dispatch-${{ github.event.issue.number || github.event.pull_request.number || inputs.issue_number || github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  route:
+    name: Route & Check Agent Quota
+    runs-on: ubuntu-24.04
+    # Prevent infinite loops from bot comments unless it is an explicit handover trigger
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'issues' ||
+      github.event_name == 'pull_request' ||
+      (
+        (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+        (
+          contains(github.event.comment.body, '@gemini-cli') ||
+          contains(github.event.comment.body, '@gemini') ||
+          contains(github.event.comment.body, '@claude') ||
+          contains(github.event.comment.body, '@cursor') ||
+          contains(github.event.comment.body, '@agent-auto')
+        ) &&
+        !contains(github.event.comment.body, '<!-- agent-loop-guard -->')
+      )
+    outputs:
+      target_agent: ${{ steps.decide.outputs.target_agent }}
+      issue_number: ${{ steps.decide.outputs.issue_number }}
+      extra_prompt: ${{ steps.decide.outputs.extra_prompt }}
+    steps:
+      - name: Determine target agent & check quota flags
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          INPUT_AGENT: ${{ inputs.agent }}
+          INPUT_ISSUE: ${{ inputs.issue_number }}
+          INPUT_PROMPT: ${{ inputs.prompt }}
+          ISSUE_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          NUM="${ISSUE_NUM:-$INPUT_ISSUE}"
+          echo "issue_number=$NUM" >> "$GITHUB_OUTPUT"
+
+          REQUESTED=""
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            REQUESTED="$INPUT_AGENT"
+          elif [ "$EVENT_NAME" = "issues" ] || [ "$EVENT_NAME" = "pull_request" ]; then
+            case "$LABEL_NAME" in
+              agent:gemini|gemini) REQUESTED="gemini" ;;
+              agent:claude|claude) REQUESTED="claude" ;;
+              agent:cursor|cursor) REQUESTED="cursor" ;;
+              agent:auto)          REQUESTED="auto" ;;
+              *)
+                # Assigned event: check if issue carries an agent:* or ready label
+                if [ "${{ github.event.action }}" = "assigned" ] && [ -n "$NUM" ]; then
+                  LABELS=$(gh issue view "$NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name' || true)
+                  if echo "$LABELS" | grep -qxE 'agent:gemini|gemini'; then REQUESTED="gemini";
+                  elif echo "$LABELS" | grep -qxE 'agent:claude|claude'; then REQUESTED="claude";
+                  elif echo "$LABELS" | grep -qxE 'agent:cursor|cursor'; then REQUESTED="cursor";
+                  elif echo "$LABELS" | grep -qxE 'agent:auto|ready'; then REQUESTED="auto";
+                  fi
+                fi
+                ;;
+            esac
+          else
+            if echo "$COMMENT_BODY" | grep -qiE '@gemini-cli|@gemini'; then REQUESTED="gemini";
+            elif echo "$COMMENT_BODY" | grep -qiE '@claude'; then REQUESTED="claude";
+            elif echo "$COMMENT_BODY" | grep -qiE '@cursor'; then REQUESTED="cursor";
+            elif echo "$COMMENT_BODY" | grep -qiE '@agent-auto'; then REQUESTED="auto";
+            fi
+          fi
+
+          # Resolve 'auto': prefer Claude or Gemini first; reserve Cursor (shared with Grok Bot) as last resort
+          if [ "$REQUESTED" = "auto" ] && [ -n "$NUM" ]; then
+            LABELS=$(gh issue view "$NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name' || true)
+            CLAUDE_EXHAUSTED=0
+            GEMINI_EXHAUSTED=0
+            echo "$LABELS" | grep -qx 'quota-exhausted:claude' && CLAUDE_EXHAUSTED=1 || true
+            echo "$LABELS" | grep -qx 'quota-exhausted:gemini' && GEMINI_EXHAUSTED=1 || true
+
+            if [ "$GEMINI_EXHAUSTED" -eq 0 ] && [ -n "${{ secrets.GEMINI_API_KEY }}" ]; then
+              REQUESTED="gemini"
+            elif [ "$CLAUDE_EXHAUSTED" -eq 0 ] && { [ -n "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" ] || [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; }; then
+              REQUESTED="claude"
+            elif [ "$GEMINI_EXHAUSTED" -eq 0 ]; then
+              REQUESTED="gemini"
+            elif [ "$CLAUDE_EXHAUSTED" -eq 0 ]; then
+              REQUESTED="claude"
+            else
+              REQUESTED="cursor"
+            fi
+          fi
+
+          echo "target_agent=$REQUESTED" >> "$GITHUB_OUTPUT"
+          PROMPT_VAL="${INPUT_PROMPT:-$COMMENT_BODY}"
+          EOF_MARK="EOF_$(date +%s)"
+          {
+            echo "extra_prompt<<$EOF_MARK"
+            echo "$PROMPT_VAL"
+            echo "$EOF_MARK"
+          } >> "$GITHUB_OUTPUT"
+
+  gemini-agent:
+    name: Gemini CLI Agent (Cached Full VM)
+    needs: route
+    if: needs.route.outputs.target_agent == 'gemini'
+    runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
+      EXTRA_PROMPT: ${{ needs.route.outputs.extra_prompt }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enable Corepack & Setup Node.js 22 (with Yarn cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Cache .ref_* reference repositories
+        uses: actions/cache@v4
+        with:
+          path: .ref_*
+          key: discogenius-refs-v1-${{ hashFiles('scripts/agent-env/install.sh') }}
+          restore-keys: |
+            discogenius-refs-v1-
+
+      - name: Bootstrap environment (scripts/agent-env/install.sh)
+        run: bash scripts/agent-env/install.sh
+
+      - name: Prepare or resume issue branch (agent/issue-N)
+        run: |
+          git config user.name "gemini-cli[bot]"
+          git config user.email "gemini-cli[bot]@users.noreply.github.com"
+          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "Resuming existing branch $BRANCH from previous agent session..."
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+
+      - name: Install & Run Gemini CLI on Issue/PR
+        id: run_gemini
+        continue-on-error: true
+        run: |
+          npm install -g @google/gemini-cli
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
+          TITLE=$(echo "$ISSUE_JSON" | jq -r .title)
+          BODY=$(echo "$ISSUE_JSON" | jq -r .body)
+          URL=$(echo "$ISSUE_JSON" | jq -r .url)
+
+          PROMPT="Read AGENTS.md and HANDOFF.md first. You are working on GitHub Issue #${ISSUE_NUMBER}: ${TITLE} (${URL}).
+          If HANDOFF.md or existing commits on branch agent/issue-${ISSUE_NUMBER} show prior work from another agent, continue right where it left off.
+          Implement the requested changes, run 'yarn ci' to verify, update HANDOFF.md with your status, commit and push branch agent/issue-${ISSUE_NUMBER}, and open or update a Pull Request using 'gh pr create' or 'gh pr edit'.
+
+          Issue body:
+          ${BODY}
+
+          Additional context:
+          ${EXTRA_PROMPT}"
+
+          set +e
+          gemini -p "$PROMPT" --yolo 2>&1 | tee /tmp/gemini-agent.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          if grep -qiE 'RESOURCE_EXHAUSTED|quota exceeded|429|rate.?limit|out of usage' /tmp/gemini-agent.log; then
+            echo "quota_exhausted=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "quota_exhausted=false" >> "$GITHUB_OUTPUT"
+          exit "$EXIT_CODE"
+
+      - name: Save WIP & Auto-Failover to Claude if Gemini ran out of usage
+        if: steps.run_gemini.outputs.quota_exhausted == 'true'
+        run: |
+          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "wip(issue-${ISSUE_NUMBER}): save Gemini progress before quota failover" || true
+          fi
+          git push -u origin "$BRANCH" || true
+
+          gh issue edit "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+            --add-label "quota-exhausted:gemini,agent:claude" \
+            --remove-label "agent:gemini" || true
+
+          gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+            --body "⚠️ **Gemini CLI reached its usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to @claude (\`agent:claude\`) to pick up where Gemini left off."
+
+  claude-agent:
+    name: Claude Code Agent (Cached Full VM)
+    needs: route
+    if: needs.route.outputs.target_agent == 'claude'
+    runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
+      EXTRA_PROMPT: ${{ needs.route.outputs.extra_prompt }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enable Corepack & Setup Node.js 22 (with Yarn cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Cache .ref_* reference repositories
+        uses: actions/cache@v4
+        with:
+          path: .ref_*
+          key: discogenius-refs-v1-${{ hashFiles('scripts/agent-env/install.sh') }}
+          restore-keys: |
+            discogenius-refs-v1-
+
+      - name: Bootstrap environment (scripts/agent-env/install.sh)
+        run: bash scripts/agent-env/install.sh
+
+      - name: Prepare or resume issue branch (agent/issue-N)
+        run: |
+          git config user.name "claude[bot]"
+          git config user.email "claude[bot]@users.noreply.github.com"
+          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "Resuming existing branch $BRANCH from previous agent session..."
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+
+      - name: Run Claude Code CLI on Issue/PR
+        id: run_claude
+        continue-on-error: true
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
+          TITLE=$(echo "$ISSUE_JSON" | jq -r .title)
+          BODY=$(echo "$ISSUE_JSON" | jq -r .body)
+          URL=$(echo "$ISSUE_JSON" | jq -r .url)
+
+          PROMPT="Read AGENTS.md and HANDOFF.md first. You are working on GitHub Issue #${ISSUE_NUMBER}: ${TITLE} (${URL}).
+          If HANDOFF.md or existing commits on branch agent/issue-${ISSUE_NUMBER} show prior work from another agent, continue right where it left off.
+          Implement the requested changes, run 'yarn ci' to verify, update HANDOFF.md with your status, commit and push branch agent/issue-${ISSUE_NUMBER}, and open or update a Pull Request using 'gh pr create' or 'gh pr edit'.
+
+          Issue body:
+          ${BODY}
+
+          Additional context:
+          ${EXTRA_PROMPT}"
+
+          set +e
+          claude -p "$PROMPT" --dangerously-skip-permissions 2>&1 | tee /tmp/claude-agent.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          if grep -qiE '5-hour limit|usage limit|rate.?limit|quota exceeded|429|out of usage' /tmp/claude-agent.log; then
+            echo "quota_exhausted=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "quota_exhausted=false" >> "$GITHUB_OUTPUT"
+          exit "$EXIT_CODE"
+
+      - name: Save WIP & Auto-Failover to Gemini if Claude ran out of usage
+        if: steps.run_claude.outputs.quota_exhausted == 'true'
+        run: |
+          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "wip(issue-${ISSUE_NUMBER}): save Claude progress before quota failover" || true
+          fi
+          git push -u origin "$BRANCH" || true
+
+          gh issue edit "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+            --add-label "quota-exhausted:claude,agent:gemini" \
+            --remove-label "agent:claude" || true
+
+          gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+            --body "⚠️ **Claude reached its usage limit.** Work-in-progress has been saved to branch \`${BRANCH}\`. Automatically handing over to @gemini-cli (\`agent:gemini\`) to pick up where Claude left off."
+
+  cursor-agent:
+    name: Cursor Cloud Agent Dispatch (Fallback / Explicit)
+    needs: route
+    if: needs.route.outputs.target_agent == 'cursor'
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+      ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
+      EXTRA_PROMPT: ${{ needs.route.outputs.extra_prompt }}
+    steps:
+      - name: Trigger Cursor Cloud Agent API
+        run: |
+          if [ -z "$CURSOR_API_KEY" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+              --body "<!-- agent-loop-guard -->⚠️ \`CURSOR_API_KEY\` secret is not configured in GitHub repository secrets. Please add it or assign \`agent:claude\` / \`agent:gemini\`."
+            exit 1
+          fi
+          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
+          TITLE=$(echo "$ISSUE_JSON" | jq -r .title)
+          BODY=$(echo "$ISSUE_JSON" | jq -r .body)
+          URL=$(echo "$ISSUE_JSON" | jq -r .url)
+
+          PROMPT_TEXT="Read AGENTS.md and HANDOFF.md first. Pick up GitHub Issue #${ISSUE_NUMBER}: ${TITLE} (${URL}). If branch agent/issue-${ISSUE_NUMBER} exists on origin, check it out and continue where the previous agent left off. Verify with yarn ci, update HANDOFF.md, and open/update a PR.
+
+          Issue description:
+          ${BODY}
+
+          Additional context:
+          ${EXTRA_PROMPT}"
+
+          PAYLOAD=$(jq -n \
+            --arg repo "https://github.com/${{ github.repository }}" \
+            --arg text "$PROMPT_TEXT" \
+            '{repository: $repo, prompt: {text: $text}}')
+
+          curl -sf -X POST "https://api.cursor.com/v1/agents" \
+            -H "Authorization: Bearer $CURSOR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
