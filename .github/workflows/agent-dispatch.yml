@@ -222,9 +222,8 @@ jobs:
       - name: Install & Run Antigravity CLI (agy) on Issue/PR
         id: run_gemini
         continue-on-error: true
-        env:
-          SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 22"
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq dbus-x11 gnome-keyring libsecret-tools
           curl -fsSL https://antigravity.google/cli/install.sh | bash
           export PATH="$HOME/.local/bin:$PATH"
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
@@ -243,8 +242,19 @@ jobs:
           ${EXTRA_PROMPT}"
 
           set +e
-          agy -p "$PROMPT" --dangerously-skip-permissions 2>&1 | tee /tmp/gemini-agent.log
+          dbus-run-session -- bash -c '
+            eval $(printf "\n" | gnome-keyring-daemon --unlock --components=secrets)
+            if [ -n "$GEMINI_OAUTH_CREDS_JSON" ]; then
+              printf "%s" "$GEMINI_OAUTH_CREDS_JSON" | secret-tool store --label="gemini:antigravity" service gemini username antigravity
+              printf "%s" "$GEMINI_OAUTH_CREDS_JSON" | secret-tool store --label="gemini:antigravity" service "gemini:antigravity" username antigravity
+            fi
+            agy --log-file /tmp/agy-debug.log -p "$1" --dangerously-skip-permissions
+          ' _ "$PROMPT" 2>&1 | tee /tmp/gemini-agent.log
           EXIT_CODE=${PIPESTATUS[0]}
+          if [ "$EXIT_CODE" -ne 0 ] && [ -f /tmp/agy-debug.log ]; then
+            echo "=== /tmp/agy-debug.log (tail) ==="
+            tail -n 60 /tmp/agy-debug.log || true
+          fi
           set -e
 
           if grep -qiE 'RESOURCE_EXHAUSTED|quota exceeded|429|rate.?limit|out of usage' /tmp/gemini-agent.log; then
