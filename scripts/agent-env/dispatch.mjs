@@ -181,11 +181,11 @@ async function dispatchToTarget(target, item, fullPrompt, args) {
     case 'gemini':
     case 'gemini-gh': {
       if (!number) {
-        // If no issue number is given, fall back to local Antigravity / Gemini CLI
+        // If no issue number is given, fall back to local Antigravity / Gemini
         return dispatchToTarget('antigravity', item, fullPrompt, args);
       }
       setAgentLabelOnGitHub(number, 'gemini', args.dryRun);
-      console.log(`[dispatch] Triggering @gemini-cli (and label 'agent:gemini') on GitHub #${number}...`);
+      console.log(`[dispatch] Triggering @gemini (and label 'agent:gemini') on GitHub #${number}...`);
       if (!args.dryRun) {
         execFileSync(
           'gh',
@@ -196,7 +196,7 @@ async function dispatchToTarget(target, item, fullPrompt, args) {
             '--repo',
             REPO,
             '--body',
-            `@gemini-cli Please pick up this task following \`AGENTS.md\` and \`HANDOFF.md\`. If branch \`agent/issue-${number}\` already exists, continue from where the previous agent left off.\n\n${args.prompt || ''}`.trim(),
+            `@gemini Please pick up this task following \`AGENTS.md\` and \`HANDOFF.md\`. If branch \`agent/issue-${number}\` already exists, continue from where the previous agent left off.\n\n${args.prompt || ''}`.trim(),
           ],
           { stdio: 'inherit' },
         );

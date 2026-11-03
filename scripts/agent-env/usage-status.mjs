@@ -272,8 +272,8 @@ export function getAgentUsageStatus({ syncToGitHub = true } = {}) {
         githubExhaustedFlag: ghExhausted.gemini,
         triggers: {
           label: 'agent:gemini',
-          mention: '@gemini-cli',
-          cliGitHub: 'node scripts/agent-env/dispatch.mjs --to gemini-gh --issue <N>',
+          mention: '@gemini',
+          cliGitHub: 'node scripts/agent-env/dispatch.mjs --to gemini --issue <N>',
           cliLocalAntigravity: 'node scripts/agent-env/dispatch.mjs --to antigravity --issue <N>',
         },
       },
@@ -344,7 +344,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
     );
     const g = status.agents.gemini;
     console.log(
-      `[2] GEMINI       | Available: ${g.available ? 'YES' : 'NO '} | Quota: ${g.available ? 'OK' : 'COOLDOWN'}                            | Trigger: label 'agent:gemini' or '@gemini-cli'`,
+      `[2] GEMINI       | Available: ${g.available ? 'YES' : 'NO '} | Quota: ${g.available ? 'OK' : 'COOLDOWN'}                            | Trigger: label 'agent:gemini' or '@gemini'`,
     );
     const cu = status.agents.cursor;
     console.log(

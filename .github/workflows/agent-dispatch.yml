@@ -211,8 +211,8 @@ jobs:
 
       - name: Prepare or resume issue branch (agent/issue-N)
         run: |
-          git config user.name "gemini-cli[bot]"
-          git config user.email "gemini-cli[bot]@users.noreply.github.com"
+          git config user.name "gemini[bot]"
+          git config user.email "gemini[bot]@users.noreply.github.com"
           BRANCH="agent/issue-${ISSUE_NUMBER}"
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "Resuming existing branch $BRANCH from previous agent session..."
@@ -387,7 +387,7 @@ jobs:
             NEXT_MENTION="@cursor"
           else
             NEXT_LABEL="agent:gemini"
-            NEXT_MENTION="@gemini-cli"
+            NEXT_MENTION="@gemini"
           fi
 
           gh issue edit "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
