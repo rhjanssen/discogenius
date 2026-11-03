@@ -226,6 +226,8 @@ jobs:
         continue-on-error: true
         env:
           GEMINI_DEFAULT_AUTH_TYPE: ${{ secrets.GEMINI_OAUTH_CREDS_JSON != '' && 'oauth-personal' || '' }}
+          GEMINI_CLI_TRUST_WORKSPACE: "true"
+          GEMINI_FORCE_FILE_STORAGE: "true"
         run: |
           npm install -g @google/gemini-cli
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
@@ -282,6 +284,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
       ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
       EXTRA_PROMPT: ${{ needs.route.outputs.extra_prompt }}
     steps:
@@ -306,6 +309,14 @@ jobs:
 
       - name: Bootstrap environment (scripts/agent-env/install.sh)
         run: bash scripts/agent-env/install.sh
+
+      - name: Configure Claude Subscription OAuth (~/.claude/.credentials.json)
+        run: |
+          if [ -n "$CLAUDE_CREDENTIALS_JSON" ]; then
+            mkdir -p ~/.claude
+            printf '%s\n' "$CLAUDE_CREDENTIALS_JSON" > ~/.claude/.credentials.json
+            chmod 600 ~/.claude/.credentials.json
+          fi
 
       - name: Prepare or resume issue branch (agent/issue-N)
         run: |
