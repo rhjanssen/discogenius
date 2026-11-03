@@ -1,3 +1,8 @@
+---
+name: backend-dev
+description: Use this skill when changing backend code under api/src/ — routes, services, the command queue, matching, import/download, synchronous SQLite queries, or schema.
+---
+
 # Backend development (`api/`)
 
 Use this skill when changing backend code under `api/src/`: routes, services, the command queue, matching, import/download, or schema.

@@ -119,25 +119,53 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   `winget install` or test inside the Docker container (the Dockerfile bundles
   `ffmpeg` + `libchromaprint-tools` for fpcalc).
 
-## Cloud agent environment (Cursor and Claude Code)
-- Both cloud agents use the same scripts so work can move between them:
-  `scripts/agent-env/install.sh` (yarn install, `.ref_*` clones, library dirs;
-  idempotent, `SKIP_REFS=1` skips the clones) and `scripts/agent-env/start.sh`
-  (dev stack on API `127.0.0.1:3737` + Vite `127.0.0.1:8080` with repo-local
-  `library/` and `downloads/` roots; exits 0 when both are already up).
-- Cursor `environment.json`: `install` = `cd /agent/repos/discogenius && bash
+## Multi-agent roles & handover
+- **Product Owner (Homelab Bot / Grok Bot)**: sets priorities, defines acceptance
+  criteria, and manages the backlog via GitHub Issues on `rhjanssen/discogenius`
+  (using labels such as `ready`, `in-progress`, `needs-review`) alongside
+  `docs/TASKS.md`. Reviews and merges PRs.
+- **Developer Agents (Cursor, Claude Code, Google Antigravity, Gemini CLI, Codex)**:
+  pick up the next `ready` issue (or task assigned via `HANDOFF.md`), work on a
+  dedicated branch, verify with `yarn ci` (and against the running container when
+  on the LAN), and open a PR. Propose findings before larger fix rounds instead
+  of acting unilaterally.
+- **Session handover (`HANDOFF.md`)**: whichever agent is stopping rewrites
+  `HANDOFF.md` at the end of its session with the current branch, what is done,
+  what is half-done, what was verified against the running container, and open
+  questions for the PO. Keep it a short overwritten note, never a growing log.
+- **Cross-agent delegation (`scripts/agent-env/dispatch.mjs`)**: any agent or
+  operator can hand off a GitHub Issue or task to another agent's cloud VM or
+  runner:
+  - **Claude Cloud VM (`claude.ai/code`)**: `node scripts/agent-env/dispatch.mjs --to claude-cloud --issue <N>` (runs `claude --cloud "<prompt>"` or falls back to `@claude` on GitHub).
+  - **Cursor Cloud VM**: `node scripts/agent-env/dispatch.mjs --to cursor-cloud --issue <N>` (calls `POST https://api.cursor.com/v1/agents` with `CURSOR_API_KEY`).
+  - **Google Antigravity (local PC / homelab LAN)**: `node scripts/agent-env/dispatch.mjs --to antigravity --issue <N>` (runs `agy -p "<prompt>"`, or spawn an isolated worktree subagent via `Workspace: "share"`).
+  - **GitHub Action triggers**: `node scripts/agent-env/dispatch.mjs --to claude-gh --issue <N>` (`@claude`) or `--to gemini-gh --issue <N>` (`@gemini-cli`).
+
+## Cloud & local agent environment (Cursor, Claude Code, Antigravity, Gemini CLI)
+- All agents share the same setup scripts and rules so work can move freely
+  between them:
+  `scripts/agent-env/install.sh` (`ffmpeg` + `fpcalc` check, `yarn install`,
+  `.ref_*` clones, library dirs; idempotent, `SKIP_REFS=1` skips the clones) and
+  `scripts/agent-env/start.sh` (dev stack on API `127.0.0.1:3737` + Vite
+  `127.0.0.1:8080` with repo-local `library/` and `downloads/` roots; exits 0
+  when both are already up).
+- **Cursor `environment.json`**: `install` = `cd /agent/repos/discogenius && bash
   scripts/agent-env/install.sh`, `start` = `cd /agent/repos/discogenius && bash
   scripts/agent-env/start.sh`.
-- Claude Code on the web: the environment setup script runs one directory above
-  the checkout, so it is `cd discogenius && bash scripts/agent-env/install.sh`.
+- **Claude Code on the web**: the environment setup script runs one directory
+  above the checkout, so it is `cd discogenius && bash scripts/agent-env/install.sh`.
   There is no start hook: run `bash scripts/agent-env/start.sh` as a background
   process when you need the running app. `CLAUDE.md` imports this file.
+- **Google Antigravity & Gemini CLI**: Antigravity loads `AGENTS.md` and
+  `.agents/skills.json` (`skills/*/SKILL.md`) natively; `.gemini/settings.json`
+  points Gemini CLI (`run-gemini-cli`) at `AGENTS.md` so no duplicate `GEMINI.md`
+  is needed.
 - Containers without IPv6 cannot bind Vite's default `::`; `start.sh` then sets
   `DISCOGENIUS_DEV_HOST=0.0.0.0`.
-- Cloud agents cannot reach the LAN (NAS, local MusicBrainz mirror, live
-  container), have no provider tokens unless set as secrets, and have no `tiddl`.
-  Use the public catalogue route there; live-server work stays with an agent on
-  the LAN.
+- Cloud agents cannot reach the LAN (NAS `192.168.1.50`, local MusicBrainz mirror
+  `192.168.1.100`, live container), have no provider tokens unless set as secrets,
+  and have no `tiddl`. Use the public catalogue route there; live-server work
+  stays with an agent on the LAN (Antigravity, local Claude Code, or Grok Bot).
 
 ## Validation checklist
 - `yarn --cwd api build` after backend changes; `yarn --cwd app build` after

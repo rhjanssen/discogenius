@@ -1,3 +1,8 @@
+---
+name: container-ops
+description: Use this skill when inspecting, debugging, or validating a running Discogenius container (such as 192.168.1.50:3737 or discogenius.spikkelpoot.com) — reading logs, checking health, read-only SQLite inspection, or testing native tools.
+---
+
 # Deployed Container Operations
 
 Use this skill when inspecting, debugging, or validating a **running Discogenius

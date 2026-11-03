@@ -1,3 +1,8 @@
+---
+name: repo-management
+description: Use this skill for repository hygiene and cutting releases — where documentation belongs, pruning stale docs, updating CHANGELOG.md, and running prepare-release.mjs.
+---
+
 # Repository Management
 
 Use this skill for repo hygiene and releases: where documentation belongs, how to

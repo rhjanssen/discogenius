@@ -1,3 +1,8 @@
+---
+name: frontend-dev
+description: Use this skill when writing or changing UI under app/src/ — React pages, components, Fluent UI v9 tokens, Griffel makeStyles, TanStack Query hooks, theming, or browser verification.
+---
+
 # Frontend Development (app/)
 
 Use this skill when writing or changing UI under `app/src/` — pages, components,

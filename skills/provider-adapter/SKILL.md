@@ -1,3 +1,8 @@
+---
+name: provider-adapter
+description: Use this skill when adding or changing a streaming provider adapter (TIDAL, Apple Music, Amazon Music, Spotify, YouTube Music, Deezer, SoundCloud) against the plugin contract.
+---
+
 # Streaming provider adapters
 
 Use this skill when adding or changing a streaming provider (TIDAL, Apple Music, Amazon Music, Spotify, YouTube / YouTube Music, Deezer, SoundCloud, …).

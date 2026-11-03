@@ -1,3 +1,8 @@
+---
+name: release-readiness
+description: Use this skill when assessing whether Discogenius is ready to tag or push a release (go/no-go release gating, version sync, yarn ci, and Docker validation).
+---
+
 # Release Readiness
 
 Use this skill when assessing whether Discogenius is ready to tag or push a

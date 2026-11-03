@@ -1,13 +1,29 @@
 #!/usr/bin/env bash
-# Shared install step for cloud coding agents (Cursor Cloud Agents, Claude Code
-# on the web, CI runners). Keep Cursor's environment.json "install" and the
-# Claude cloud environment "setup script" as thin wrappers around this file so
-# both agents get the same workspace.
+# Shared install step for cloud & local coding agents (Cursor Cloud Agents,
+# Claude Code on the web, Google Antigravity / Gemini CLI, CI runners). Keep
+# Cursor's environment.json "install" and the Claude cloud environment "setup
+# script" as thin wrappers around this file so all agents get the same workspace.
 #
 # Idempotent: safe to rerun. Run from anywhere; it cds to the repo root.
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 export GIT_TERMINAL_PROMPT=0
+
+# Ensure native media tools (ffmpeg + fpcalc) exist on Ubuntu/Debian cloud VMs.
+if command -v apt-get >/dev/null 2>&1; then
+  missing_pkgs=()
+  command -v ffmpeg >/dev/null 2>&1 || missing_pkgs+=(ffmpeg)
+  command -v fpcalc >/dev/null 2>&1 || missing_pkgs+=(libchromaprint-tools)
+  if [ "${#missing_pkgs[@]}" -gt 0 ]; then
+    sudo_cmd=""
+    if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+      sudo_cmd="sudo -n"
+    fi
+    DEBIAN_FRONTEND=noninteractive $sudo_cmd apt-get update -qq \
+      && DEBIAN_FRONTEND=noninteractive $sudo_cmd apt-get install -y -qq "${missing_pkgs[@]}" \
+      || echo "warn: could not auto-install ${missing_pkgs[*]}" >&2
+  fi
+fi
 
 yarn install --frozen-lockfile || yarn install || exit $?
 
