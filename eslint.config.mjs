@@ -83,4 +83,24 @@ export default tseslint.config(
       "@typescript-eslint/no-require-imports": "off",
     },
   },
+  {
+    // Issue #80: Fluent tokens + makeStyles only in these files.
+    files: [
+      "app/src/components/Layout.tsx",
+      "app/src/components/FilterMenu.tsx",
+      "app/src/components/ui/ProviderMark.tsx",
+      "app/src/components/ui/LoadingSkeletons.tsx",
+      "app/src/components/ui/QualityBadge.tsx",
+      "app/src/components/mediafiles/FileMaintenanceDialogs.tsx",
+      "app/src/pages/Auth.tsx",
+      "app/src/pages/dashboard/ManualImportModal.tsx",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        { selector: "JSXAttribute[name.name='style']", message: "Use makeStyles/Fluent tokens instead of inline style." },
+        { selector: "Literal[value=/#[0-9a-fA-F]{3,8}\\b/]", message: "Use Fluent tokens instead of hex colours." },
+      ],
+    },
+  },
 );
