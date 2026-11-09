@@ -109,6 +109,54 @@ const useStyles = makeStyles({
     WebkitMaskSize: "contain",
     maskSize: "contain",
   },
+  atmosLogoDark: {
+    backgroundColor: tidalBadgeColor.SpatialText,
+  },
+  atmosLogoLight: {
+    backgroundColor: tidalBadgeColorLight.SpatialText,
+  },
+  atmosLogoSmall: {
+    height: `${ATMOS_LOGO_HEIGHT_PX.small}px`,
+    width: `${Math.round(ATMOS_LOGO_HEIGHT_PX.small * ATMOS_ASPECT)}px`,
+    transform: `translateY(${ATMOS_OPTICAL_NUDGE_PX.small}px)`,
+  },
+  atmosLogoMedium: {
+    height: `${ATMOS_LOGO_HEIGHT_PX.medium}px`,
+    width: `${Math.round(ATMOS_LOGO_HEIGHT_PX.medium * ATMOS_ASPECT)}px`,
+    transform: `translateY(${ATMOS_OPTICAL_NUDGE_PX.medium}px)`,
+  },
+  atmosLogoLarge: {
+    height: `${ATMOS_LOGO_HEIGHT_PX.large}px`,
+    width: `${Math.round(ATMOS_LOGO_HEIGHT_PX.large * ATMOS_ASPECT)}px`,
+    transform: `translateY(${ATMOS_OPTICAL_NUDGE_PX.large}px)`,
+  },
+  toneSpatialDark: {
+    backgroundColor: badgeGlassFill(tidalBadgeColor.SpatialBackground, true),
+    color: tidalBadgeColor.SpatialText,
+  },
+  toneSpatialLight: {
+    backgroundColor: badgeGlassFill(tidalBadgeColorLight.SpatialBackground, false),
+    color: tidalBadgeColorLight.SpatialText,
+  },
+  toneMaxDark: {
+    backgroundColor: badgeGlassFill(tidalBadgeColor.YellowBackground, true),
+    color: tidalBadgeColor.YellowText,
+  },
+  toneMaxLight: {
+    backgroundColor: badgeGlassFill(tidalBadgeColorLight.YellowBackground, false),
+    color: tidalBadgeColorLight.YellowText,
+  },
+  toneHighDark: {
+    backgroundColor: badgeGlassFill(tidalBadgeColor.TealBackground, true),
+    color: tidalBadgeColor.TealText,
+  },
+  toneHighLight: {
+    backgroundColor: badgeGlassFill(tidalBadgeColorLight.TealBackground, false),
+    color: tidalBadgeColorLight.TealText,
+  },
+  tooltipTarget: {
+    display: "inline-flex",
+  },
 });
 
 export const QualityBadge: React.FC<QualityBadgeProps> = ({
@@ -120,18 +168,21 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({
 }) => {
   const styles = useStyles();
   const { isDarkMode } = useTheme();
-  const palette = isDarkMode ? tidalBadgeColor : tidalBadgeColorLight;
 
   const normalizedQuality = normalizeQualityTag(quality);
   const sizeClass = size === "small" ? styles.small : size === "large" ? styles.large : styles.medium;
+  const atmosLogoSizeClass = size === "small"
+    ? styles.atmosLogoSmall
+    : size === "large"
+      ? styles.atmosLogoLarge
+      : styles.atmosLogoMedium;
   const description = String(tooltip || qualityDescription(quality) || "").trim();
 
   if (isUnknownQualityTag(normalizedQuality)) {
     return null;
   }
 
-  let backgroundColor: string = badgeGlassFill(palette.SpatialBackground, isDarkMode);
-  let color: string = palette.SpatialText;
+  let toneClass = isDarkMode ? styles.toneSpatialDark : styles.toneSpatialLight;
   let badgeText = quality;
   let isAtmosLogo = false;
 
@@ -148,51 +199,47 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({
     const tier = stereoQualityTier(normalizedQuality);
     badgeText = tier;
     if (tier === "MAX") {
-      backgroundColor = badgeGlassFill(palette.YellowBackground, isDarkMode);
-      color = palette.YellowText;
+      toneClass = isDarkMode ? styles.toneMaxDark : styles.toneMaxLight;
     } else if (tier === "HIGH") {
-      backgroundColor = badgeGlassFill(palette.TealBackground, isDarkMode);
-      color = palette.TealText;
+      toneClass = isDarkMode ? styles.toneHighDark : styles.toneHighLight;
     }
   }
 
   const badgeAria = showTooltip ? undefined : badgeText;
   const badgeHidden = showTooltip ? true : undefined;
 
-  const badge = isAtmosLogo ? (() => {
-    const logoHeight = ATMOS_LOGO_HEIGHT_PX[size];
-    const nudge = ATMOS_OPTICAL_NUDGE_PX[size];
-    return (
-      <Badge
-        role={showTooltip ? undefined : "img"}
-        shape="circular"
-        appearance="tint"
-        size={size}
-        className={mergeClasses(styles.base, styles.atmos, sizeClass, className)}
-        style={{ backgroundColor: badgeGlassFill(palette.SpatialBackground, isDarkMode) }}
-        aria-label={badgeAria}
-        aria-hidden={badgeHidden}
-      >
-        <span
-          aria-hidden="true"
-          className={styles.atmosLogo}
-          style={{
-            height: `${logoHeight}px`,
-            width: `${Math.round(logoHeight * ATMOS_ASPECT)}px`,
-            backgroundColor: palette.SpatialText,
-            transform: `translateY(${nudge}px)`,
-          }}
-        />
-      </Badge>
-    );
-  })() : (
+  const badge = isAtmosLogo ? (
     <Badge
       role={showTooltip ? undefined : "img"}
       shape="circular"
       appearance="tint"
       size={size}
-      className={mergeClasses(styles.base, styles.label, sizeClass, className)}
-      style={{ backgroundColor, color }}
+      className={mergeClasses(
+        styles.base,
+        styles.atmos,
+        sizeClass,
+        isDarkMode ? styles.toneSpatialDark : styles.toneSpatialLight,
+        className,
+      )}
+      aria-label={badgeAria}
+      aria-hidden={badgeHidden}
+    >
+      <span
+        aria-hidden="true"
+        className={mergeClasses(
+          styles.atmosLogo,
+          atmosLogoSizeClass,
+          isDarkMode ? styles.atmosLogoDark : styles.atmosLogoLight,
+        )}
+      />
+    </Badge>
+  ) : (
+    <Badge
+      role={showTooltip ? undefined : "img"}
+      shape="circular"
+      appearance="tint"
+      size={size}
+      className={mergeClasses(styles.base, styles.label, sizeClass, toneClass, className)}
       aria-label={badgeAria}
       aria-hidden={badgeHidden}
     >
@@ -206,7 +253,7 @@ export const QualityBadge: React.FC<QualityBadgeProps> = ({
 
   return (
     <AppTooltip content={description || badgeText} relationship="description" withArrow>
-      <span style={{ display: "inline-flex" }} role="img" aria-label={badgeText}>
+      <span className={styles.tooltipTarget} role="img" aria-label={badgeText}>
         {badge}
       </span>
     </AppTooltip>

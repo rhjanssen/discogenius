@@ -14,7 +14,6 @@ type DetailSkeletonInfo = "metadata" | "bio";
 interface CardGridSkeletonProps {
   cards?: number;
   thumbnailAspect?: ThumbnailAspect;
-  minCardWidth?: number;
   className?: string;
 }
 
@@ -97,6 +96,39 @@ const useStyles = makeStyles({
   tlHeaderLabel: {
     height: "10px",
     borderRadius: tokens.borderRadiusSmall,
+  },
+  tlHeaderLabelIndex: {
+    width: "10px",
+  },
+  tlHeaderLabelTitle: {
+    width: "40px",
+  },
+  tlHeaderLabelWide: {
+    width: "48px",
+  },
+  tlHeaderLabelQuality: {
+    width: "42px",
+  },
+  tlCoverHidden: {
+    visibility: "hidden",
+  },
+  tlTitleBarEven: {
+    width: "72%",
+  },
+  tlTitleBarOdd: {
+    width: "56%",
+  },
+  tlArtistBarEven: {
+    width: "58%",
+  },
+  tlArtistBarOdd: {
+    width: "70%",
+  },
+  tlAlbumBarThird: {
+    width: "64%",
+  },
+  tlAlbumBarDefault: {
+    width: "50%",
   },
   tlRow: {
     display: "flex",
@@ -314,9 +346,67 @@ const useStyles = makeStyles({
       borderBottom: "none",
     },
   },
+  dataGridRowCompact: {
+    paddingTop: tokens.spacingVerticalXS,
+    paddingBottom: tokens.spacingVerticalXS,
+  },
+  dataGridCols1: {
+    gridTemplateColumns: "repeat(1, minmax(0, 1fr))",
+  },
+  dataGridCols2: {
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  },
+  dataGridCols3: {
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  },
+  dataGridCols4: {
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  },
+  dataGridCols5: {
+    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+  },
+  dataGridCols6: {
+    gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+  },
+  dataGridCols7: {
+    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+  },
+  dataGridCols8: {
+    gridTemplateColumns: "repeat(8, minmax(0, 1fr))",
+  },
+  dataGridColsLibraryArtists: {
+    gridTemplateColumns: "48px minmax(180px, 2fr) minmax(90px, 0.9fr) minmax(90px, 0.9fr) minmax(80px, 0.7fr) 72px",
+  },
+  dataGridColsLibraryAlbums: {
+    gridTemplateColumns: "48px minmax(200px, 2fr) minmax(140px, 1.3fr) 90px 110px 72px",
+  },
+  dataGridColsLibraryTracks: {
+    gridTemplateColumns: "48px minmax(200px, 2fr) minmax(140px, 1.3fr) minmax(140px, 1.3fr) 110px 80px 72px",
+  },
+  dataGridColsLibraryVideos: {
+    gridTemplateColumns: "72px minmax(200px, 2fr) minmax(140px, 1.3fr) 110px 80px 72px",
+  },
+  dataGridColsManualImport: {
+    gridTemplateColumns: "minmax(260px, 2.2fr) minmax(240px, 1.8fr) minmax(160px, 1fr)",
+  },
   dataGridCell: {
     height: "14px",
     borderRadius: tokens.borderRadiusSmall,
+  },
+  cellWidth58: {
+    width: "58%",
+  },
+  cellWidth60: {
+    width: "60%",
+  },
+  cellWidth72: {
+    width: "72%",
+  },
+  cellWidth82: {
+    width: "82%",
+  },
+  cellWidth88: {
+    width: "88%",
   },
   dataGridThumb: {
     width: "40px",
@@ -441,6 +531,12 @@ const useStyles = makeStyles({
     height: "12px",
     width: "min(420px, 92%)",
     borderRadius: tokens.borderRadiusSmall,
+  },
+  activitySubtitleEven: {
+    width: "min(360px, 88%)",
+  },
+  activitySubtitleOdd: {
+    width: "min(280px, 68%)",
   },
   activityTrailing: {
     width: "56px",
@@ -636,9 +732,36 @@ const useStyles = makeStyles({
     height: "13px",
     borderRadius: tokens.borderRadiusSmall,
   },
+  detailBioLineFirst: {
+    width: "94%",
+  },
+  detailBioLineSecond: {
+    width: "88%",
+  },
+  detailBioLineThird: {
+    width: "66%",
+  },
   detailMetadataPill: {
     height: "14px",
     borderRadius: tokens.borderRadiusCircular,
+  },
+  detailPill46: {
+    width: "46px",
+  },
+  detailPill48: {
+    width: "48px",
+  },
+  detailPill54: {
+    width: "54px",
+  },
+  detailPill64: {
+    width: "64px",
+  },
+  detailPill72: {
+    width: "72px",
+  },
+  detailPill78: {
+    width: "78px",
   },
   detailActions: {
     display: "flex",
@@ -653,6 +776,43 @@ const useStyles = makeStyles({
   detailAction: {
     height: "34px",
     borderRadius: tokens.borderRadiusMedium,
+    width: "96px",
+  },
+  actionWidth72: {
+    width: "72px",
+  },
+  actionWidth82: {
+    width: "82px",
+  },
+  actionWidth84: {
+    width: "84px",
+  },
+  actionWidth88: {
+    width: "88px",
+  },
+  actionWidth92: {
+    width: "92px",
+  },
+  actionWidth96: {
+    width: "96px",
+  },
+  actionWidth104: {
+    width: "104px",
+  },
+  actionWidth110: {
+    width: "110px",
+  },
+  actionWidth112: {
+    width: "112px",
+  },
+  actionWidth116: {
+    width: "116px",
+  },
+  actionWidth142: {
+    width: "142px",
+  },
+  actionWidth154: {
+    width: "154px",
   },
   detailActionOptional: {
     display: "none",
@@ -692,13 +852,95 @@ function getPreviewClassName(
   return mergeClasses(styles.mediaCardPreview, styles.mediaCardSquarePreview);
 }
 
-function getCellWidth(columnIndex: number, rowIndex: number, isHeader: boolean) {
+function getCellWidthClass(
+  styles: ReturnType<typeof useStyles>,
+  columnIndex: number,
+  rowIndex: number,
+  isHeader: boolean,
+) {
   if (isHeader) {
-    return columnIndex % 2 === 0 ? "72%" : "58%";
+    return columnIndex % 2 === 0 ? styles.cellWidth72 : styles.cellWidth58;
   }
 
-  const widths = ["88%", "72%", "60%", "82%"];
+  const widths = [
+    styles.cellWidth88,
+    styles.cellWidth72,
+    styles.cellWidth60,
+    styles.cellWidth82,
+  ];
   return widths[(columnIndex + rowIndex) % widths.length];
+}
+
+function getDataGridColumnClass(
+  styles: ReturnType<typeof useStyles>,
+  columns: number,
+  columnTemplate?: string,
+) {
+  switch (columnTemplate) {
+    case "48px minmax(180px, 2fr) minmax(90px, 0.9fr) minmax(90px, 0.9fr) minmax(80px, 0.7fr) 72px":
+      return styles.dataGridColsLibraryArtists;
+    case "48px minmax(200px, 2fr) minmax(140px, 1.3fr) 90px 110px 72px":
+      return styles.dataGridColsLibraryAlbums;
+    case "48px minmax(200px, 2fr) minmax(140px, 1.3fr) minmax(140px, 1.3fr) 110px 80px 72px":
+      return styles.dataGridColsLibraryTracks;
+    case "72px minmax(200px, 2fr) minmax(140px, 1.3fr) 110px 80px 72px":
+      return styles.dataGridColsLibraryVideos;
+    case "minmax(260px, 2.2fr) minmax(240px, 1.8fr) minmax(160px, 1fr)":
+      return styles.dataGridColsManualImport;
+    default:
+      break;
+  }
+
+  switch (Math.max(columns, 1)) {
+    case 1:
+      return styles.dataGridCols1;
+    case 2:
+      return styles.dataGridCols2;
+    case 3:
+      return styles.dataGridCols3;
+    case 4:
+      return styles.dataGridCols4;
+    case 6:
+      return styles.dataGridCols6;
+    case 7:
+      return styles.dataGridCols7;
+    case 8:
+      return styles.dataGridCols8;
+    case 5:
+    default:
+      return styles.dataGridCols5;
+  }
+}
+
+function getActionWidthClass(styles: ReturnType<typeof useStyles>, width: string) {
+  switch (width) {
+    case "72px":
+      return styles.actionWidth72;
+    case "82px":
+      return styles.actionWidth82;
+    case "84px":
+      return styles.actionWidth84;
+    case "88px":
+      return styles.actionWidth88;
+    case "92px":
+      return styles.actionWidth92;
+    case "96px":
+      return styles.actionWidth96;
+    case "104px":
+      return styles.actionWidth104;
+    case "110px":
+      return styles.actionWidth110;
+    case "112px":
+      return styles.actionWidth112;
+    case "116px":
+      return styles.actionWidth116;
+    case "142px":
+      return styles.actionWidth142;
+    case "154px":
+      return styles.actionWidth154;
+    default:
+      return styles.actionWidth96;
+  }
 }
 
 export function TrackListSkeleton({
@@ -727,30 +969,30 @@ export function TrackListSkeleton({
         <div className={styles.tlHeaderRow}>
           {showNumber ? (
             <div className={styles.tlIndexCell}>
-              <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "10px" }} />
+              <SkeletonItem className={mergeClasses(styles.tlHeaderLabel, styles.tlHeaderLabelIndex)} />
             </div>
           ) : null}
-          {showCover ? <div className={styles.tlCover} style={{ visibility: "hidden" }} /> : null}
+          {showCover ? <div className={mergeClasses(styles.tlCover, styles.tlCoverHidden)} /> : null}
           <div className={styles.tlTitleCell}>
-            <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "40px" }} />
+            <SkeletonItem className={mergeClasses(styles.tlHeaderLabel, styles.tlHeaderLabelTitle)} />
           </div>
           {showArtist ? (
             <div className={styles.tlFlexCell}>
-              <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "48px" }} />
+              <SkeletonItem className={mergeClasses(styles.tlHeaderLabel, styles.tlHeaderLabelWide)} />
             </div>
           ) : null}
           {showAlbum ? (
             <div className={styles.tlFlexCell}>
-              <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "48px" }} />
+              <SkeletonItem className={mergeClasses(styles.tlHeaderLabel, styles.tlHeaderLabelWide)} />
             </div>
           ) : null}
           {showQuality ? (
             <div className={styles.tlQualityCell}>
-              <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "42px" }} />
+              <SkeletonItem className={mergeClasses(styles.tlHeaderLabel, styles.tlHeaderLabelQuality)} />
             </div>
           ) : null}
           <div className={styles.tlTimeCell}>
-            <SkeletonItem className={styles.tlHeaderLabel} style={{ width: "48px" }} />
+            <SkeletonItem className={mergeClasses(styles.tlHeaderLabel, styles.tlHeaderLabelWide)} />
           </div>
           <div className={styles.tlActionsCell} />
         </div>
@@ -765,17 +1007,32 @@ export function TrackListSkeleton({
           ) : null}
           {showCover ? <SkeletonItem className={styles.tlCover} /> : null}
           <div className={styles.tlTitleCell}>
-            <SkeletonItem className={styles.tlTitleBar} style={{ width: row % 2 === 0 ? "72%" : "56%" }} />
+            <SkeletonItem
+              className={mergeClasses(
+                styles.tlTitleBar,
+                row % 2 === 0 ? styles.tlTitleBarEven : styles.tlTitleBarOdd,
+              )}
+            />
             {showArtist || showAlbum || showCover ? <SkeletonItem className={styles.tlMobileSubBar} /> : null}
           </div>
           {showArtist ? (
             <div className={styles.tlFlexCell}>
-              <SkeletonItem className={styles.tlFlexBar} style={{ width: row % 2 === 0 ? "58%" : "70%" }} />
+              <SkeletonItem
+                className={mergeClasses(
+                  styles.tlFlexBar,
+                  row % 2 === 0 ? styles.tlArtistBarEven : styles.tlArtistBarOdd,
+                )}
+              />
             </div>
           ) : null}
           {showAlbum ? (
             <div className={styles.tlFlexCell}>
-              <SkeletonItem className={styles.tlFlexBar} style={{ width: row % 3 === 0 ? "64%" : "50%" }} />
+              <SkeletonItem
+                className={mergeClasses(
+                  styles.tlFlexBar,
+                  row % 3 === 0 ? styles.tlAlbumBarThird : styles.tlAlbumBarDefault,
+                )}
+              />
             </div>
           ) : null}
           {showQuality ? (
@@ -800,20 +1057,15 @@ export function TrackListSkeleton({
 export function CardGridSkeleton({
   cards = 8,
   thumbnailAspect = "square",
-  minCardWidth,
   className,
 }: CardGridSkeletonProps) {
   const styles = useStyles();
   const previewClassName = getPreviewClassName(styles, thumbnailAspect);
-  const gridStyle = minCardWidth
-    ? { gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))` }
-    : undefined;
 
   return (
     <Skeleton
       animation="wave"
       className={mergeClasses(styles.cardGrid, className)}
-      style={gridStyle}
       aria-busy="true"
       aria-label="Loading cards"
     >
@@ -846,13 +1098,7 @@ export function DataGridSkeleton({
   actionsPerColumn = 1,
 }: DataGridSkeletonProps) {
   const styles = useStyles();
-  const gridTemplateColumns = columnTemplate || `repeat(${Math.max(columns, 1)}, minmax(0, 1fr))`;
-  const rowPaddingStyle = compact
-    ? {
-      paddingTop: tokens.spacingVerticalXS,
-      paddingBottom: tokens.spacingVerticalXS,
-    }
-    : undefined;
+  const columnLayoutClass = getDataGridColumnClass(styles, columns, columnTemplate);
 
   return (
     <Skeleton
@@ -861,12 +1107,11 @@ export function DataGridSkeleton({
       aria-busy="true"
       aria-label="Loading data"
     >
-      <div className={styles.dataGridHeader} style={{ gridTemplateColumns }}>
+      <div className={mergeClasses(styles.dataGridHeader, columnLayoutClass)}>
         {range(columns).map((column) => (
           <SkeletonItem
             key={`header-${column}`}
-            className={styles.dataGridCell}
-            style={{ width: getCellWidth(column, 0, true) }}
+            className={mergeClasses(styles.dataGridCell, getCellWidthClass(styles, column, 0, true))}
           />
         ))}
       </div>
@@ -874,8 +1119,11 @@ export function DataGridSkeleton({
       {range(rows).map((row) => (
         <div
           key={row}
-          className={styles.dataGridRow}
-          style={{ gridTemplateColumns, ...rowPaddingStyle }}
+          className={mergeClasses(
+            styles.dataGridRow,
+            columnLayoutClass,
+            compact ? styles.dataGridRowCompact : undefined,
+          )}
         >
           {range(columns).map((column) => {
             if (thumbnailColumns.includes(column)) {
@@ -903,8 +1151,7 @@ export function DataGridSkeleton({
             return (
               <SkeletonItem
                 key={`cell-${row}-${column}`}
-                className={styles.dataGridCell}
-                style={{ width: getCellWidth(column, row, false) }}
+                className={mergeClasses(styles.dataGridCell, getCellWidthClass(styles, column, row, false))}
               />
             );
           })}
@@ -968,8 +1215,10 @@ export function ActivityListSkeleton({
           <div className={styles.activityContent}>
             <SkeletonItem className={styles.activityTitle} />
             <SkeletonItem
-              className={styles.activitySubtitle}
-              style={{ width: row % 2 === 0 ? "min(360px, 88%)" : "min(280px, 68%)" }}
+              className={mergeClasses(
+                styles.activitySubtitle,
+                row % 2 === 0 ? styles.activitySubtitleEven : styles.activitySubtitleOdd,
+              )}
             />
           </div>
           <SkeletonItem className={styles.activityTrailing} />
@@ -1019,9 +1268,9 @@ export function DetailPageSkeleton({
                     <SkeletonItem className={styles.detailTitle} />
                   </div>
                   <div className={styles.detailBioBlock}>
-                    <SkeletonItem className={styles.detailBioLine} style={{ width: "94%" }} />
-                    <SkeletonItem className={styles.detailBioLine} style={{ width: "88%" }} />
-                    <SkeletonItem className={styles.detailBioLine} style={{ width: "66%" }} />
+                    <SkeletonItem className={mergeClasses(styles.detailBioLine, styles.detailBioLineFirst)} />
+                    <SkeletonItem className={mergeClasses(styles.detailBioLine, styles.detailBioLineSecond)} />
+                    <SkeletonItem className={mergeClasses(styles.detailBioLine, styles.detailBioLineThird)} />
                   </div>
                 </>
               ) : (
@@ -1031,9 +1280,9 @@ export function DetailPageSkeleton({
                     <SkeletonItem className={styles.detailTitle} />
                   </div>
                   <div className={styles.detailMetadataRow}>
-                    <SkeletonItem className={styles.detailMetadataPill} style={{ width: "64px" }} />
-                    <SkeletonItem className={styles.detailMetadataPill} style={{ width: "46px" }} />
-                    <SkeletonItem className={styles.detailMetadataPill} style={{ width: "78px" }} />
+                    <SkeletonItem className={mergeClasses(styles.detailMetadataPill, styles.detailPill64)} />
+                    <SkeletonItem className={mergeClasses(styles.detailMetadataPill, styles.detailPill46)} />
+                    <SkeletonItem className={mergeClasses(styles.detailMetadataPill, styles.detailPill78)} />
                   </div>
                 </>
               )}
@@ -1041,8 +1290,11 @@ export function DetailPageSkeleton({
                 {actionWidths.map((width, index) => (
                   <SkeletonItem
                     key={`${width}-${index}`}
-                    className={mergeClasses(styles.detailAction, index >= 3 ? styles.detailActionOptional : undefined)}
-                    style={{ width }}
+                    className={mergeClasses(
+                      styles.detailAction,
+                      getActionWidthClass(styles, width),
+                      index >= 3 ? styles.detailActionOptional : undefined,
+                    )}
                   />
                 ))}
               </div>
@@ -1094,16 +1346,19 @@ export function VideoDetailSkeleton({
             <SkeletonItem className={styles.videoTitle} />
           </div>
           <div className={styles.videoMetaRow}>
-            <SkeletonItem className={styles.detailMetadataPill} style={{ width: "54px" }} />
-            <SkeletonItem className={styles.detailMetadataPill} style={{ width: "72px" }} />
-            <SkeletonItem className={styles.detailMetadataPill} style={{ width: "48px" }} />
+            <SkeletonItem className={mergeClasses(styles.detailMetadataPill, styles.detailPill54)} />
+            <SkeletonItem className={mergeClasses(styles.detailMetadataPill, styles.detailPill72)} />
+            <SkeletonItem className={mergeClasses(styles.detailMetadataPill, styles.detailPill48)} />
           </div>
           <div className={styles.detailActions}>
             {actionWidths.map((width, index) => (
               <SkeletonItem
                 key={`${width}-${index}`}
-                className={mergeClasses(styles.detailAction, index >= 3 ? styles.detailActionOptional : undefined)}
-                style={{ width }}
+                className={mergeClasses(
+                  styles.detailAction,
+                  getActionWidthClass(styles, width),
+                  index >= 3 ? styles.detailActionOptional : undefined,
+                )}
               />
             ))}
           </div>

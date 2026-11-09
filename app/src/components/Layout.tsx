@@ -24,6 +24,7 @@ import { hexToRgb } from "@/ultrablur/color";
 import { OPEN_ACTIVITY_QUEUE_EVENT } from "@/utils/appEvents";
 import { ProviderAuthNotice } from "@/components/ProviderAuthNotice";
 import { useTheme } from "@/providers/themeContext";
+import { darkTheme, lightTheme } from "@/theme/theme";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
 import { formatCompactNumber } from "@/utils/format";
 import {
@@ -74,7 +75,10 @@ function deriveStatusBarColor(
 ): string {
   const top = mixHex(colors.topLeft, colors.topRight, 0.5);
   // Approximate the UltraBlur overlay so the system bar "blends" with the background.
-  return mixHex(top, isDark ? "#0b0f1a" : "#ffffff", 0.65);
+  const baseSurface = isDark
+    ? darkTheme.colorNeutralBackground3
+    : lightTheme.colorNeutralBackground1;
+  return mixHex(top, baseSurface, 0.65);
 }
 
 const useStyles = makeStyles({

@@ -216,6 +216,26 @@ const useStyles = makeStyles({
         width: '100%',
         minWidth: 0,
     },
+    introText: {
+        display: 'block',
+    },
+    emptySearchIcon: {
+        fontSize: '48px',
+        color: tokens.colorNeutralForeground4,
+    },
+    checkboxColumn: {
+        width: '40px',
+    },
+    localFileColumn: {
+        width: '50%',
+    },
+    uncheckedRow: {
+        opacity: 0.6,
+    },
+    fileCellContent: {
+        display: 'flex',
+        flexDirection: 'column',
+    },
 });
 
 
@@ -620,7 +640,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                     <DialogContent className={styles.dialogContent}>
                         {!selectedMatch && (
                             <>
-                                <Text style={{ display: 'block' }}>
+                                <Text className={styles.introText}>
                                     {isVideoImport
                                         ? <>Match this local file to the correct video.</>
                                         : <>Found <strong>{targetFiles.length}</strong> files ready for manual import in <Badge appearance="outline">{initialFile ? getDirname(initialFile.relative_path) : ''}</Badge></>}
@@ -676,7 +696,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                     </div>
                                 ) : hasSearched && searchResults.length === 0 ? (
                                     <div className={styles.emptyState}>
-                                        <Search24 style={{ fontSize: '48px', color: tokens.colorNeutralForeground4 }} />
+                                        <Search24 className={styles.emptySearchIcon} />
                                         <Text size={400}>
                                             No {isVideoImport ? 'videos' : 'albums'} found matching "{searchQuery}"
                                         </Text>
@@ -796,7 +816,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                          <Table className={styles.mappingTable}>
                                              <TableHeader>
                                                  <TableRow>
-                                                     <TableHeaderCell style={{ width: '40px' }}>
+                                                     <TableHeaderCell className={styles.checkboxColumn}>
                                                          <Checkbox
                                                              aria-label="Select all files"
                                                              checked={allSelected ? true : someSelected ? 'mixed' : false}
@@ -809,7 +829,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                              }}
                                                          />
                                                      </TableHeaderCell>
-                                                     <TableHeaderCell style={{ width: '50%' }}>Local file</TableHeaderCell>
+                                                     <TableHeaderCell className={styles.localFileColumn}>Local file</TableHeaderCell>
                                                      <TableHeaderCell>Track match</TableHeaderCell>
                                                  </TableRow>
                                              </TableHeader>
@@ -819,7 +839,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                      const mappedId = mappedTracks[file.id];
 
                                                      return (
-                                                         <TableRow key={file.id} style={{ opacity: isChecked ? 1 : 0.6 }}>
+                                                         <TableRow key={file.id} className={isChecked ? undefined : styles.uncheckedRow}>
                                                              <TableCell>
                                                                  <Checkbox
                                                                      aria-label={`Select ${file.filename}`}
@@ -828,7 +848,7 @@ const ManualImportModal: React.FC<Props> = ({ isOpen, onClose, initialFile, init
                                                                  />
                                                              </TableCell>
                                                              <TableCell>
-                                                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                                 <div className={styles.fileCellContent}>
                                                                      <span className={styles.filename} title={file.filename}>{file.filename}</span>
                                                                      <Text size={100} className={styles.secondaryText}>
                                                                          {formatBytes(file.file_size ?? 0)}

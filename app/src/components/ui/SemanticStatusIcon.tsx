@@ -58,6 +58,13 @@ export function StatusIconSlot({ size = 16, className, children }: StatusIconSlo
     );
 }
 
+function statusColor(status: SemanticStatus): string {
+    if (status === "success") return tokens.colorPaletteGreenForeground1;
+    if (status === "warning") return tokens.colorPaletteYellowForeground2;
+    if (status === "error") return tokens.colorPaletteRedForeground1;
+    return tokens.colorNeutralForeground2;
+}
+
 function filledStatusIcon(status: SemanticStatus, size: 16 | 24, iconProps: Record<string, unknown>) {
     if (size === 24) {
         if (status === "success") return <CheckmarkCircle24Filled {...iconProps} />;
@@ -79,7 +86,7 @@ export function SemanticStatusIcon({ status, size = 16, className, ...props }: S
                 ...props,
                 fontSize: glyph,
                 style: { ...statusIconGlyphStyle("filled", size),
-                    color: status === "success" ? tokens.colorPaletteGreenForeground2 : tokens.colorNeutralForeground2 },
+                    color: statusColor(status) },
             })}
         </StatusIconSlot>
     );

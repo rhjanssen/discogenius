@@ -11,6 +11,8 @@ const useStyles = makeStyles({
     glyphMaskBase: {
         display: "block",
         flexShrink: 0,
+        WebkitMaskImage: 'url("/assets/images/tidal_icon.svg")',
+        maskImage: 'url("/assets/images/tidal_icon.svg")',
         WebkitMaskRepeat: "no-repeat",
         maskRepeat: "no-repeat",
         WebkitMaskPosition: "center",
@@ -26,9 +28,51 @@ const useStyles = makeStyles({
     // "onDark": always white, for placement on a fixed dark chip (so TIDAL reads
     // white-on-black to match the Dolby Atmos badge, in both themes).
     glyphOnDark: {
-        backgroundColor: "#ffffff",
+        backgroundColor: tokens.colorNeutralForegroundStaticInverted,
+    },
+    size12: {
+        width: "12px",
+        height: "12px",
+    },
+    size14: {
+        width: "14px",
+        height: "14px",
+    },
+    size16: {
+        width: "16px",
+        height: "16px",
+    },
+    size20: {
+        width: "20px",
+        height: "20px",
+    },
+    size24: {
+        width: "24px",
+        height: "24px",
+    },
+    size28: {
+        width: "28px",
+        height: "28px",
     },
 });
+
+function getSizeClassName(styles: ReturnType<typeof useStyles>, size: number): string {
+    switch (size) {
+        case 12:
+            return styles.size12;
+        case 14:
+            return styles.size14;
+        case 20:
+            return styles.size20;
+        case 24:
+            return styles.size24;
+        case 28:
+            return styles.size28;
+        case 16:
+        default:
+            return styles.size16;
+    }
+}
 
 interface ProviderMarkProps {
     provider?: string | null;
@@ -54,18 +98,17 @@ export const ProviderMark: React.FC<ProviderMarkProps> = ({ provider, size = 16,
     if (!mark) {
         return null;
     }
-    const dim = `${size}px`;
+    const sizeClass = getSizeClassName(styles, size);
     if (mark.monochrome) {
         return (
             <span
                 aria-hidden="true"
-                className={mergeClasses(styles.glyphMaskBase, tone === "onDark" ? styles.glyphOnDark : styles.glyphAuto, className)}
-                style={{
-                    width: dim,
-                    height: dim,
-                    WebkitMaskImage: `url("${mark.src}")`,
-                    maskImage: `url("${mark.src}")`,
-                }}
+                className={mergeClasses(
+                    styles.glyphMaskBase,
+                    sizeClass,
+                    tone === "onDark" ? styles.glyphOnDark : styles.glyphAuto,
+                    className,
+                )}
             />
         );
     }
@@ -73,9 +116,10 @@ export const ProviderMark: React.FC<ProviderMarkProps> = ({ provider, size = 16,
         <img
             src={mark.src}
             alt=""
+            width={size}
+            height={size}
             aria-hidden="true"
-            className={mergeClasses(styles.img, className)}
-            style={{ width: dim, height: dim }}
+            className={mergeClasses(styles.img, sizeClass, className)}
         />
     );
 };
