@@ -585,14 +585,47 @@ export function parseRecordingCreditParts(data?: string | null): TrackArtistCred
   }
 }
 
-/** The published MusicBrainz credit of one track (TrackArtistCreditNames), in credit order. */
+/** The published MusicBrainz credit of one track (TrackArtistCredits), in credit order. */
 export function readTrackArtistCreditNames(trackMbid: string): TrackArtistCreditPart[] {
   const rows = db.prepare(`
-    SELECT artist_mbid, artist_name, artist_sort_name, credited_name, join_phrase
-    FROM TrackArtistCreditNames
-    WHERE track_mbid = ?
-    ORDER BY ordinal
+    SELECT
+      lower(artist.mbid) AS artist_mbid,
+      artist.name AS artist_name,
+      artist.sort_name AS artist_sort_name,
+      credit.credited_name,
+      credit.join_phrase
+    FROM TrackArtistCredits credit
+    JOIN Tracks track ON track.id = credit.track_id
+    JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+    WHERE lower(track.mbid) = ?
+    ORDER BY credit.ordinal
   `).all(String(trackMbid || "").trim().toLowerCase()) as Array<{
+    artist_mbid: string; artist_name: string; artist_sort_name: string | null; credited_name: string; join_phrase: string;
+  }>;
+  return rows.map((row) => ({
+    artistMbid: row.artist_mbid,
+    artistName: row.artist_name,
+    artistSortName: row.artist_sort_name,
+    creditedName: row.credited_name,
+    joinPhrase: row.join_phrase,
+  }));
+}
+
+/** The MusicBrainz credit of one recording (RecordingArtistCredits), in credit order. */
+export function readRecordingArtistCreditNames(recordingMbid: string): TrackArtistCreditPart[] {
+  const rows = db.prepare(`
+    SELECT
+      lower(artist.mbid) AS artist_mbid,
+      artist.name AS artist_name,
+      artist.sort_name AS artist_sort_name,
+      credit.credited_name,
+      credit.join_phrase
+    FROM RecordingArtistCredits credit
+    JOIN Recordings recording ON recording.id = credit.recording_id
+    JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+    WHERE lower(recording.mbid) = ?
+    ORDER BY credit.ordinal
+  `).all(String(recordingMbid || "").trim().toLowerCase()) as Array<{
     artist_mbid: string; artist_name: string; artist_sort_name: string | null; credited_name: string; join_phrase: string;
   }>;
   return rows.map((row) => ({
@@ -1993,35 +2026,49 @@ export class AudioTagService {
 
   /**
    * The track's artist credit, most specific source first:
-   *  1. the published MusicBrainz track credit (TrackArtistCreditNames, synced
+   *  1. the published MusicBrainz track credit (TrackArtistCredits, synced
    *     from the catalogue before tags are planned);
-   *  2. the recording credit stored on the recording (Recordings.credits);
+   *  2. the recording credit (RecordingArtistCredits / Recordings.credits);
    *  3. the owning artist alone (no MusicBrainz track, or a catalogue that
    *     exposes no per-track credit).
-   * TrackArtistCredits/RecordingArtistCredits are not read: the catalogue sync
-   * fills them with the release-group credit, which is the album's credit,
-   * not the track's.
    */
   private static getTrackArtistCreditParts(row: RetagTrackRow): TrackArtistCreditPart[] {
+    const recordingCredit = parseRecordingCreditParts(row.recording_data).map((part) => {
+      const artist = part.artistMbid ? this.getArtistIdentity(part.artistMbid) : null;
+      return {
+        ...part,
+        artistName: artist?.name || part.artistName || part.creditedName,
+        artistSortName: artist?.sortName ?? part.artistSortName ?? null,
+      };
+    });
+    const ownerMbid = String(row.artist_mbid || "").trim();
+    const normalizedOwnerMbid = ownerMbid.toLowerCase();
+    const isPlainOwnerStub = (parts: TrackArtistCreditPart[]) =>
+      parts.length === 1
+      && parts[0].artistMbid.toLowerCase() === normalizedOwnerMbid
+      && parts[0].creditedName === parts[0].artistName
+      && !parts[0].joinPhrase;
+
     const trackMbid = String(row.canonical_track_mbid || "").trim().toLowerCase();
     if (trackMbid) {
       const published = readTrackArtistCreditNames(trackMbid);
-      if (published.length > 0) return published;
+      if (published.length > 0 && !(recordingCredit.length > 0 && isPlainOwnerStub(published))) {
+        return published;
+      }
     }
 
-    const recordingCredit = parseRecordingCreditParts(row.recording_data);
+    const recordingMbid = String(row.canonical_recording_mbid || "").trim().toLowerCase();
+    if (recordingMbid) {
+      const publishedRecording = readRecordingArtistCreditNames(recordingMbid);
+      if (publishedRecording.length > 0 && !(recordingCredit.length > 0 && isPlainOwnerStub(publishedRecording))) {
+        return publishedRecording;
+      }
+    }
+
     if (recordingCredit.length > 0) {
-      return recordingCredit.map((part) => {
-        const artist = part.artistMbid ? this.getArtistIdentity(part.artistMbid) : null;
-        return {
-          ...part,
-          artistName: artist?.name || part.creditedName,
-          artistSortName: artist?.sortName ?? null,
-        };
-      });
+      return recordingCredit;
     }
 
-    const ownerMbid = String(row.artist_mbid || "").trim();
     const owner = ownerMbid ? this.getArtistIdentity(ownerMbid) : null;
     const ownerName = owner?.name || String(row.primary_artist_name || "").trim();
     if (!ownerName) return [];

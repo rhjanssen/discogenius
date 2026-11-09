@@ -6,10 +6,10 @@ import type Database from "better-sqlite3";
  *
  * Name: artist-locale-aliases
  *
- * Additive like track-artist-credit-names: no user_version bump, an older
- * build ignores the table. Only aliases with a locale and no end date are
- * stored, and only for artists that are credited on library files, so the
- * table follows the library, not the catalogue.
+ * Additive schema migration: no user_version bump, an older build ignores the
+ * table. Only aliases with a locale and no end date are stored, and only for
+ * artists that are credited on library files, so the table follows the
+ * library, not the catalogue.
  */
 export const ARTIST_LOCALE_ALIASES_MIGRATION = "artist-locale-aliases";
 

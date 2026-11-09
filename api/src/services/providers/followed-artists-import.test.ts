@@ -286,3 +286,42 @@ test("followed artist import reports added when metadata sync creates the artist
     ProviderArtistIdentityService.resolve = originalResolve;
   }
 });
+
+test("ensureMonitoredArtist uses MusicBrainz artist name instead of provider spelling for folder and identity", async () => {
+  const { RefreshArtistService } = await import("../music/refresh-artist-service.js");
+  const { loadArtistMetadataIdentity } = await import("../music/managed-artists.js");
+  const originalUpsertMusicBrainzArtist = RefreshArtistService.upsertMusicBrainzArtist;
+  const banglesMbid = "f92fde2a-7b1f-4e8d-9f97-731e8633ea1c";
+
+  RefreshArtistService.upsertMusicBrainzArtist = (async (mbid: string) => {
+    const existing = dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?")
+      .get(mbid) as { id: number } | undefined;
+    if (existing) return String(existing.id);
+    const inserted = dbModule.db.prepare(`
+      INSERT INTO ArtistMetadata (mbid, name, sort_name) VALUES (?, ?, ?) RETURNING id
+    `).get(mbid, "The Bangles", "Bangles, The") as { id: number };
+    return String(inserted.id);
+  }) as typeof RefreshArtistService.upsertMusicBrainzArtist;
+
+  try {
+    const result = await importModule.ensureMonitoredArtist({
+      provider_id: "tidal-bangles",
+      name: "Bangles",
+      mbid: banglesMbid,
+      match_status: "verified",
+      match_confidence: 1,
+      match_method: "test",
+    });
+
+    assert.equal(result.status, "added");
+    const identity = loadArtistMetadataIdentity(banglesMbid);
+    assert.equal(identity?.name, "The Bangles");
+    assert.equal(identity?.path, `The Bangles {mbid-${banglesMbid}}`);
+    const row = dbModule.db.prepare("SELECT name, sort_name FROM ArtistMetadata WHERE mbid = ?")
+      .get(banglesMbid) as { name: string; sort_name: string | null };
+    assert.equal(row.name, "The Bangles");
+    assert.equal(row.sort_name, "Bangles, The");
+  } finally {
+    RefreshArtistService.upsertMusicBrainzArtist = originalUpsertMusicBrainzArtist;
+  }
+});

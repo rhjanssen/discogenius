@@ -24,7 +24,7 @@ import type {
   LidarrRelease,
   LidarrTrack,
 } from "../metadata/servarr-metadata.js";
-import type { CatalogRecording } from "./catalog-provider.js";
+import type { CatalogRecording, CatalogTrackArtistCredit } from "./catalog-provider.js";
 
 /* ---- MB ws/2 response shapes (the subset we read) ---- */
 
@@ -60,6 +60,7 @@ export interface MbTrack {
   position?: number;
   title?: string;
   length?: number | null;
+  "artist-credit"?: MbArtistCreditName[];
   recording?: {
     id?: string;
     oldIds?: string[];
@@ -93,6 +94,7 @@ export interface MbRelease {
   script?: string | null;
   language?: string | null;
   relations?: Array<{ type?: string; url?: { resource?: string | null } | null }>;
+  "artist-credit"?: MbArtistCreditName[];
   "release-group"?: MbReleaseGroupStub & { "artist-credit"?: MbArtistCreditName[] };
   media?: MbMedium[];
 }
@@ -136,6 +138,28 @@ export function flattenArtistCredit(credit?: MbArtistCreditName[] | null): strin
   return text.length > 0 ? text : null;
 }
 
+export function mapMbArtistCreditParts(credit?: MbArtistCreditName[] | null): CatalogTrackArtistCredit[] {
+  if (!Array.isArray(credit) || credit.length === 0) {
+    return [];
+  }
+  const result: CatalogTrackArtistCredit[] = [];
+  for (const part of credit) {
+    const artistId = String(part?.artist?.id || "").trim();
+    const artistName = String(part?.artist?.name || part?.name || "").trim();
+    const creditedName = String(part?.name || part?.artist?.name || "").trim();
+    if (!artistId || (!artistName && !creditedName)) continue;
+    const artistSortName = String(part?.artist?.["sort-name"] || "").trim() || null;
+    result.push({
+      artistId,
+      artistName: artistName || creditedName,
+      artistSortName,
+      creditedName: creditedName || artistName,
+      joinPhrase: String(part?.joinphrase ?? ""),
+    });
+  }
+  return result;
+}
+
 function primaryArtistId(credit?: MbArtistCreditName[] | null): string | null {
   for (const part of credit || []) {
     const id = String(part.artist?.id || "").trim();
@@ -175,12 +199,16 @@ export function mapMbTrackToLidarr(track: MbTrack, mediumNumber: number): Lidarr
   const recording = track.recording;
   const lengthMs = track.length ?? recording?.length ?? 0;
   const bestTitle = track.title || recording?.title || "";
+  const trackCredits = mapMbArtistCreditParts(track["artist-credit"] ?? recording?.["artist-credit"]);
+  const recordingCredits = mapMbArtistCreditParts(recording?.["artist-credit"] ?? track["artist-credit"]);
 
   return {
     Id: String(track.id ?? ""),
     RecordingId: String(recording?.id ?? ""),
     ...(track.oldIds ? { OldIds: track.oldIds } : {}),
     ...(recording?.oldIds ? { OldRecordingIds: recording.oldIds } : {}),
+    ...(trackCredits.length > 0 ? { ArtistCredits: trackCredits } : {}),
+    ...(recordingCredits.length > 0 ? { RecordingArtistCredits: recordingCredits } : {}),
     TrackName: bestTitle,
     TrackNumber: String(track.number ?? track.position ?? ""),
     TrackPosition: Number(track.position ?? 0),
@@ -245,6 +273,8 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
     }
   }
 
+  const releaseCredits = mapMbArtistCreditParts(release["artist-credit"]);
+
   return {
     Id: String(release.id ?? ""),
     Title: release.title ?? "",
@@ -252,6 +282,7 @@ export function mapMbReleaseToLidarr(release: MbRelease): LidarrRelease {
     Country: [...countries].sort(),
     Barcode: release.barcode ?? undefined,
     Label: labels,
+    ...(releaseCredits.length > 0 ? { ArtistCredits: releaseCredits } : {}),
     // A present `label-info` array is the catalog-number field, even when every
     // number is blank. Omitting the key is reserved for payloads that never
     // asked for labels (WS without that include).
@@ -297,9 +328,12 @@ export function mapMbReleaseGroupToLidarrDetail(rg: MbReleaseGroup): LidarrRelea
     ? { Count: voteCount, Value: rawRating / 10 }
     : null;
 
+  const rgCredits = mapMbArtistCreditParts(rg["artist-credit"]);
+
   return {
     id: String(rg.id ?? ""),
     artistid: primaryArtistId(rg["artist-credit"]) ?? undefined,
+    ...(rgCredits.length > 0 ? { ArtistCredits: rgCredits } : {}),
     title: rg.title ?? "",
     type: rg["primary-type"] ?? undefined,
     secondarytypes: Array.isArray(rg["secondary-types"]) ? rg["secondary-types"] : [],

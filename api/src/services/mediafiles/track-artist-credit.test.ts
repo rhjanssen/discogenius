@@ -126,8 +126,8 @@ function insertFile(input: { ownerMbid: string; group: string; release: string; 
   ) as { id: number }).id;
 }
 
-function desired(fileId: number): Map<string, string> {
-  return new Map(tags.AudioTagService.buildDesiredTagsForTrackFileIdsForTest([fileId]).map((tag) => [tag.key, tag.targetValue]));
+function desired(fileId: number, config?: Record<string, unknown>): Map<string, string> {
+  return new Map(tags.AudioTagService.buildDesiredTagsForTrackFileIdsForTest([fileId], config as never).map((tag) => [tag.key, tag.targetValue]));
 }
 
 test("solo track on a duet album: track tags follow the track credit, album tags the album credit", async () => {
@@ -259,4 +259,215 @@ test("credit sync never renames an artist to a credited-as name", async () => {
   assert.equal(names.get("new-artist-credited")?.sort_name, "Guest");
   const credited = dbModule.db.prepare(`SELECT credited_name FROM AlbumArtists WHERE release_group_mbid = 'rg-mj-credited' ORDER BY ord`).all() as Array<{ credited_name: string }>;
   assert.deepEqual(credited.map((row) => row.credited_name), ["MJ", "Guest (credited)"]);
+});
+
+test("Diana Ross & The Supremes track credit: ARTIST uses credited-as name while ARTISTS and ARTISTSORT use canonical artist", async () => {
+  artistRowId(SUPREMES, "The Supremes", "Supremes, The");
+  seedCanonicalAlbum(dbModule.db, {
+    artistMbid: SUPREMES,
+    releaseGroupMbid: "rg-in-and-out-of-love",
+    releaseMbid: "rel-in-and-out-of-love",
+    title: "Love Child",
+    tracks: [{
+      trackMbid: "trk-in-and-out-of-love",
+      recordingMbid: "rec-in-and-out-of-love",
+      title: "In and Out of Love",
+    }],
+  });
+  const fileId = insertFile({
+    ownerMbid: SUPREMES,
+    group: "rg-in-and-out-of-love",
+    release: "rel-in-and-out-of-love",
+    track: "trk-in-and-out-of-love",
+    recording: "rec-in-and-out-of-love",
+    name: "01 - In and Out of Love.flac",
+  });
+
+  const result = await sync.TrackArtistCreditSync.syncForTrackFiles([fileId], {
+    catalog: fakeCatalog({
+      "trk-in-and-out-of-love": [
+        credit(SUPREMES, "The Supremes", "Supremes, The", "Diana Ross & The Supremes", ""),
+      ],
+    }),
+  });
+  assert.equal(result.changed, 1);
+
+  const byKey = desired(fileId);
+  assert.equal(byKey.get("artist"), "Diana Ross & The Supremes");
+  assert.equal(byKey.get("artists"), "The Supremes");
+  assert.equal(byKey.get("musicbrainz_artistid"), SUPREMES);
+  assert.equal(byKey.get("artist_sort"), "Supremes, The");
+
+  // Reuses existing TrackArtistCredits & RecordingArtistCredits tables (no TrackArtistCreditNames table).
+  const legacyTable = dbModule.db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'TrackArtistCreditNames'",
+  ).get();
+  assert.equal(legacyTable, undefined);
+  const storedTrackCredits = dbModule.db.prepare(`
+    SELECT credit.credited_name, credit.join_phrase
+    FROM TrackArtistCredits credit
+    JOIN Tracks track ON track.id = credit.track_id
+    WHERE track.mbid = 'trk-in-and-out-of-love'
+    ORDER BY credit.ordinal
+  `).all() as Array<{ credited_name: string | null; join_phrase: string | null }>;
+  assert.deepEqual(storedTrackCredits, [{ credited_name: "Diana Ross & The Supremes", join_phrase: "" }]);
+});
+
+test("materializeIntegerCreditsForReleaseGroup never copies multi-artist release-group credit onto tracks and supports full-credit ALBUMARTIST join phrases", async () => {
+  const { MusicBrainzArtistCreditService } = await import("../metadata/musicbrainz-artist-credit-service.js");
+
+  const waitsId = artistRowId(WAITS, "Tom Waits", "Waits, Tom");
+  const gayleId = artistRowId(GAYLE, "Crystal Gayle", "Gayle, Crystal");
+  const seeded = seedCanonicalAlbum(dbModule.db, {
+    artistMbid: WAITS,
+    releaseGroupMbid: "rg-one-from-the-heart-materialize",
+    releaseMbid: "rel-one-from-the-heart-materialize",
+    title: "One From the Heart",
+    tracks: [{
+      trackMbid: "trk-once-upon-a-town-materialize",
+      recordingMbid: "rec-once-upon-a-town-materialize",
+      title: "Once Upon a Town / Empty Pockets",
+    }],
+  });
+
+  // Seed release-group multi-artist credit ("Tom Waits and Crystal Gayle")
+  dbModule.db.prepare("DELETE FROM ReleaseGroupArtistCredits WHERE release_group_id = ?").run(seeded.releaseGroupId);
+  dbModule.db.prepare("DELETE FROM ReleaseArtistCredits WHERE edition_id = ?").run(seeded.editionId);
+  dbModule.db.prepare(`
+    INSERT INTO ReleaseGroupArtistCredits (release_group_id, artist_id, ordinal, credited_name, join_phrase)
+    VALUES (?, ?, 0, 'Tom Waits', ' and '), (?, ?, 1, 'Crystal Gayle', '')
+  `).run(seeded.releaseGroupId, waitsId, seeded.releaseGroupId, gayleId);
+
+  MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup("rg-one-from-the-heart-materialize");
+
+  const fileId = insertFile({
+    ownerMbid: WAITS,
+    group: "rg-one-from-the-heart-materialize",
+    release: "rel-one-from-the-heart-materialize",
+    track: "trk-once-upon-a-town-materialize",
+    recording: "rec-once-upon-a-town-materialize",
+    name: "02 - Once Upon a Town.flac",
+  });
+
+  const defaultTags = desired(fileId);
+  assert.equal(defaultTags.get("artist"), "Tom Waits");
+  assert.equal(defaultTags.get("artists"), "Tom Waits");
+  assert.equal(defaultTags.get("musicbrainz_artistid"), WAITS);
+  assert.equal(defaultTags.get("artist_sort"), "Waits, Tom");
+  assert.equal(defaultTags.get("album_artist"), "Tom Waits");
+  assert.equal(defaultTags.get("album_artists"), "Tom Waits; Crystal Gayle");
+
+  // Full-credit ALBUMARTIST (when toggle on / picard mode) uses join phrases too
+  const picardTags = desired(fileId, { album_artist_mode: "picard", full_album_artist_credit: true });
+  assert.equal(picardTags.get("album_artist"), "Tom Waits and Crystal Gayle");
+  assert.equal(picardTags.get("album_artist_sort"), "Waits, Tom and Gayle, Crystal");
+  assert.equal(picardTags.get("album_artists"), "Tom Waits; Crystal Gayle");
+  assert.equal(picardTags.get("musicbrainz_albumartistid"), `${WAITS}; ${GAYLE}`);
+  // Track tags remain Tom Waits only (never Crystal Gayle in ARTISTSORT)
+  assert.equal(picardTags.get("artist"), "Tom Waits");
+  assert.equal(picardTags.get("artist_sort"), "Waits, Tom");
+});
+
+test("duet RG credited 'A & B' where WS track credit is also 'A & B' keeps both artists after reconcile", async () => {
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const { mapMbReleaseGroupToLidarrDetail } = await import("../catalog/musicbrainz-ws-mapping.js");
+  const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+
+  const duetCredit = [
+    {
+      name: "Tom Waits",
+      joinphrase: " & ",
+      artist: { id: WAITS, name: "Tom Waits", "sort-name": "Waits, Tom" },
+    },
+    {
+      name: "Crystal Gayle",
+      joinphrase: "",
+      artist: { id: GAYLE, name: "Crystal Gayle", "sort-name": "Gayle, Crystal" },
+    },
+  ];
+
+  const mappedDetail = mapMbReleaseGroupToLidarrDetail({
+    id: "rg-duet-collab",
+    title: "Picking Up After You",
+    "primary-type": "Album",
+    "first-release-date": "1982",
+    "artist-credit": duetCredit,
+    releases: [{
+      id: "rel-duet-collab",
+      title: "Picking Up After You",
+      status: "Official",
+      date: "1982",
+      "artist-credit": duetCredit,
+      media: [{
+        position: 1,
+        format: "CD",
+        tracks: [{
+          id: "trk-duet-collab",
+          position: 1,
+          number: "1",
+          title: "Picking Up After You",
+          length: 235000,
+          "artist-credit": duetCredit,
+          recording: {
+            id: "rec-duet-collab",
+            title: "Picking Up After You",
+            length: 235000,
+            "artist-credit": duetCredit,
+          },
+        }],
+      }],
+    }],
+  });
+
+  const active = catalogProviderRegistry.getActive();
+  catalogProviderRegistry.register({
+    ...active,
+    id: catalogProviderRegistry.getActiveId(),
+    getReleaseGroup: async () => mappedDetail,
+  } as CatalogProvider);
+  try {
+    await servarrMetadata.syncReleaseGroup("rg-duet-collab", WAITS);
+  } finally {
+    catalogProviderRegistry.register(active);
+  }
+
+  const storedTrackCredits = dbModule.db.prepare(`
+    SELECT artist.mbid AS artistMbid, credit.credited_name AS creditedName, credit.join_phrase AS joinPhrase
+    FROM TrackArtistCredits credit
+    JOIN Tracks track ON track.id = credit.track_id
+    JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+    WHERE track.mbid = 'trk-duet-collab'
+    ORDER BY credit.ordinal ASC
+  `).all() as Array<{ artistMbid: string; creditedName: string | null; joinPhrase: string | null }>;
+  assert.deepEqual(storedTrackCredits, [
+    { artistMbid: WAITS, creditedName: "Tom Waits", joinPhrase: " & " },
+    { artistMbid: GAYLE, creditedName: "Crystal Gayle", joinPhrase: "" },
+  ]);
+
+  const storedRecordingCredits = dbModule.db.prepare(`
+    SELECT artist.mbid AS artistMbid, credit.credited_name AS creditedName, credit.join_phrase AS joinPhrase
+    FROM RecordingArtistCredits credit
+    JOIN Recordings rec ON rec.id = credit.recording_id
+    JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+    WHERE rec.mbid = 'rec-duet-collab'
+    ORDER BY credit.ordinal ASC
+  `).all() as Array<{ artistMbid: string; creditedName: string | null; joinPhrase: string | null }>;
+  assert.deepEqual(storedRecordingCredits, [
+    { artistMbid: WAITS, creditedName: "Tom Waits", joinPhrase: " & " },
+    { artistMbid: GAYLE, creditedName: "Crystal Gayle", joinPhrase: "" },
+  ]);
+
+  const fileId = insertFile({
+    ownerMbid: WAITS,
+    group: "rg-duet-collab",
+    release: "rel-duet-collab",
+    track: "trk-duet-collab",
+    recording: "rec-duet-collab",
+    name: "01 - Picking Up After You.flac",
+  });
+  const byKey = desired(fileId);
+  assert.equal(byKey.get("artist"), "Tom Waits & Crystal Gayle");
+  assert.equal(byKey.get("artists"), "Tom Waits; Crystal Gayle");
+  assert.equal(byKey.get("musicbrainz_artistid"), `${WAITS}; ${GAYLE}`);
+  assert.equal(byKey.get("artist_sort"), "Waits, Tom & Gayle, Crystal");
 });
