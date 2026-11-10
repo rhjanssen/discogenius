@@ -7,6 +7,7 @@ import {
   configureHddIoLimit,
   diskAdmissionSnapshot,
   diskAdmissionWorkerData,
+  DISK_ADMISSION_KEY,
   DISK_ADMISSION_OWNER_KEY,
   enterWriteGate,
   hddIoLimit,
@@ -30,6 +31,14 @@ function distinctFolders(prefix: string, count: number): string[] {
   }
   if (chosen.length !== count) throw new Error(`could not find ${count} distinct folder lanes`);
   return chosen;
+}
+
+function laneWaiterCount(folder: string): number {
+  const data = diskAdmissionWorkerData();
+  const view = new Int32Array(data[DISK_ADMISSION_KEY] as SharedArrayBuffer);
+  const lane = albumFolderLane(folder);
+  const base = 13 + lane * 5;
+  return Atomics.load(view, base + 1) + Atomics.load(view, base + 2);
 }
 
 const retag = (commandId: number): DiskAdmissionMeta => ({ role: "retag", commandId, reason: "retag file" });
@@ -280,12 +289,11 @@ test("a tight permit reacquirer cannot keep a waiter out for more than one turn"
   const previous = hddIoLimit();
   configureHddIoLimit(1);
   const [holderFolder, waiterFolder] = distinctFolders("/library/fifo", 2);
-  const data = diskAdmissionWorkerData();
   const entry = fileURLToPath(new URL("./disk-admission.ts", import.meta.url));
   try {
-    const retagTurns = await bargingTurns(data, entry, holderFolder, waiterFolder, "retag", "import");
+    const retagTurns = await bargingTurns(entry, holderFolder, waiterFolder, "retag", "import");
     assert.ok(retagTurns <= 1, `retag reacquirer entered ${retagTurns} times before the import waiter`);
-    const importTurns = await bargingTurns(data, entry, holderFolder, waiterFolder, "import", "retag");
+    const importTurns = await bargingTurns(entry, holderFolder, waiterFolder, "import", "retag");
     assert.ok(importTurns <= 1, `import reacquirer entered ${importTurns} times before the retag waiter`);
     assert.equal(diskAdmissionSnapshot().ioInUse, 0);
     assert.equal(diskAdmissionSnapshot().waits.length, 0);
@@ -332,16 +340,112 @@ test("a dead permit waiter does not stall the ticket queue", async () => {
   }
 });
 
+test("a dead waiter's lane waiter count and I/O waiter count are cleared by releaseExitedDiskAdmissionOwner", async () => {
+  const [folder] = distinctFolders("/library/dead-waiter-lane", 1);
+  const entry = fileURLToPath(new URL("./disk-admission.ts", import.meta.url));
+  let releaseHold: () => void = () => {};
+  const hold = new Promise<void>((resolve) => { releaseHold = resolve; });
+  const holder = withAlbumFolder(folder, retag(31), () => hold);
+  await waitFor(() => diskAdmissionSnapshot().holders.some((h) => h.commandId === 31), "holder lane lock");
+
+  const importWorkerData = diskAdmissionWorkerData();
+  const importWorker = new Worker(`
+    require("tsx/cjs");
+    const { parentPort, workerData } = require("node:worker_threads");
+    const { withAlbumFolder } = require(workerData.entry);
+    setInterval(() => {}, 1000);
+    withAlbumFolder(workerData.folder, { role: "import", commandId: 32, reason: "dead-import-waiter" }, async () => {
+      parentPort.postMessage("entered");
+      await new Promise(() => {});
+    }).catch((error) => parentPort.postMessage(String(error)));
+  `, { eval: true, workerData: { ...importWorkerData, entry, folder } });
+
+  try {
+    await waitFor(
+      () => diskAdmissionSnapshot().waits.some((wait) => wait.kind === "folder" && wait.commandId === 32),
+      "folder import waiter",
+    );
+    assert.equal(laneWaiterCount(folder), 1);
+
+    await importWorker.terminate();
+    releaseExitedDiskAdmissionOwner(Number(importWorkerData[DISK_ADMISSION_OWNER_KEY]));
+
+    releaseHold();
+    await holder;
+
+    assert.equal(diskAdmissionSnapshot().waits.length, 0);
+    assert.equal(laneWaiterCount(folder), 0);
+
+    const retagResult = await withAlbumFolder(folder, retag(33), async () => "retag-taken");
+    assert.equal(retagResult, "retag-taken");
+    assert.equal(diskAdmissionSnapshot().holders.length, 0);
+  } finally {
+    await importWorker.terminate();
+    releaseExitedDiskAdmissionOwner(Number(importWorkerData[DISK_ADMISSION_OWNER_KEY]));
+    releaseHold();
+    await holder.catch(() => {});
+  }
+
+  const previous = hddIoLimit();
+  configureHddIoLimit(1);
+  const [ioHeldFolder, ioQueuedFolder, ioNextFolder] = distinctFolders("/library/dead-waiter-io", 3);
+  let releaseIoHold: () => void = () => {};
+  const ioHold = new Promise<void>((resolve) => { releaseIoHold = resolve; });
+  const ioHolder = withAlbumFolder(ioHeldFolder, retag(41), () => withHddIoPermit(retag(41), () => ioHold));
+  await waitFor(() => diskAdmissionSnapshot().ioInUse === 1, "io permit holder");
+
+  const ioWorkerData = diskAdmissionWorkerData();
+  const ioWorker = new Worker(`
+    require("tsx/cjs");
+    const { parentPort, workerData } = require("node:worker_threads");
+    const { withAlbumFolder, withHddIoPermit } = require(workerData.entry);
+    setInterval(() => {}, 1000);
+    withAlbumFolder(workerData.folder, { role: "retag", commandId: 42, reason: "dead-io-waiter" }, () =>
+      withHddIoPermit({ role: "retag", commandId: 42, reason: "dead-io-waiter" }, async () => {
+        parentPort.postMessage("entered");
+        await new Promise(() => {});
+      })).catch((error) => parentPort.postMessage(String(error)));
+  `, { eval: true, workerData: { ...ioWorkerData, entry, folder: ioQueuedFolder } });
+
+  try {
+    await waitFor(
+      () => diskAdmissionSnapshot().waits.some((wait) => wait.kind === "io" && wait.commandId === 42),
+      "io permit waiter",
+    );
+    assert.equal(diskAdmissionSnapshot().ioWaiters, 1);
+
+    await ioWorker.terminate();
+    releaseExitedDiskAdmissionOwner(Number(ioWorkerData[DISK_ADMISSION_OWNER_KEY]));
+
+    assert.equal(diskAdmissionSnapshot().ioWaiters, 0);
+    assert.equal(diskAdmissionSnapshot().waits.length, 0);
+
+    releaseIoHold();
+    await ioHolder;
+
+    const nextPermit = await withAlbumFolder(ioNextFolder, retag(43), () => withHddIoPermit(retag(43), async () => "permit-taken"));
+    assert.equal(nextPermit, "permit-taken");
+    assert.equal(diskAdmissionSnapshot().ioInUse, 0);
+    assert.equal(diskAdmissionSnapshot().ioWaiters, 0);
+  } finally {
+    await ioWorker.terminate();
+    releaseExitedDiskAdmissionOwner(Number(ioWorkerData[DISK_ADMISSION_OWNER_KEY]));
+    releaseIoHold();
+    await ioHolder.catch(() => {});
+    configureHddIoLimit(previous);
+  }
+});
+
 /** Cross-thread tight loop. Returns how many times the reacquirer entered after
  * the waiter was already queued and before the waiter entered. */
 function bargingTurns(
-  data: Record<string, SharedArrayBuffer | number>,
   entry: string,
   holderFolder: string,
   waiterFolder: string,
   holderRole: DiskAdmissionMeta["role"],
   waiterRole: DiskAdmissionMeta["role"],
 ): Promise<number> {
+  const data = diskAdmissionWorkerData();
   const worker = new Worker(`
     require("tsx/cjs");
     const { parentPort, workerData } = require("node:worker_threads");
@@ -373,6 +477,7 @@ function bargingTurns(
   });
   const token = Number(data[DISK_ADMISSION_OWNER_KEY]);
   let turnsBeforeWaiter: number | null = null;
+  let done = false;
   return new Promise((resolve, reject) => {
     const finish = (error?: Error, turns?: number) => {
       worker.removeAllListeners("message");
@@ -384,6 +489,9 @@ function bargingTurns(
     };
     const timer = setTimeout(() => finish(new Error(`FIFO waiter stalled: ${JSON.stringify(diskAdmissionSnapshot())}`)), 3000);
     worker.on("message", (message: unknown) => {
+      if (message === "done") {
+        done = true;
+      }
       if (message && typeof message === "object" && "turnsBeforeWaiter" in message) {
         turnsBeforeWaiter = Number((message as { turnsBeforeWaiter: number }).turnsBeforeWaiter);
       }
@@ -392,6 +500,7 @@ function bargingTurns(
         withHddIoPermit({ role: waiterRole, commandId: 42, reason: "waiter" }, async () => {
           worker.postMessage("entered");
           await waitFor(() => turnsBeforeWaiter !== null, "turn report");
+          worker.postMessage("stop");
         }));
       void waitFor(
         () => diskAdmissionSnapshot().waits.some((wait) => wait.kind === "io" && wait.commandId === 42),
@@ -399,9 +508,10 @@ function bargingTurns(
       ).then(() => {
         worker.postMessage("go");
         return waiter;
-      }).then(() => {
-        clearTimeout(timer);
+      }).then(async () => {
         worker.postMessage("stop");
+        await waitFor(() => done, "worker exit");
+        clearTimeout(timer);
         finish(undefined, turnsBeforeWaiter ?? 0);
       }).catch((error: unknown) => {
         clearTimeout(timer);
