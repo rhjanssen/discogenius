@@ -45,7 +45,6 @@ import { migrateLibraryUserDecisions } from "./database/schema/library-user-deci
 import { migrateDownloadQueueEditionIdentity } from "./database/schema/download-queue-edition-identity.js";
 import { migrateDropDownconvertSetting } from "./database/schema/drop-downconvert-setting.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
-import { createTrackArtistCreditNamesSchema, migrateTrackArtistCreditNames } from "./database/schema/track-artist-credit-names.js";
 import { createArtistLocaleAliasesSchema, migrateArtistLocaleAliases } from "./database/schema/artist-locale-aliases.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
 import {
@@ -570,9 +569,6 @@ export function initDatabase() {
   // New table + config marker only. user_version stays 46 so a running
   // RetagArtist is not reset.
   migrateProviderAuthState(db);
-  // New table + config marker only (published MusicBrainz track credits for
-  // track artist tags). user_version stays 46.
-  migrateTrackArtistCreditNames(db);
   migrateArtistLocaleAliases(db);
   // Nullable AlbumEditions columns for Picard catalog number, ASIN, script,
   // and language. user_version stays 46.
@@ -845,7 +841,6 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
   createCanonicalCreditSchemaV41(schemaDb);
   createCommandsSchema(schemaDb);
   createProviderAuthStateSchema(schemaDb);
-  createTrackArtistCreditNamesSchema(schemaDb);
   createArtistLocaleAliasesSchema(schemaDb);
   createCommandFileWorkSchema(schemaDb);
   createRuntimeControlSchema(schemaDb);

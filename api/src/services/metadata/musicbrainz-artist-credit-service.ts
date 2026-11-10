@@ -444,34 +444,66 @@ export class MusicBrainzArtistCreditService {
         )
     `).run(releaseGroup.id);
 
+    const rgCredits = db.prepare(`
+      SELECT credit.artist_id, credit.ordinal, credit.credited_name, credit.join_phrase, credit.role,
+             artist.mbid AS artist_mbid, artist.name AS artist_name
+      FROM ReleaseGroupArtistCredits credit
+      JOIN ArtistMetadata artist ON artist.id = credit.artist_id
+      WHERE credit.release_group_id = ?
+      ORDER BY credit.ordinal ASC
+    `).all(releaseGroup.id) as Array<{
+      artist_id: number;
+      ordinal: number;
+      credited_name: string;
+      join_phrase: string;
+      role: string | null;
+      artist_mbid: string;
+      artist_name: string;
+    }>;
+
+    // A release-group credit is the album credit, never the track/recording
+    // credit. Only a single-artist release group seeds missing track/recording
+    // credits (with the artist's canonical MusicBrainz name).
+    if (rgCredits.length !== 1) return;
+    const single = rgCredits[0];
+    const normalizedMbid = String(single.artist_mbid || "").trim().toLowerCase();
+    const normalizedName = String(single.artist_name || "").trim();
+    if (
+      !normalizedName
+      || normalizedMbid === "89ad4ac3-39f7-470e-963a-56509c546377"
+      || normalizedName.toLowerCase() === "various artists"
+    ) {
+      return;
+    }
+
+    // For a single-artist release group, seed only tracks/recordings that have
+    // no credit yet, and always use the artist's canonical MusicBrainz name
+    // (ArtistMetadata.name), never a release-group credited-as variant.
     db.prepare(`
       INSERT INTO RecordingArtistCredits (
         recording_id, artist_id, ordinal, credited_name, join_phrase, role
       )
-      SELECT r.id, credit.artist_id, credit.ordinal, credit.credited_name, credit.join_phrase, credit.role
-      FROM ReleaseGroupArtistCredits credit
-      JOIN AlbumEditions e ON e.release_group_id = credit.release_group_id
+      SELECT DISTINCT r.id, ?, 0, ?, '', ?
+      FROM AlbumEditions e
       JOIN Tracks t ON t.album_edition_id = e.id
       JOIN Recordings r ON r.id = t.recording_id
-      WHERE credit.release_group_id = ?
+      WHERE e.release_group_id = ?
         AND NOT EXISTS (
           SELECT 1 FROM RecordingArtistCredits existing WHERE existing.recording_id = r.id
         )
-      GROUP BY r.id, credit.artist_id, credit.ordinal, credit.credited_name, credit.join_phrase, credit.role
-    `).run(releaseGroup.id);
+    `).run(single.artist_id, normalizedName, single.role, releaseGroup.id);
 
     db.prepare(`
       INSERT INTO TrackArtistCredits (
         track_id, artist_id, ordinal, credited_name, join_phrase, role
       )
-      SELECT t.id, credit.artist_id, credit.ordinal, credit.credited_name, credit.join_phrase, credit.role
-      FROM ReleaseGroupArtistCredits credit
-      JOIN AlbumEditions e ON e.release_group_id = credit.release_group_id
+      SELECT t.id, ?, 0, ?, '', ?
+      FROM AlbumEditions e
       JOIN Tracks t ON t.album_edition_id = e.id
-      WHERE credit.release_group_id = ?
+      WHERE e.release_group_id = ?
         AND NOT EXISTS (
           SELECT 1 FROM TrackArtistCredits existing WHERE existing.track_id = t.id
         )
-    `).run(releaseGroup.id);
+    `).run(single.artist_id, normalizedName, single.role, releaseGroup.id);
   }
 }

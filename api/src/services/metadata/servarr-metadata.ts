@@ -12,7 +12,7 @@ import { getDiscogeniusUserAgent } from "../config/user-agent.js";
 import pLimit from "p-limit";
 import {isPreservedCatalogIdentityConflict, reconcileRecordingRedirects} from "../catalog/catalog-recording-reconciliation.js";
 import { collectCatalogRedirects, groupConnectedEditions, normalizeEditionTracks, prepareEditionTrackPositions, reconcileEditionTrackIdentities } from "../catalog/catalog-track-reconciliation.js";
-import { CATALOG_DETAIL_BATCH_SIZE } from "../catalog/catalog-provider.js";
+import { CATALOG_DETAIL_BATCH_SIZE, type CatalogTrackArtistCredit } from "../catalog/catalog-provider.js";
 
 /** Servarr metadata-server rating (≈ Lidarr's RatingResource). */
 export interface ServarrMetadataRating {
@@ -80,6 +80,7 @@ export interface LidarrReleaseGroupDetail {
   id: string;
   artistid?: string;
   artistId?: string;
+  ArtistCredits?: CatalogTrackArtistCredit[];
   title: string;
   type?: string;
   secondarytypes?: string[];
@@ -104,6 +105,7 @@ export interface LidarrRelease {
   Barcode?: string;
   barcode?: string;
   Label: string[];
+  ArtistCredits?: CatalogTrackArtistCredit[];
   /**
    * Present only when the source payload carried the field. `null` or `[]`
    * clears the stored value. An omitted property leaves the stored value
@@ -129,6 +131,8 @@ export interface LidarrTrack {
   /** Authoritative catalogue redirects, distinct from occurrence replacement. */
   OldIds?: string[];
   OldRecordingIds?: string[];
+  ArtistCredits?: CatalogTrackArtistCredit[];
+  RecordingArtistCredits?: CatalogTrackArtistCredit[];
   TrackName: string;
   TrackNumber: string;
   TrackPosition: number;
@@ -1123,6 +1127,139 @@ export class ServarrMetadataService {
     }
     await withSqliteWriteGate(() => {
       db.transaction(() => {
+        const upsertCreditedArtist = db.prepare(`
+          INSERT INTO ArtistMetadata (mbid, name, sort_name, updated_at)
+          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(mbid) DO UPDATE SET
+            name = CASE
+              WHEN ? IS NOT NULL THEN ?
+              WHEN ArtistMetadata.name IS NULL OR TRIM(ArtistMetadata.name) = '' OR ArtistMetadata.name = ArtistMetadata.mbid
+                THEN CASE WHEN excluded.name = excluded.mbid THEN ArtistMetadata.name ELSE excluded.name END
+              ELSE ArtistMetadata.name
+            END,
+            sort_name = COALESCE(?, ArtistMetadata.sort_name),
+            updated_at = CURRENT_TIMESTAMP
+        `);
+        const selectArtistIdByMbid = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ? LIMIT 1");
+        const ensureCreditedArtist = (credit: CatalogTrackArtistCredit): number | null => {
+          const mbid = String(credit.artistId || "").trim();
+          const canonicalName = String(credit.artistName || "").trim() || null;
+          const canonicalSort = String(credit.artistSortName || "").trim() || null;
+          const creditedName = String(credit.creditedName || canonicalName || "").trim();
+          if (!mbid || (!canonicalName && !creditedName)) return null;
+          const seedName = canonicalName || creditedName;
+          upsertCreditedArtist.run(mbid, seedName, canonicalSort ?? seedName, canonicalName, canonicalName, canonicalSort);
+          const row = selectArtistIdByMbid.get(mbid) as { id: number } | undefined;
+          return row?.id ?? null;
+        };
+
+        if (Array.isArray(detail.ArtistCredits) && detail.ArtistCredits.length > 0) {
+          const rgRow = db.prepare("SELECT id FROM Albums WHERE mbid = ? LIMIT 1")
+            .get(releaseGroupMbid) as { id: number } | undefined;
+          if (rgRow) {
+            db.prepare("DELETE FROM ReleaseGroupArtistCredits WHERE release_group_id = ?").run(rgRow.id);
+            db.prepare("DELETE FROM AlbumArtists WHERE release_group_mbid = ?").run(releaseGroupMbid);
+            const insertRgCredit = db.prepare(`
+              INSERT INTO ReleaseGroupArtistCredits (
+                release_group_id, artist_id, ordinal, credited_name, join_phrase, role
+              ) VALUES (?, ?, ?, ?, ?, NULL)
+            `);
+            const insertAlbumArtist = db.prepare(`
+              INSERT INTO AlbumArtists (
+                release_group_mbid, artist_mbid, ord, credited_name, join_phrase, is_primary
+              ) VALUES (?, ?, ?, ?, ?, ?)
+            `);
+            detail.ArtistCredits.forEach((credit, ordinal) => {
+              const artistId = ensureCreditedArtist(credit);
+              if (artistId == null) return;
+              const creditedName = String(credit.creditedName || credit.artistName).trim();
+              const joinPhrase = String(credit.joinPhrase ?? "");
+              insertRgCredit.run(rgRow.id, artistId, ordinal, creditedName, joinPhrase);
+              insertAlbumArtist.run(releaseGroupMbid, credit.artistId, ordinal, creditedName, joinPhrase, ordinal === 0 ? 1 : 0);
+            });
+          }
+        }
+
+        const findEditionId = db.prepare("SELECT id FROM AlbumEditions WHERE mbid = ? LIMIT 1");
+        const deleteEditionCredits = db.prepare("DELETE FROM ReleaseArtistCredits WHERE edition_id = ?");
+        const insertEditionCredit = db.prepare(`
+          INSERT INTO ReleaseArtistCredits (
+            edition_id, artist_id, ordinal, credited_name, join_phrase, role
+          ) VALUES (?, ?, ?, ?, ?, NULL)
+        `);
+        const findTrackRow = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = ? LIMIT 1");
+        const deleteTrackCredits = db.prepare("DELETE FROM TrackArtistCredits WHERE track_id = ?");
+        const insertTrackCredit = db.prepare(`
+          INSERT INTO TrackArtistCredits (
+            track_id, artist_id, ordinal, credited_name, join_phrase, role
+          ) VALUES (?, ?, ?, ?, ?, NULL)
+        `);
+        const deleteRecordingCredits = db.prepare("DELETE FROM RecordingArtistCredits WHERE recording_id = ?");
+        const insertRecordingCredit = db.prepare(`
+          INSERT INTO RecordingArtistCredits (
+            recording_id, artist_id, ordinal, credited_name, join_phrase, role
+          ) VALUES (?, ?, ?, ?, ?, NULL)
+        `);
+
+        for (const release of releases) {
+          if (Array.isArray(release.ArtistCredits) && release.ArtistCredits.length > 0) {
+            const editionRow = findEditionId.get(release.Id) as { id: number } | undefined;
+            if (editionRow) {
+              deleteEditionCredits.run(editionRow.id);
+              release.ArtistCredits.forEach((credit, ordinal) => {
+                const artistId = ensureCreditedArtist(credit);
+                if (artistId == null) return;
+                insertEditionCredit.run(
+                  editionRow.id,
+                  artistId,
+                  ordinal,
+                  String(credit.creditedName || credit.artistName).trim(),
+                  String(credit.joinPhrase ?? ""),
+                );
+              });
+            }
+          }
+          for (const track of release.Tracks) {
+            const trackCredits = Array.isArray(track.ArtistCredits) && track.ArtistCredits.length > 0
+              ? track.ArtistCredits
+              : null;
+            const recordingCredits = Array.isArray(track.RecordingArtistCredits) && track.RecordingArtistCredits.length > 0
+              ? track.RecordingArtistCredits
+              : trackCredits;
+            if (!trackCredits && !recordingCredits) continue;
+            const trackRow = findTrackRow.get(track.Id) as { id: number; recording_id: number | null } | undefined;
+            if (!trackRow) continue;
+            if (trackCredits) {
+              deleteTrackCredits.run(trackRow.id);
+              trackCredits.forEach((credit, ordinal) => {
+                const artistId = ensureCreditedArtist(credit);
+                if (artistId == null) return;
+                insertTrackCredit.run(
+                  trackRow.id,
+                  artistId,
+                  ordinal,
+                  String(credit.creditedName || credit.artistName).trim(),
+                  String(credit.joinPhrase ?? ""),
+                );
+              });
+            }
+            if (recordingCredits && trackRow.recording_id != null) {
+              deleteRecordingCredits.run(trackRow.recording_id);
+              recordingCredits.forEach((credit, ordinal) => {
+                const artistId = ensureCreditedArtist(credit);
+                if (artistId == null) return;
+                insertRecordingCredit.run(
+                  trackRow.recording_id,
+                  artistId,
+                  ordinal,
+                  String(credit.creditedName || credit.artistName).trim(),
+                  String(credit.joinPhrase ?? ""),
+                );
+              });
+            }
+          }
+        }
+
         MusicBrainzArtistCreditService.materializeIntegerCreditsForReleaseGroup(releaseGroupMbid);
         if (!preservedIdentityConflict) {
           db.prepare("UPDATE Albums SET content_hash = ? WHERE mbid = ?").run(contentHash, releaseGroupMbid);

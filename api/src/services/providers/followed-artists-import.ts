@@ -94,13 +94,15 @@ export async function ensureMonitoredArtist(
     const status = existing?.monitored === 1 ? "skipped" : existing ? "updated" : "added";
 
     const localArtistId = await RefreshArtistService.upsertMusicBrainzArtist(artist.mbid, { monitorArtist: true });
+    const canonicalIdentity = loadArtistMetadataIdentity(localArtistId) ?? loadArtistMetadataIdentity(artist.mbid);
     const resolvedArtistFolder = resolveArtistFolderForIdentityUpdate({
         artistId: localArtistId,
-        artistName: artist.name,
+        artistName: canonicalIdentity?.name?.trim() || artist.name,
         artistMbId: artist.mbid,
-        existingPath: existing?.path ?? null,
+        existingPath: existing?.path ?? canonicalIdentity?.path ?? null,
     });
-    const metadataId = Number(localArtistId);
+    syncLibraryArtistMonitoring(localArtistId, true);
+    const metadataId = canonicalIdentity?.id ?? Number(localArtistId);
     if (Number.isFinite(metadataId) && metadataId > 0) {
         stampArtistLibraryPath(
             metadataId,
@@ -114,7 +116,6 @@ export async function ensureMonitoredArtist(
             WHERE id = ?
         `).run(artist.picture || null, artist.popularity || 0, metadataId);
     }
-    syncLibraryArtistMonitoring(localArtistId, true);
     return { status, localArtistId };
 }
 

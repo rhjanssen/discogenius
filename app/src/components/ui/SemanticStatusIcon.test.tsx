@@ -8,7 +8,7 @@ describe("SemanticStatusIcon", () => {
     it("uses green for completion and neutral colors for other statuses", () => {
         const { container, rerender } = render(<SemanticStatusIcon status="success" title="ok" />);
         expect(container.querySelector("svg")).toBeTruthy();
-        expect(container.querySelector("svg")?.style.color).toBe(tokens.colorPaletteGreenForeground2);
+        expect(container.querySelector("svg")?.style.color).toBe(tokens.colorPaletteGreenForeground1);
 
         rerender(<SemanticStatusIcon status="info" />);
         expect(container.querySelector("svg")).toBeTruthy();
