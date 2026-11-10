@@ -30,6 +30,10 @@ test("auth text classifies expired logins and ignores transient network errors",
   assert.equal(errors.asProviderAuthError("Tidal", new Error("The token has expired. (Expired on time)")), null);
   const wrapped = errors.asProviderAuthError("Tidal", new Error("Tidal login expired (token has expired)."));
   assert.equal(wrapped?.provider, "tidal");
+  assert.equal(errors.errorIndicatesProviderAuth(new Error("Apple Music decryption failed because the wrapper session expired or Apple rejected it.")), true);
+  const appleWrapped = errors.asProviderAuthError("apple-music", new Error("Apple Music decryption failed because the wrapper session expired."));
+  assert.equal(appleWrapped?.provider, "apple-music");
+  assert.equal(appleWrapped?.code, "needs_reauth");
   assert.equal(errors.asProviderAuthError("deezer", new Error("socket hang up")), null);
 });
 

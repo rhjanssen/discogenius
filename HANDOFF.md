@@ -1,8 +1,8 @@
 # Session Handoff
 
 - **Last updated by:** Google Antigravity / Gemini
-- **Active branch:** `agent/issue-90`
-- **Related issue / PR:** Issue #90 (Housekeeping must not stall imports and downloads)
+- **Active branch:** `agent/issue-94`
+- **Related issue / PR:** Issue #90 (merged in v2.24.0) & Issue #91 / PR #94 (`fix(apple-music): prevent single unavailable track from failing whole album download`)
 
 ## Done
 - Set `Housekeeping` command `requiresDiskAccess: false` in `command-registry.ts` (`diskScope: "none"`), ensuring it does not take the global disk slot or block completed-download imports and file operations.
@@ -12,7 +12,7 @@
 - Updated `cancelNonDownloadCommand` in `command-control-service.ts` and `persistCommandOutcome` in `command-context.ts` to support cooperative cancellation for Housekeeping so `DELETE /api/v1/command/:id` stops it cleanly within one batch.
 - Wrapped `PATCH /api/v1/system/task/:id` and `POST /api/v1/system/task/:id/run` in `withSqliteWriteGate` to prevent 500 `database is locked` errors during background writes.
 - Added comprehensive unit tests in `runtime-maintenance.test.ts` verifying import admission during active Housekeeping, cancellation, timeout stopping cleanly, and system task PATCH through the write gate.
-- Full `yarn ci` passed (lint, typecheck, 2,632 backend tests, 192 frontend tests, build).
+- **Issue #91 / PR #94**: Rebased onto `main` (`v2.24.0`). Handled Apple Music per-track unavailable errors so multi-track albums resume remaining unattempted tracks, marked unavailable items in `ProviderItems`, resolved `file-N` track IDs, isolated leftover files, surfaced fatal/auth errors, and verified with unit tests and `yarn ci`.
 
 ## Open Questions / Follow-ups for PO
-- None.
+- None. Ready for review and merge.

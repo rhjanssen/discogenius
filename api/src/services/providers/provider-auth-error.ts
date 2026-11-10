@@ -25,7 +25,7 @@ export function normalizeProviderId(provider: string): string {
  * Streamrip output, history rows from before this type existed).
  * Transient network text does not match.
  */
-const AUTH_FAILURE_TEXT = /tidal login expired|TIDAL token refresh failed \(HTTP 401\b|invalid\s+arl|arl\s+(?:expired|invalid)|deezer arl is invalid|needs_reauth/iu;
+const AUTH_FAILURE_TEXT = /tidal login expired|TIDAL token refresh failed \(HTTP 401\b|invalid\s+arl|arl\s+(?:expired|invalid)|deezer arl is invalid|needs_reauth|apple music decryption failed/iu;
 /**
  * An expired ACCESS token ("The token has expired. (Expired on time)" from a
  * TIDAL API call) is not a dead login: the refresh token renews it. Treating
