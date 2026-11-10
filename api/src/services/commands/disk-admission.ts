@@ -766,6 +766,7 @@ export function releaseExitedDiskAdmissionOwner(token: number): void {
   for (let slot = 0; slot < WAIT_SLOTS; slot += 1) {
     const index = WAIT_BASE + slot * WAIT_STRIDE;
     if (Atomics.load(view, index + WAIT_TOKEN) === token) {
+      // If a worker terminates after the finally decrement but before clearWait, this can undercount by one.
       const kind = Atomics.load(view, index + WAIT_KIND);
       if (kind === 2) {
         Atomics.sub(view, IO_WAITERS, 1);
