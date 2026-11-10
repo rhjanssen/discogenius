@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.25.1] - 2026-11-10
+
+### Fixed
+
+- The disk-admission fairness test no longer flakes when a worker is torn down mid-wait. A killed waiter now also drops its I/O and folder-lane waiter counts, so a later command is not left blocked on a reservation that should already be gone.
+
 ## [2.25.0] - 2026-11-10
 
 ### Fixed
