@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.25.0] - 2026-11-10
+
+### Fixed
+
+- An Apple Music album no longer fails as a whole when one track is unavailable. The rest of the album is still downloaded, the missing track is recorded as unavailable, and a session or network error still stops the job immediately.
+
 ## [2.24.0] - 2026-11-10
 
 ### Fixed
