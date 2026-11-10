@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.24.0] - 2026-11-10
+
+### Fixed
+
+- Housekeeping no longer holds the disk-intensive slot, so completed-download imports and new downloads can start while it runs. It yields between steps, reports progress, honours cancel, and stops cleanly after 15 minutes instead of being killed and retried three times. Enabling or disabling a scheduled task waits on the SQLite write gate, so the request no longer fails with "database is locked".
+
 ## [2.23.0] - 2026-11-10
 
 ### Changed
