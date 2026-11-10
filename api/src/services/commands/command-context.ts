@@ -133,8 +133,8 @@ export async function persistCommandOutcome(
     job: CommandModel,
     handlerError: unknown,
 ): Promise<"completed" | "failed" | "requeued" | "cancelled" | false> {
-    if (job.worker_id && CommandQueueManager.get(job.id)?.payload.cancelRequested === true) {
-        const cancelled = await withDbWrite(() => CommandQueueManager.cancel(job.id, job.worker_id!));
+    if (CommandQueueManager.get(job.id)?.payload.cancelRequested === true) {
+        const cancelled = await withDbWrite(() => CommandQueueManager.cancel(job.id, job.worker_id ?? undefined));
         return cancelled ? "cancelled" : false;
     }
     if (handlerError instanceof CommandContinuation && job.worker_id) {

@@ -26,6 +26,21 @@ export interface RuntimeMaintenanceSummary {
   videoQualitiesCorrected: number;
   /** Files deleted because they belong to unmonitored albums/editions */
   unmonitoredFilesRemoved: number;
+  /** True when the run stopped early due to reaching the hard time limit */
+  timedOut?: boolean;
+}
+
+export interface RuntimeMaintenanceOptions {
+  /** Maximum duration in ms before stopping cleanly. Default: 15 minutes (900_000 ms). */
+  timeoutMs?: number;
+  /** Explicit deadline timestamp (Date.now() + timeoutMs). */
+  deadline?: number;
+  /** Callback to check if cancellation was requested. */
+  isCancelled?: () => boolean;
+  /** Progress callback (progress 0-100, description string). */
+  onProgress?: (progress: number, description: string) => void;
+  /** Cooperative yield to event loop. Default: setImmediate. */
+  yieldToEventLoop?: () => Promise<void>;
 }
 
 function refreshDownloadState(summary: RuntimeMaintenanceSummary) {
@@ -144,7 +159,7 @@ export function correctVideoQualitiesFromDimensions(): number {
   return corrected;
 }
 
-export async function runRuntimeMaintenance(): Promise<RuntimeMaintenanceSummary> {
+export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions): Promise<RuntimeMaintenanceSummary> {
   const summary: RuntimeMaintenanceSummary = {
     duplicateLibraryFilesRemoved: 0,
     duplicateTrackedAssetsRemoved: 0,
@@ -156,39 +171,134 @@ export async function runRuntimeMaintenance(): Promise<RuntimeMaintenanceSummary
     staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
     unmonitoredFilesRemoved: 0,
+    timedOut: false,
   };
 
-  summary.staleTrackedAssetsRemoved = (await LibraryFilesService.pruneStaleTrackedAssets()).removed;
-  // Scope deduplication to one artist at a time. An all-library pass holds the
-  // shared writer across thousands of filesystem calls.
-  const sidecarArtists = db.prepare(`SELECT artist_id FROM MetadataFiles
-    UNION SELECT artist_id FROM ExtraFiles UNION SELECT artist_id FROM LyricFiles`).all() as Array<{ artist_id: string }>;
-  for (const artist of sidecarArtists) {
+  const timeoutMs = options?.timeoutMs ?? (
+    process.env.DISCOGENIUS_HOUSEKEEPING_TIMEOUT_MS
+      ? Number(process.env.DISCOGENIUS_HOUSEKEEPING_TIMEOUT_MS)
+      : 15 * 60 * 1000
+  );
+  const deadline = options?.deadline ?? (Date.now() + timeoutMs);
+  const isTimedOut = () => Date.now() >= deadline;
+  const yieldFn = options?.yieldToEventLoop ?? (() => new Promise<void>(resolve => setImmediate(resolve)));
+  const checkCancelled = () => {
+    if (options?.isCancelled?.()) {
+      throw new Error("Housekeeping cancellation requested");
+    }
+  };
+  const reportProgress = (progress: number, description: string) => {
+    options?.onProgress?.(progress, description);
+  };
+  const loopOptions = {
+    isCancelled: options?.isCancelled,
+    isTimedOut,
+    yieldToEventLoop: yieldFn,
+  };
+
+  // Step 1: Stale tracked assets
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(10, "Checking stale tracked assets");
+  summary.staleTrackedAssetsRemoved = (await LibraryFilesService.pruneStaleTrackedAssets(undefined, loopOptions)).removed;
+
+  // Step 2: Duplicate tracked assets
+  // Scope deduplication only to artists with duplicate groups to avoid
+  // acquiring the SQLite write gate thousands of times when no duplicates exist.
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(20, "Pruning duplicate tracked assets");
+  const sidecarArtistsWithDuplicates = db.prepare(`
+    SELECT DISTINCT artist_id FROM (
+      SELECT artist_id FROM MetadataFiles
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id, file_type, library_root, library_slot
+      HAVING COUNT(*) > 1
+      UNION
+      SELECT artist_id FROM ExtraFiles
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id, file_type, library_root, library_slot
+      HAVING COUNT(*) > 1
+      UNION
+      SELECT artist_id FROM LyricFiles
+      GROUP BY artist_id, canonical_release_group_mbid, canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid, provider, provider_entity_type, provider_id, library_root, library_slot
+      HAVING COUNT(*) > 1
+    )
+  `).all() as Array<{ artist_id: string }>;
+
+  for (let i = 0; i < sidecarArtistsWithDuplicates.length; i++) {
+    if (isTimedOut()) { summary.timedOut = true; return summary; }
+    checkCancelled();
+    await yieldFn();
+    const artist = sidecarArtistsWithDuplicates[i];
+    reportProgress(
+      20 + Math.floor(((i + 1) / sidecarArtistsWithDuplicates.length) * 15),
+      `Pruning duplicate sidecars (${i + 1}/${sidecarArtistsWithDuplicates.length})`,
+    );
     summary.duplicateTrackedAssetsRemoved += await withSqliteWriteGate(
       () => LibraryFilesService.pruneDuplicateTrackedAssets(artist.artist_id).removed,
       "housekeeping:duplicate-assets:artist",
     );
-    await new Promise<void>(resolve => setImmediate(resolve));
   }
+
+  // Step 3: Orphan download folders
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(40, "Pruning orphan download folders");
   summary.orphanDownloadFoldersRemoved = pruneOrphanDownloadFolders();
+
+  // Step 4: Stale temp directories
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(50, "Pruning stale temp directories");
   summary.staleTempDirsRemoved = pruneStaleTempDirectories();
+
+  // Step 5: Correct video qualities
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(55, "Correcting video qualities");
   summary.videoQualitiesCorrected = await withSqliteWriteGate(correctVideoQualitiesFromDimensions, "housekeeping:video-quality");
-  summary.unmonitoredFilesRemoved = (await LibraryFilesService.pruneUnmonitoredFilesForMonitoredArtists()).deleted;
+
+  // Step 6: Prune unmonitored files
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(60, "Pruning unmonitored files");
+  summary.unmonitoredFilesRemoved = (await LibraryFilesService.pruneUnmonitoredFilesForMonitoredArtists(loopOptions)).deleted;
 
   // Distinct physical paths remain distinct TrackFiles. Deleting only their
   // rows makes the next scan mint new IDs for the same files and breaks linked
   // extras and durable file plans. Acquisition/import owns quality replacement.
 
+  // Step 7: Refresh download state
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(75, "Refreshing download state");
   await withSqliteWriteGate(() => refreshDownloadState(summary), "housekeeping:download-state");
+
+  // Step 8: Refresh artist statistics
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(80, "Refreshing artist statistics");
   const monitoredArtistIds = (db.prepare(`
     SELECT CAST(a.id AS TEXT) AS id
     FROM ArtistMetadata a
     WHERE ${buildLibraryArtistMonitoredExistsSql("a")}
   `).all() as Array<{ id: string }>).map((row) => row.id);
   if (monitoredArtistIds.length > 0) {
-    await ArtistStatisticsService.refreshAsync(monitoredArtistIds);
+    await ArtistStatisticsService.refreshAsync(monitoredArtistIds, loopOptions);
   }
 
+  // Step 9: History and orphan claims
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(90, "Pruning command history");
   // Known-fixed video retag error from schema 46 (`file.artist_id`). Keeping
   // those rows made Activity and health look broken after the 2.13.0 join fix.
   const staleVideoRetag = await withSqliteWriteGate(() => db.prepare(`
@@ -208,6 +318,8 @@ export async function runRuntimeMaintenance(): Promise<RuntimeMaintenanceSummary
   } catch (orphanErr) {
     console.warn("[Maintenance] Failed to recover orphan wait queue claims:", orphanErr);
   }
+
+  reportProgress(100, "Housekeeping completed");
 
   if (
     summary.duplicateTrackedAssetsRemoved > 0 ||

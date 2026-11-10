@@ -1,6 +1,7 @@
 import { runRuntimeMaintenance } from "../runtime-maintenance.js";
 import { runLowCouplingMaintenanceJob } from "../scheduler-maintenance-handlers.js";
 import { queueUpdateLibraryMetadata } from "../scheduler.js";
+import { CommandQueueManager } from "../command-queue-manager.js";
 import { AlbumLibraryIndexService } from "../../music/album-library-index-service.js";
 import { TrackLibraryIndexService } from "../../music/track-library-index-service.js";
 import { CommandTrigger } from "../command-trigger.js";
@@ -23,10 +24,17 @@ export const handleLowCouplingMaintenance: CommandHandler = async (job, ctx) => 
 
 export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
-        progress: 10,
+        progress: 5,
         description: 'Running housekeeping',
     });
-    const summary = await runRuntimeMaintenance();
+    const isCancelled = () => Boolean(CommandQueueManager.get(job.id)?.payload.cancelRequested);
+    const summary = await runRuntimeMaintenance({
+        isCancelled,
+        onProgress: (progress, description) => {
+            ctx.updateCommandDescription(job, { progress, description });
+        },
+        yieldToEventLoop: () => ctx.yieldToEventLoop(),
+    });
     const parts = [
         `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s)`,
         `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,
@@ -35,13 +43,15 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
         `removed ${summary.unmonitoredFilesRemoved} unmonitored file(s)`,
     ];
+    const prefix = summary.timedOut ? "Housekeeping stopped at time limit; " : "";
     ctx.updateCommandDescription(job, {
         progress: 100,
-        description: parts.join(', '),
+        description: prefix + parts.join(', '),
     });
     if (
-        AlbumLibraryIndexService.needsRebuild()
-        || TrackLibraryIndexService.needsRebuild()
+        !summary.timedOut
+        && (AlbumLibraryIndexService.needsRebuild()
+        || TrackLibraryIndexService.needsRebuild())
     ) {
         queueUpdateLibraryMetadata({ trigger: CommandTrigger.Scheduled });
     }
