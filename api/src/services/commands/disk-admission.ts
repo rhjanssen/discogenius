@@ -403,15 +403,15 @@ function beginWait(draft: WaitDraft): number {
   const view = ints();
   for (let slot = 0; slot < WAIT_SLOTS; slot += 1) {
     const index = WAIT_BASE + slot * WAIT_STRIDE;
-    if (Atomics.compareExchange(view, index + WAIT_ACTIVE, 0, 1) !== 0) continue;
+    if (Atomics.compareExchange(view, index + WAIT_TOKEN, 0, draft.token) !== 0) continue;
     Atomics.store(view, index + WAIT_KIND, draft.kind === "folder" ? 1 : 2);
     Atomics.store(view, index + WAIT_ROLE, roleCode(draft.role));
     Atomics.store(view, index + WAIT_COMMAND, draft.commandId | 0);
     Atomics.store(view, index + WAIT_LANE, draft.lane);
     Atomics.store(view, index + WAIT_SINCE, Math.floor(Date.now() / 1000));
-    Atomics.store(view, index + WAIT_TOKEN, draft.token);
     writeText(REASON_REGION + slot * REASON_BYTES, REASON_BYTES, draft.reason);
     writeText(WAIT_FOLDER_REGION + slot * PATH_BYTES, PATH_BYTES, draft.folder);
+    Atomics.store(view, index + WAIT_ACTIVE, 1);
     return slot;
   }
   return -1;
@@ -426,15 +426,15 @@ function clearWait(slot: number): void {
   if (slot < 0) return;
   const view = ints();
   const index = WAIT_BASE + slot * WAIT_STRIDE;
+  Atomics.store(view, index + WAIT_ACTIVE, 0);
   Atomics.store(view, index + WAIT_KIND, 0);
   Atomics.store(view, index + WAIT_ROLE, 0);
   Atomics.store(view, index + WAIT_COMMAND, 0);
   Atomics.store(view, index + WAIT_LANE, 0);
   Atomics.store(view, index + WAIT_SINCE, 0);
-  Atomics.store(view, index + WAIT_TOKEN, 0);
   writeText(REASON_REGION + slot * REASON_BYTES, REASON_BYTES, "");
   writeText(WAIT_FOLDER_REGION + slot * PATH_BYTES, PATH_BYTES, "");
-  Atomics.store(view, index + WAIT_ACTIVE, 0);
+  Atomics.store(view, index + WAIT_TOKEN, 0);
 }
 
 async function waitFor(view: Int32Array, index: number, expected: number): Promise<void> {
@@ -765,6 +765,19 @@ export function releaseExitedDiskAdmissionOwner(token: number): void {
   clearIoQueueForOwner(view, token);
   for (let slot = 0; slot < WAIT_SLOTS; slot += 1) {
     const index = WAIT_BASE + slot * WAIT_STRIDE;
-    if (Atomics.load(view, index + WAIT_TOKEN) === token) clearWait(slot);
+    if (Atomics.load(view, index + WAIT_TOKEN) === token) {
+      const kind = Atomics.load(view, index + WAIT_KIND);
+      if (kind === 2) {
+        Atomics.sub(view, IO_WAITERS, 1);
+      } else if (kind === 1) {
+        const lane = Atomics.load(view, index + WAIT_LANE);
+        if (lane >= 0 && lane < LANES) {
+          const isImport = Atomics.load(view, index + WAIT_ROLE) === ROLE_CODE.import;
+          const waiterIndex = laneBase(lane) + (isImport ? LANE_IMPORT_WAITERS : LANE_OTHER_WAITERS);
+          Atomics.sub(view, waiterIndex, 1);
+        }
+      }
+      clearWait(slot);
+    }
   }
 }

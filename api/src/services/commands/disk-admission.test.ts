@@ -280,12 +280,11 @@ test("a tight permit reacquirer cannot keep a waiter out for more than one turn"
   const previous = hddIoLimit();
   configureHddIoLimit(1);
   const [holderFolder, waiterFolder] = distinctFolders("/library/fifo", 2);
-  const data = diskAdmissionWorkerData();
   const entry = fileURLToPath(new URL("./disk-admission.ts", import.meta.url));
   try {
-    const retagTurns = await bargingTurns(data, entry, holderFolder, waiterFolder, "retag", "import");
+    const retagTurns = await bargingTurns(entry, holderFolder, waiterFolder, "retag", "import");
     assert.ok(retagTurns <= 1, `retag reacquirer entered ${retagTurns} times before the import waiter`);
-    const importTurns = await bargingTurns(data, entry, holderFolder, waiterFolder, "import", "retag");
+    const importTurns = await bargingTurns(entry, holderFolder, waiterFolder, "import", "retag");
     assert.ok(importTurns <= 1, `import reacquirer entered ${importTurns} times before the retag waiter`);
     assert.equal(diskAdmissionSnapshot().ioInUse, 0);
     assert.equal(diskAdmissionSnapshot().waits.length, 0);
@@ -335,13 +334,13 @@ test("a dead permit waiter does not stall the ticket queue", async () => {
 /** Cross-thread tight loop. Returns how many times the reacquirer entered after
  * the waiter was already queued and before the waiter entered. */
 function bargingTurns(
-  data: Record<string, SharedArrayBuffer | number>,
   entry: string,
   holderFolder: string,
   waiterFolder: string,
   holderRole: DiskAdmissionMeta["role"],
   waiterRole: DiskAdmissionMeta["role"],
 ): Promise<number> {
+  const data = diskAdmissionWorkerData();
   const worker = new Worker(`
     require("tsx/cjs");
     const { parentPort, workerData } = require("node:worker_threads");
@@ -373,6 +372,7 @@ function bargingTurns(
   });
   const token = Number(data[DISK_ADMISSION_OWNER_KEY]);
   let turnsBeforeWaiter: number | null = null;
+  let done = false;
   return new Promise((resolve, reject) => {
     const finish = (error?: Error, turns?: number) => {
       worker.removeAllListeners("message");
@@ -384,6 +384,9 @@ function bargingTurns(
     };
     const timer = setTimeout(() => finish(new Error(`FIFO waiter stalled: ${JSON.stringify(diskAdmissionSnapshot())}`)), 3000);
     worker.on("message", (message: unknown) => {
+      if (message === "done") {
+        done = true;
+      }
       if (message && typeof message === "object" && "turnsBeforeWaiter" in message) {
         turnsBeforeWaiter = Number((message as { turnsBeforeWaiter: number }).turnsBeforeWaiter);
       }
@@ -392,6 +395,7 @@ function bargingTurns(
         withHddIoPermit({ role: waiterRole, commandId: 42, reason: "waiter" }, async () => {
           worker.postMessage("entered");
           await waitFor(() => turnsBeforeWaiter !== null, "turn report");
+          worker.postMessage("stop");
         }));
       void waitFor(
         () => diskAdmissionSnapshot().waits.some((wait) => wait.kind === "io" && wait.commandId === 42),
@@ -399,9 +403,10 @@ function bargingTurns(
       ).then(() => {
         worker.postMessage("go");
         return waiter;
-      }).then(() => {
-        clearTimeout(timer);
+      }).then(async () => {
         worker.postMessage("stop");
+        await waitFor(() => done, "worker exit");
+        clearTimeout(timer);
         finish(undefined, turnsBeforeWaiter ?? 0);
       }).catch((error: unknown) => {
         clearTimeout(timer);
