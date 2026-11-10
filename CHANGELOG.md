@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.23.0] - 2026-11-10
+
+### Changed
+
+- Status icons use semantic Fluent colours, and frontend lint now rejects styling that is not Fluent UI.
+
+### Fixed
+
+- Track artist tags follow the MusicBrainz track credit instead of copying the album credit onto every track. A duet or collaboration keeps both artists after a refresh. Featured credits, printed names such as "Diana Ross & The Supremes", and ARTISTSORT stay with that track. Followed-artist folders use the MusicBrainz name rather than the provider spelling.
+
 ## [2.22.0] - 2026-11-02
 
 ### Added
