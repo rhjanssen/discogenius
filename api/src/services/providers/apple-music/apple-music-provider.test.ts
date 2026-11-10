@@ -33,9 +33,15 @@ import {
   describeAppleDownloaderMissingPrerequisites,
   getAppleMusicDownloaderCapabilitySnapshot,
   getAppleMusicDownloaderBinary,
+  isAppleUnavailableTrackError,
   parseAppleDownloaderProgressLine,
+  recordUnavailableAppleTrack,
   waitForAppleMusicDownloaderReadiness,
 } from "./apple-music-backend.js";
+import { ProviderUnavailableError } from "../../download/provider-unavailable-error.js";
+import { ProviderAuthError } from "../provider-auth-error.js";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { fixtureFor } from "./apple-music-fixtures.js";
 import {
   getAppleArtistsForImportSource,
@@ -824,4 +830,465 @@ test("parseMediaUrl / getMediaUrl round-trip Apple URLs", async () => {
     const built = appleMusicStreamingProvider.getMediaUrl!(type, id);
     assert.deepEqual(appleMusicStreamingProvider.parseMediaUrl!(built), { type, providerId: id }, `round-trip ${type}`);
   }
+});
+
+function createMockChildProcess(stdoutLines: string[], exitCode: number) {
+  const cp = new EventEmitter() as any;
+  cp.stdout = new PassThrough();
+  cp.stderr = new PassThrough();
+  cp.kill = () => {};
+  queueMicrotask(() => {
+    for (const line of stdoutLines) {
+      cp.stdout.write(line + "\n");
+    }
+    cp.stdout.end();
+    cp.stderr.end();
+    cp.emit("close", exitCode);
+  });
+  return cp;
+}
+
+test("isAppleUnavailableTrackError identifies unavailable tracks and excludes session/fallback messages", () => {
+  assert.equal(isAppleUnavailableTrackError("Failed to dl aac-lc: Unavailable"), true);
+  assert.equal(isAppleUnavailableTrackError("Failed to dl aac-lc via lite-server: Unavailable"), true);
+  assert.equal(isAppleUnavailableTrackError("Unavailable"), true);
+  assert.equal(isAppleUnavailableTrackError("Unavailable, trying to dl aac-lc"), false);
+  assert.equal(isAppleUnavailableTrackError("Invalid media-user-token"), false);
+  assert.equal(isAppleUnavailableTrackError("Error reading response from device: EOF"), false);
+  assert.equal(isAppleUnavailableTrackError("503 Service Unavailable"), false);
+});
+
+test("recorded downloader output with Failed to dl aac-lc: Unavailable parses track error and partial summary", () => {
+  const recordedLines = [
+    "Track 1 of 3: songs",
+    "1440904918",
+    "Downloading 1440904918",
+    "Downloaded",
+    "Decrypted",
+    "Track 2 of 3: songs",
+    "1440904919",
+    "Unavailable, trying to dl aac-lc",
+    "Failed to dl aac-lc: Unavailable",
+    "Track 3 of 3: songs",
+    "1440904920",
+    "Downloading 1440904920",
+    "Downloaded",
+    "Decrypted",
+    "=======  [✔ ] Completed: 2/3  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 1  =======",
+    "Error detected, exiting...",
+  ];
+
+  const current: { currentFileNum?: number; totalFiles?: number; providerTrackId?: string } = {};
+  const events = [];
+  for (const line of recordedLines) {
+    const event = parseAppleDownloaderProgressLine(line, current);
+    if (event) {
+      if (event.currentFileNum !== undefined) {
+        if (current.currentFileNum !== event.currentFileNum) current.providerTrackId = undefined;
+        current.currentFileNum = event.currentFileNum;
+      }
+      if (event.totalFiles !== undefined) current.totalFiles = event.totalFiles;
+      if (event.currentProviderTrackId) current.providerTrackId = event.currentProviderTrackId;
+      events.push({ line, event });
+    }
+  }
+
+  // Track 2 error line
+  const errorEvent = events.find((e) => e.line === "Failed to dl aac-lc: Unavailable")?.event;
+  assert.equal(errorEvent?.isError, true);
+  assert.equal(errorEvent?.trackStatus, "error");
+  assert.equal(errorEvent?.currentProviderTrackId, "1440904919");
+  assert.equal(errorEvent?.statusMessage, "Failed to dl aac-lc: Unavailable");
+
+  // Summary banner line: Completed 2/3 with 1 error is NOT an overall process failure
+  const summaryEvent = events.find((e) => e.line.includes("Completed: 2/3"))?.event;
+  assert.equal(summaryEvent?.isError, undefined);
+  assert.equal(summaryEvent?.trackStatus, "completed");
+  assert.deepEqual(summaryEvent?.summary, { completed: 2, total: 3, errors: 1 });
+
+  // Upstream exit notice after exit-on-error must not be parsed as a failure
+  const exitNotice = events.find((e) => e.line.includes("Error detected, exiting"))?.event;
+  assert.equal(exitNotice?.isError, undefined);
+});
+
+test("Apple downloader backend downloads available album tracks and records unavailable track without failing album", async () => {
+  const recordedLines = [
+    "Track 1 of 3: songs",
+    "1440904918",
+    "Downloading 1440904918",
+    "Downloaded",
+    "Decrypted",
+    "Track 2 of 3: songs",
+    "1440904919",
+    "Unavailable, trying to dl aac-lc",
+    "Failed to dl aac-lc: Unavailable",
+    "Track 3 of 3: songs",
+    "1440904920",
+    "Downloading 1440904920",
+    "Downloaded",
+    "Decrypted",
+    "=======  [✔ ] Completed: 2/3  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 1  =======",
+    "Error detected, exiting...",
+  ];
+
+  const recordedUnavailable: Array<{ id: string; reason: string }> = [];
+  const progressEmissions: any[] = [];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-test-1-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => createMockChildProcess(recordedLines, 1),
+    recordUnavailableTrack: async (id, reason) => {
+      recordedUnavailable.push({ id, reason });
+    },
+    countMediaFiles: () => 2,
+  });
+
+  // Must not reject even though amdl exited with code 1
+  await backend.download(
+    {
+      provider: "apple-music",
+      entityType: "album",
+      providerId: "1440904699",
+      downloadPath: testDownloadDir,
+      trackIds: ["1440904918", "1440904919", "1440904920"],
+    },
+    {
+      onProgress: (p) => progressEmissions.push(p),
+    },
+  );
+
+  // Unavailable track recorded with exact reason
+  assert.deepEqual(recordedUnavailable, [
+    { id: "1440904919", reason: "Failed to dl aac-lc: Unavailable" },
+  ]);
+
+  // Track 2 was emitted as error in progress
+  const track2Progress = progressEmissions.find((p) => p.currentProviderTrackId === "1440904919" && p.trackStatus === "error");
+  assert.ok(track2Progress);
+  assert.equal(track2Progress.statusMessage, "Failed to dl aac-lc: Unavailable");
+
+  // Final progress emission contains warningMessage
+  const finalProgress = progressEmissions[progressEmissions.length - 1];
+  assert.ok(finalProgress.warningMessage);
+  assert.match(finalProgress.warningMessage, /1 unavailable track/);
+  assert.match(finalProgress.warningMessage, /1440904919/);
+});
+
+test("Apple downloader backend rejects single-track request with ProviderUnavailableError on Failed to dl aac-lc", async () => {
+  const singleTrackLines = [
+    "Track 1 of 1: songs",
+    "1440904919",
+    "Unavailable, trying to dl aac-lc",
+    "Failed to dl aac-lc: Unavailable",
+    "=======  [✔ ] Completed: 0/1  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 1  =======",
+    "Error detected, exiting...",
+  ];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-test-2-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => createMockChildProcess(singleTrackLines, 1),
+    recordUnavailableTrack: () => {},
+    countMediaFiles: () => 0,
+  });
+
+  await assert.rejects(
+    () => backend.download(
+      {
+        provider: "apple-music",
+        entityType: "track",
+        providerId: "1440904919",
+        downloadPath: testDownloadDir,
+      },
+      { onProgress: () => {} },
+    ),
+    (err: any) => {
+      assert.ok(err instanceof ProviderUnavailableError);
+      assert.equal(err.provider, "apple-music");
+      assert.equal(err.providerId, "1440904919");
+      assert.match(err.message, /Unavailable/);
+      return true;
+    },
+  );
+});
+
+test("Apple downloader backend rejects with ProviderAuthError on decryption/session error", async () => {
+  const sessionErrorLines = [
+    "Track 1 of 2: songs",
+    "1440904918",
+    "Error reading response from device: EOF",
+    "Error detected, exiting...",
+  ];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-test-3-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => createMockChildProcess(sessionErrorLines, 1),
+    recordUnavailableTrack: () => {},
+    countMediaFiles: () => 0,
+  });
+
+  await assert.rejects(
+    () => backend.download(
+      {
+        provider: "apple-music",
+        entityType: "album",
+        providerId: "1440904699",
+        downloadPath: testDownloadDir,
+      },
+      { onProgress: () => {} },
+    ),
+    (err: any) => {
+      assert.ok(err instanceof ProviderAuthError);
+      assert.equal(err.provider, "apple-music");
+      assert.equal(err.code, "session_expired");
+      assert.match(err.message, /Apple Music decryption failed because the wrapper session expired/);
+      return true;
+    },
+  );
+});
+
+test("Apple downloader backend rejects when all album tracks are unavailable", async () => {
+  const allUnavailableLines = [
+    "Track 1 of 2: songs",
+    "1440904918",
+    "Unavailable, trying to dl aac-lc",
+    "Failed to dl aac-lc: Unavailable",
+    "Track 2 of 2: songs",
+    "1440904919",
+    "Unavailable, trying to dl aac-lc",
+    "Failed to dl aac-lc: Unavailable",
+    "=======  [✔ ] Completed: 0/2  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 2  =======",
+    "Error detected, exiting...",
+  ];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-test-4-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => createMockChildProcess(allUnavailableLines, 1),
+    recordUnavailableTrack: () => {},
+    countMediaFiles: () => 0,
+  });
+
+  await assert.rejects(
+    () => backend.download(
+      {
+        provider: "apple-music",
+        entityType: "album",
+        providerId: "1440904699",
+        downloadPath: testDownloadDir,
+      },
+      { onProgress: () => {} },
+    ),
+    (err: any) => {
+      assert.ok(err instanceof ProviderUnavailableError);
+      assert.equal(err.provider, "apple-music");
+      assert.equal(err.entityType, "album");
+      assert.match(err.message, /All tracks unavailable/);
+      return true;
+    },
+  );
+});
+
+test("recordUnavailableAppleTrack writes unavailable status to ProviderItems and marks planning stale", async () => {
+  const { initDatabase, db } = await import("../../../database.js");
+  initDatabase();
+  const testTrackId = "999999999";
+  db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES ('apple-music', 'track', ?, 'Test Track', 'available')
+    ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET availability = 'available'
+  `).run(testTrackId);
+
+  let staleCalled = false;
+  await recordUnavailableAppleTrack(testTrackId, "Failed to dl aac-lc: Unavailable", {
+    database: db,
+    markStale: () => {
+      staleCalled = true;
+      return "rev-1";
+    },
+  });
+
+  assert.equal(staleCalled, true);
+  const row = db.prepare(`
+    SELECT availability, availability_reason FROM ProviderItems
+    WHERE provider = 'apple-music' AND entity_type = 'track' AND provider_id = ?
+  `).get(testTrackId) as { availability: string; availability_reason: string };
+
+  assert.equal(row.availability, "unavailable");
+  assert.equal(row.availability_reason, "Failed to dl aac-lc: Unavailable");
+});
+
+test("Apple downloader backend resumes remaining tracks when exit-on-error stops album after unavailable track", async () => {
+  const albumOutputEarlyExit = [
+    "Track 1 of 3: songs",
+    "1440904918",
+    "Downloading 1440904918",
+    "Downloaded",
+    "Decrypted",
+    "Track 2 of 3: songs",
+    "1440904919",
+    "Unavailable, trying to dl aac-lc",
+    "Failed to dl aac-lc: Unavailable",
+  ];
+  const track3Output = [
+    "Track 1 of 1: songs",
+    "1440904920",
+    "Downloading 1440904920",
+    "Downloaded",
+    "Decrypted",
+    "=======  [✔ ] Completed: 1/1  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 0  =======",
+  ];
+
+  const spawnedCalls: Array<{ binary: string; args: string[] }> = [];
+  const recordedUnavailable: Array<{ id: string; reason: string }> = [];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-test-resume-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: (bin: any, args: any) => {
+      const argList: string[] = Array.isArray(args) ? args : [];
+      spawnedCalls.push({ binary: String(bin), args: argList });
+      if (argList.some((a: string) => a.includes("/album/"))) {
+        return createMockChildProcess(albumOutputEarlyExit, 1);
+      }
+      return createMockChildProcess(track3Output, 0);
+    },
+    recordUnavailableTrack: async (id, reason) => {
+      recordedUnavailable.push({ id, reason });
+    },
+    countMediaFiles: () => 2,
+  });
+
+  await backend.download(
+    {
+      provider: "apple-music",
+      entityType: "album",
+      providerId: "1440904699",
+      trackIds: ["1440904918", "1440904919", "1440904920"],
+      downloadPath: testDownloadDir,
+    },
+    { onProgress: () => {} },
+  );
+
+  assert.equal(spawnedCalls.length, 2);
+  assert.ok(spawnedCalls[0].args.some((a) => a.includes("/album/1440904699")));
+  assert.ok(spawnedCalls[1].args.some((a) => a.includes("/song/1440904920")));
+  assert.deepEqual(recordedUnavailable, [
+    { id: "1440904919", reason: "Failed to dl aac-lc: Unavailable" },
+  ]);
+});
+
+test("Apple downloader backend rejects when fatal other error occurs even if completed files exist on disk", async () => {
+  const fatalErrorLines = [
+    "Track 1 of 2: songs",
+    "1440904918",
+    "Downloading 1440904918",
+    "Downloaded",
+    "Decrypted",
+    "Track 2 of 2: songs",
+    "1440904919",
+    "503 Service Unavailable: upstream connection reset",
+  ];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-test-fatal-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => createMockChildProcess(fatalErrorLines, 1),
+    recordUnavailableTrack: () => {},
+    countMediaFiles: () => 1,
+  });
+
+  await assert.rejects(
+    () => backend.download(
+      {
+        provider: "apple-music",
+        entityType: "album",
+        providerId: "1440904699",
+        trackIds: ["1440904918", "1440904919"],
+        downloadPath: testDownloadDir,
+      },
+      { onProgress: () => {} },
+    ),
+    (err: any) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /503 Service Unavailable/);
+      return true;
+    },
+  );
+});
+
+test("Apple downloader backend ignores preexisting leftover files in reused download directory", async () => {
+  const allUnavailableLines = [
+    "Track 1 of 1: songs",
+    "1440904918",
+    "Unavailable, trying to dl aac-lc",
+    "Failed to dl aac-lc: Unavailable",
+  ];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-test-leftover-"));
+  fs.writeFileSync(path.join(testDownloadDir, "leftover_old_file.m4a"), "dummy");
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => createMockChildProcess(allUnavailableLines, 1),
+    recordUnavailableTrack: () => {},
+  });
+
+  await assert.rejects(
+    () => backend.download(
+      {
+        provider: "apple-music",
+        entityType: "album",
+        providerId: "1440904699",
+        trackIds: ["1440904918"],
+        downloadPath: testDownloadDir,
+      },
+      { onProgress: () => {} },
+    ),
+    (err: any) => {
+      assert.ok(err instanceof ProviderUnavailableError);
+      assert.match(err.message, /All tracks unavailable/);
+      return true;
+    },
+  );
+});
+
+test("Apple downloader backend resolves file-N unavailable keys to provider track ID from album track list", async () => {
+  const linesWithoutTrackId = [
+    "Track 1 of 2: songs",
+    "1440904918",
+    "Downloading 1440904918",
+    "Downloaded",
+    "Decrypted",
+    "Track 2 of 2: songs",
+    "Unavailable, trying to dl aac-lc",
+    "Failed to dl aac-lc: Unavailable",
+  ];
+  const recordedUnavailable: Array<{ id: string; reason: string }> = [];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-test-filen-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => createMockChildProcess(linesWithoutTrackId, 1),
+    recordUnavailableTrack: async (id, reason) => {
+      recordedUnavailable.push({ id, reason });
+    },
+    countMediaFiles: () => 1,
+  });
+
+  await backend.download(
+    {
+      provider: "apple-music",
+      entityType: "album",
+      providerId: "1440904699",
+      trackIds: ["1440904918", "1440904919"],
+      downloadPath: testDownloadDir,
+    },
+    { onProgress: () => {} },
+  );
+
+  assert.deepEqual(recordedUnavailable, [
+    { id: "1440904919", reason: "Failed to dl aac-lc: Unavailable" },
+  ]);
 });
