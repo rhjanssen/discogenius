@@ -2938,7 +2938,14 @@ export class LibraryFilesService {
     return { removed };
   }
 
-  static async pruneStaleTrackedAssets(artistId?: string): Promise<{ removed: number }> {
+  static async pruneStaleTrackedAssets(
+    artistId?: string,
+    options?: {
+      isCancelled?: () => boolean;
+      isTimedOut?: () => boolean;
+      yieldToEventLoop?: () => Promise<void>;
+    },
+  ): Promise<{ removed: number }> {
     let totalRemoved = 0;
     const sidecarArtistKey = artistId ? (resolveArtistMbid(artistId) ?? artistId) : null;
     const params = sidecarArtistKey ? [sidecarArtistKey] : [];
@@ -2952,6 +2959,12 @@ export class LibraryFilesService {
     for (const table of tables) {
       let cursor = 0;
       while (true) {
+        if (options?.isCancelled?.()) throw new Error("Housekeeping cancellation requested");
+        if (options?.isTimedOut?.()) return { removed: totalRemoved };
+        if (options?.yieldToEventLoop) {
+          await options.yieldToEventLoop();
+        }
+
         const rows = db.prepare(`
           SELECT id AS id,
             artist_id AS artist_metadata_id,
@@ -3819,7 +3832,11 @@ export class LibraryFilesService {
     };
   }
 
-  static async pruneUnmonitoredFilesForMonitoredArtists(): Promise<{ artists: number; deleted: number; missing: number; errors: number }> {
+  static async pruneUnmonitoredFilesForMonitoredArtists(options?: {
+    isCancelled?: () => boolean;
+    isTimedOut?: () => boolean;
+    yieldToEventLoop?: () => Promise<void>;
+  }): Promise<{ artists: number; deleted: number; missing: number; errors: number }> {
     if (getConfigSection("monitoring")?.remove_unmonitored_files !== true) {
       return { artists: 0, deleted: 0, missing: 0, errors: 0 };
     }
@@ -3832,6 +3849,13 @@ export class LibraryFilesService {
     let missing = 0;
     let errors = 0;
     for (const artist of artists) {
+      if (options?.isCancelled?.()) throw new Error("Housekeeping cancellation requested");
+      if (options?.isTimedOut?.()) break;
+      if (options?.yieldToEventLoop) {
+        await options.yieldToEventLoop();
+      } else {
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
       const result = await withSqliteWriteGate(() => this.pruneUnmonitoredFiles(artist.id), "housekeeping:prune-artist");
       deleted += result.deleted;
       missing += result.missing;

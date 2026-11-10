@@ -352,7 +352,7 @@ export const COMMAND_DEFINITIONS = {
   [CommandNames.Housekeeping]: {
     type: CommandNames.Housekeeping,
     name: "Housekeeping",
-    requiresDiskAccess: true,
+    requiresDiskAccess: false,
     isTypeExclusive: true,
     isExclusive: false,
     isLongRunning: true,

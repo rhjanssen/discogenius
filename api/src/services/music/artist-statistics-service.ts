@@ -382,9 +382,21 @@ export class ArtistStatisticsService {
 
   /** Commands plan outside the write gate, then admit a bounded, current projection.
    * Changed inputs trigger a fresh plan instead of writing stale counters. */
-  static async refreshAsync(artistIds?: Array<string | number | null | undefined>): Promise<ArtistStatisticsRow[]> {
+  static async refreshAsync(
+    artistIds?: Array<string | number | null | undefined>,
+    options?: {
+      isCancelled?: () => boolean;
+      isTimedOut?: () => boolean;
+      yieldToEventLoop?: () => Promise<void>;
+    },
+  ): Promise<ArtistStatisticsRow[]> {
     const rows: ArtistStatisticsRow[] = [];
     for (const ids of chunk(this.targetIds(artistIds), ASYNC_ARTIST_STATISTICS_BATCH_SIZE)) {
+      if (options?.isCancelled?.()) throw new Error("Housekeeping cancellation requested");
+      if (options?.isTimedOut?.()) break;
+      if (options?.yieldToEventLoop) {
+        await options.yieldToEventLoop();
+      }
       let committed = false;
       for (let attempt = 0; attempt < 8 && !committed; attempt += 1) {
         const plan = prepareSqliteReadPlan(() => calculateArtistStatisticsChunk(ids), sqliteDataRevision);
@@ -398,7 +410,7 @@ export class ArtistStatisticsService {
       }
       if (!committed) throw new Error("Artist statistics inputs kept changing; retry the task");
     }
-    if (artistIds === undefined || artistIds.length === 0) {
+    if ((artistIds === undefined || artistIds.length === 0) && !options?.isTimedOut?.()) {
       await withSqliteWriteGate(() => this.persistRows([], true), "statistics:orphan-cleanup");
     }
     return rows;

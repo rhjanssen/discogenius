@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withSqliteWriteGate } from "../database.js";
 import { getObjectBody, getOptionalBoolean, getOptionalInteger, isRequestValidationError, rejectUnknownKeys } from "../utils/request-validation.js";
 import { getSystemTask, listSystemTasks, runSystemTask, updateSystemTaskSchedule } from "../services/commands/system-task-service.js";
 
@@ -25,7 +26,7 @@ router.get("/:id", (req, res) => {
   }
 });
 
-router.patch("/:id", (req, res) => {
+router.patch("/:id", async (req, res) => {
   try {
     const body = getObjectBody(req.body);
     rejectUnknownKeys(body, ["enabled", "intervalMinutes"]);
@@ -40,7 +41,11 @@ router.patch("/:id", (req, res) => {
       return res.status(400).json({ detail: "intervalMinutes must be at least 1" });
     }
 
-    res.json(updateSystemTaskSchedule(req.params.id, { enabled, intervalMinutes }));
+    const updated = await withSqliteWriteGate(
+      () => updateSystemTaskSchedule(req.params.id, { enabled, intervalMinutes }),
+      "system-task:update-schedule",
+    );
+    res.json(updated);
   } catch (error: any) {
     if (isRequestValidationError(error)) {
       return res.status(400).json({ detail: error.message });
@@ -55,9 +60,12 @@ router.patch("/:id", (req, res) => {
   }
 });
 
-router.post("/:id/run", (req, res) => {
+router.post("/:id/run", async (req, res) => {
   try {
-    const commandId = runSystemTask(req.params.id);
+    const commandId = await withSqliteWriteGate(
+      () => runSystemTask(req.params.id),
+      "system-task:run",
+    );
     if (commandId === -1) {
       return res.status(404).json({ detail: "Task not found" });
     }
