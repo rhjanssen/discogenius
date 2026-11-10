@@ -160,6 +160,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GEMINI_OAUTH_CREDS_JSON: ${{ secrets.GEMINI_OAUTH_CREDS_JSON }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODELS: ${{ vars.GEMINI_MODELS }}
       ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
       EXTRA_PROMPT: ${{ needs.route.outputs.extra_prompt }}
     steps:
@@ -249,7 +250,9 @@ jobs:
               printf "%s" "$GEMINI_OAUTH_CREDS_JSON" | secret-tool store --label="gemini:antigravity" service "gemini:antigravity" username antigravity
             fi
             # Model fallback chain: each model has its own quota bucket on the Antigravity subscription.
-            for MODEL in gemini-4-argon-high gemini-3.8-flash-high claude-sonnet-5-5-high; do
+            # Override order with repo variable GEMINI_MODELS (space-separated).
+            MODELS="${GEMINI_MODELS:-gemini-4-argon-high gemini-3.8-flash-high claude-sonnet-5-5-high}"
+            for MODEL in $MODELS; do
               echo "[agy] trying model $MODEL"
               agy --model "$MODEL" --log-file /tmp/agy-debug.log -p "$1" --dangerously-skip-permissions 2>&1 | tee -a /tmp/agy-run.log
               RC=${PIPESTATUS[0]}
