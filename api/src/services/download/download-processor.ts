@@ -3225,15 +3225,17 @@ export class DownloadProcessor {
                         }
                         const authError = asProviderAuthError(providerId, error);
                         if (authError) throw authError;
-                        await this.recordUnavailableProviderResource(error, {
-                            provider: providerId,
-                            entityType: "track",
-                            providerId: offer.providerTrackId,
-                        });
+                        const isUnavailable = error instanceof ProviderUnavailableError
+                            || isAppleUnavailableTrackError(error instanceof Error ? error.message : String(error));
+                        if (isUnavailable) {
+                            await this.recordUnavailableProviderResource(error, {
+                                provider: providerId,
+                                entityType: "track",
+                                providerId: offer.providerTrackId,
+                            });
+                        }
                         const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) {
-                            const isUnavailable = error instanceof ProviderUnavailableError
-                                || isAppleUnavailableTrackError(error instanceof Error ? error.message : String(error));
                             if (isUnavailable) {
                                 const reason = error instanceof Error ? error.message : String(error);
                                 unavailableOffers.set(offer.providerTrackId, reason);
