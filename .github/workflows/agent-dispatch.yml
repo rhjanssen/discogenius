@@ -316,14 +316,14 @@ jobs:
       # without this step an auth error (e.g. expired OAuth token) or a rejected push
       # still concluded the job as "success".
       - name: Push agent commits & fail visibly on agent error
-        if: ${{ !cancelled() && steps.run_gemini.outputs.quota_exhausted != 'true' }}
+        if: ${{ !cancelled() && steps.run_gemini.outcome != 'skipped' && steps.run_gemini.outputs.quota_exhausted != 'true' }}
         env:
           AGENT_OUTCOME: ${{ steps.run_gemini.outcome }}
         run: |
           BRANCH="agent/issue-${ISSUE_NUMBER}"
           REASON=""
           if [ "$AGENT_OUTCOME" != "success" ]; then
-            REASON="Gemini did not complete (step outcome: ${AGENT_OUTCOME:-not run}); see the run log, an expired auth token is a common cause."
+            REASON="Gemini did not complete (step outcome: $AGENT_OUTCOME); see the run log, an expired auth token is a common cause."
           elif [ "$(git rev-list --count "origin/${{ github.event.repository.default_branch }}..HEAD" 2>/dev/null || echo 0)" -gt 0 ] \
             && ! git push -u origin "HEAD:refs/heads/$BRANCH" > /tmp/push.log 2>&1; then
             cat /tmp/push.log
@@ -462,14 +462,14 @@ jobs:
       # without this step an auth error (e.g. expired OAuth token) or a rejected push
       # still concluded the job as "success".
       - name: Push agent commits & fail visibly on agent error
-        if: ${{ !cancelled() && steps.run_claude.outputs.quota_exhausted != 'true' }}
+        if: ${{ !cancelled() && steps.run_claude.outcome != 'skipped' && steps.run_claude.outputs.quota_exhausted != 'true' }}
         env:
           AGENT_OUTCOME: ${{ steps.run_claude.outcome }}
         run: |
           BRANCH="agent/issue-${ISSUE_NUMBER}"
           REASON=""
           if [ "$AGENT_OUTCOME" != "success" ]; then
-            REASON="Claude did not complete (step outcome: ${AGENT_OUTCOME:-not run}); see the run log, an expired auth token is a common cause."
+            REASON="Claude did not complete (step outcome: $AGENT_OUTCOME); see the run log, an expired auth token is a common cause."
           elif [ "$(git rev-list --count "origin/${{ github.event.repository.default_branch }}..HEAD" 2>/dev/null || echo 0)" -gt 0 ] \
             && ! git push -u origin "HEAD:refs/heads/$BRANCH" > /tmp/push.log 2>&1; then
             cat /tmp/push.log
