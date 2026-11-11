@@ -11,6 +11,7 @@ const {
   formatFallbackSuccessMessage,
   executeWithSameOfferRetries,
   isDownloadCancellationError,
+  isTimeoutError,
 } = await import("./download-failure-policy.js");
 const { makeOfferAttemptKey, nextOfferAfterTried } = await import("./download-offer-fallback.js");
 
@@ -212,4 +213,28 @@ test("executeWithSameOfferRetries does not retry cancellations", async () => {
   assert.equal(isDownloadCancellationError(new Error("The operation was aborted")), true);
   assert.equal(isDownloadCancellationError(new Error("ECONNABORTED")), false);
   assert.equal(classifyDownloadFailure(new Error("ECONNABORTED")), "transient");
+});
+
+test("DOMException TimeoutError ('aborted due to timeout') is transient and not cancellation (#108)", async () => {
+  const domTimeout = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+  assert.equal(isTimeoutError(domTimeout), true);
+  assert.equal(isDownloadCancellationError(domTimeout), false);
+  assert.equal(classifyDownloadFailure(domTimeout), "transient");
+
+  const errTimeout = new Error("DOMException [TimeoutError]: The operation was aborted due to timeout");
+  assert.equal(isTimeoutError(errTimeout), true);
+  assert.equal(isDownloadCancellationError(errTimeout), false);
+  assert.equal(classifyDownloadFailure(errTimeout), "transient");
+
+  // Retries on timeout error and succeeds
+  let attempts = 0;
+  const result = await executeWithSameOfferRetries({ sleep: async () => undefined }, async () => {
+    attempts += 1;
+    if (attempts < 2) {
+      throw domTimeout;
+    }
+    return "ok";
+  });
+  assert.equal(result, "ok");
+  assert.equal(attempts, 2);
 });

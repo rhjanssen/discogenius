@@ -57,10 +57,12 @@ import {
     resolvePreferredVideoOffer,
 } from '../music/video-offer-resolver.js';
 import {
+    classifyDownloadFailure,
     executeWithSameOfferRetries,
     formatFallbackSuccessMessage,
     formatProviderLabel,
     isDownloadCancellationError,
+    isTimeoutError,
 } from './download-failure-policy.js';
 import {
     listRankedAlbumOffers,
@@ -3009,6 +3011,8 @@ export class DownloadProcessor {
         let fallbackPrimary: string | null = null;
         let fallbackUsed: string | null = null;
         const unavailableOffers = new Map<string, string>();
+        const failedOffers = new Map<string, string>();
+        let firstFailedError: unknown = null;
         const durableOffers = offers.map((offer) => ({ ...offer }));
         const persistFallbackOffer = async (offerIndex: number, offer: DownloadTrackOffer): Promise<void> => {
             durableOffers[offerIndex] = { ...offer };
@@ -3075,23 +3079,44 @@ export class DownloadProcessor {
                     const backend = downloadBackendRegistry.resolve(provider, capability);
                     if (!backend) throw new Error(`No download backend found for provider ${provider}`);
                     try {
-                        await backend.preflight?.({ provider, entityType: "track", providerId: offer.providerTrackId,
-                            downloadPath, quality: offer.quality, slot }, { signal });
+                        await executeWithSameOfferRetries(
+                            { signal },
+                            async () => {
+                                await backend.preflight?.({ provider, entityType: "track", providerId: offer.providerTrackId,
+                                    downloadPath, quality: offer.quality, slot }, { signal });
+                            }
+                        );
                         break;
                     } catch (error) {
+                        if (isDownloadCancellationError(error) || entry.cancelRequested || signal.aborted) {
+                            throw error;
+                        }
+                        const authError = asProviderAuthError(provider, error);
+                        if (authError) throw authError;
                         const isUnavailable = error instanceof ProviderUnavailableError
                             || isAppleUnavailableTrackError(error instanceof Error ? error.message : String(error));
-                        if (!isUnavailable) throw error;
-                        await this.recordUnavailableProviderResource(error, {
-                            provider,
-                            entityType: "track",
-                            providerId: offer.providerTrackId,
-                        });
+                        if (isUnavailable) {
+                            await this.recordUnavailableProviderResource(error, {
+                                provider,
+                                entityType: "track",
+                                providerId: offer.providerTrackId,
+                            });
+                        }
                         const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) {
-                            const reason = error instanceof Error ? error.message : String(error);
-                            unavailableOffers.set(offer.providerTrackId, reason);
-                            break;
+                            if (isUnavailable) {
+                                const reason = error instanceof Error ? error.message : String(error);
+                                unavailableOffers.set(offer.providerTrackId, reason);
+                                break;
+                            }
+                            if (isTimeoutError(error)) {
+                                console.warn(
+                                    `[DOWNLOAD-PROCESSOR] Job #${commandId} track preflight timed out for `
+                                    + `${provider}:${offer.providerTrackId} after retries; deferring to download phase`,
+                                );
+                                break;
+                            }
+                            throw error;
                         }
                         fallbackPrimary ||= provider;
                         fallbackUsed = next.provider;
@@ -3115,7 +3140,7 @@ export class DownloadProcessor {
                 }
 
                 let offer = { ...offers[offerIndex] };
-                if (unavailableOffers.has(offer.providerTrackId)) {
+                if (unavailableOffers.has(offer.providerTrackId) || failedOffers.has(offer.providerTrackId)) {
                     continue;
                 }
                 const primaryOfferProvider = offer.provider || defaultProvider;
@@ -3302,7 +3327,37 @@ export class DownloadProcessor {
                                 });
                                 break;
                             }
-                            throw error;
+
+                            if (classifyDownloadFailure(error) !== "transient") {
+                                throw error;
+                            }
+
+                            const reason = error instanceof Error ? error.message : String(error);
+                            if (!firstFailedError) {
+                                firstFailedError = error;
+                            }
+                            failedOffers.set(offer.providerTrackId, reason);
+                            if (trackIndex >= 0) {
+                                tracks[trackIndex] = {
+                                    ...tracks[trackIndex],
+                                    status: "error",
+                                    providerTrackId: offer.providerTrackId,
+                                    provider: providerId,
+                                };
+                            }
+                            emitProgress({
+                                state: "downloading",
+                                currentFileNum,
+                                totalFiles,
+                                progress: Math.round(((deriveCatalogFileProgress(tracks)?.completed ?? 0) / totalFiles) * 100),
+                                currentProviderTrackId: offer.providerTrackId,
+                                currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
+                                currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
+                                trackStatus: "error",
+                                statusMessage: reason,
+                                tracks,
+                            });
+                            break;
                         }
                         console.warn(
                             `[DOWNLOAD-PROCESSOR] Job #${commandId} track falling back from `
@@ -3323,16 +3378,19 @@ export class DownloadProcessor {
             }
 
             const completedFiles = deriveCatalogFileProgress(tracks)?.completed ?? 0;
-            const completedOffersCount = offers.filter((o) => !unavailableOffers.has(o.providerTrackId)).length;
+            const completedOffersCount = offers.filter((o) => !unavailableOffers.has(o.providerTrackId) && !failedOffers.has(o.providerTrackId)).length;
             if (completedOffersCount === 0) {
                 const libraryRow = this.getCanonicalAlbumDownloadProgress(String(payload.providerId || workspaceKey), currentPayload);
                 const libraryDone = Math.max(completedFiles, libraryRow?.done ?? 0);
                 const albumTotal = Math.max(totalFiles, libraryRow?.total ?? 0);
                 const tracksCoverAlbum = albumTotal > 0
                     && libraryDone > 0
-                    && (libraryDone >= albumTotal || libraryDone + unavailableOffers.size >= albumTotal);
+                    && (libraryDone >= albumTotal || libraryDone + unavailableOffers.size + failedOffers.size >= albumTotal);
 
                 if (!tracksCoverAlbum) {
+                    if (firstFailedError) {
+                        throw firstFailedError instanceof Error ? firstFailedError : new Error(String(firstFailedError));
+                    }
                     if (unavailableOffers.size > 0) {
                         const firstReason = Array.from(unavailableOffers.values())[0];
                         throw new ProviderUnavailableError(
@@ -3359,6 +3417,11 @@ export class DownloadProcessor {
             if (unavailableOffers.size > 0) {
                 warnings.push(
                     `Completed with ${unavailableOffers.size} unavailable track(s) [${Array.from(unavailableOffers.entries()).map(([id, r]) => `${id}: ${r}`).join("; ")}]`,
+                );
+            }
+            if (failedOffers.size > 0) {
+                warnings.push(
+                    `Completed with ${failedOffers.size} failed track(s) [${Array.from(failedOffers.entries()).map(([id, r]) => `${id}: ${r}`).join("; ")}]`,
                 );
             }
             if (fallbackPrimary && fallbackUsed) {
