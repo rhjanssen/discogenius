@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { withSqliteWriteGate } from "../../database.js";
 import type {
   RecordingWorkLink,
   RelationshipBundle,
@@ -6,7 +7,7 @@ import type {
 } from "../catalog/relationship-credit-model.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 
-const BATCH = 200;
+const BATCH = 100;
 
 function chunks(ids: string[]): string[][] {
   const out: string[][] = [];
@@ -35,7 +36,7 @@ export function loadCreditSnapshot(
   const knownRows = db.prepare(`
     SELECT mbid FROM Recordings
     WHERE relationship_credits_at IS NOT NULL
-      AND mbid COLLATE NOCASE IN ${SQL_JSON_LIST}
+      AND mbid IN ${SQL_JSON_LIST}
   `).all(jsonList(recordings)) as Array<{ mbid: string }>;
   const credits = db.prepare(`
     SELECT scope, entity_mbid, role, attribute, artist_mbid, credited_name, sort_name, credit_order, medium_position
@@ -44,13 +45,13 @@ export function loadCreditSnapshot(
              c.credited_name, c.sort_name, c.credit_order, c.medium_position
       FROM CatalogRelationshipCredits c
       JOIN Recordings rec ON rec.id = c.recording_id
-      WHERE c.scope = 'recording' AND rec.mbid COLLATE NOCASE IN ${SQL_JSON_LIST}
+      WHERE c.scope = 'recording' AND rec.mbid IN ${SQL_JSON_LIST}
       UNION ALL
       SELECT c.scope, ed.mbid, c.role, c.attribute, c.artist_mbid,
              c.credited_name, c.sort_name, c.credit_order, c.medium_position
       FROM CatalogRelationshipCredits c
       JOIN AlbumEditions ed ON ed.id = c.edition_id
-      WHERE c.scope = 'release' AND ed.mbid COLLATE NOCASE IN ${SQL_JSON_LIST}
+      WHERE c.scope = 'release' AND ed.mbid IN ${SQL_JSON_LIST}
       UNION ALL
       SELECT c.scope, c.work_mbid, c.role, c.attribute, c.artist_mbid,
              c.credited_name, c.sort_name, c.credit_order, c.medium_position
@@ -58,7 +59,7 @@ export function loadCreditSnapshot(
       WHERE c.scope = 'work' AND c.work_mbid IN (
         SELECT w.work_mbid FROM RecordingWorks w
         JOIN Recordings rec ON rec.id = w.recording_id
-        WHERE rec.mbid COLLATE NOCASE IN ${SQL_JSON_LIST}
+        WHERE rec.mbid IN ${SQL_JSON_LIST}
       )
     )
   `).all(jsonList(recordings), jsonList(releases), jsonList(recordings)) as Array<{
@@ -76,7 +77,7 @@ export function loadCreditSnapshot(
     SELECT rec.mbid AS recording_mbid, w.work_mbid, w.work_title, w.link_order, w.instrumental
     FROM RecordingWorks w
     JOIN Recordings rec ON rec.id = w.recording_id
-    WHERE rec.mbid COLLATE NOCASE IN ${SQL_JSON_LIST}
+    WHERE rec.mbid IN ${SQL_JSON_LIST}
   `).all(jsonList(recordings)) as Array<{
     recording_mbid: string;
     work_mbid: string;
@@ -107,22 +108,66 @@ export function loadCreditSnapshot(
   };
 }
 
-/**
- * Replace relationship credits for the mbids the mirror just read.
- * A null bundle means the provider did not supply relationships (WS): keep
- * the stored rows. An empty credit list for a queried MBID clears them.
- * Does not insert ArtistMetadata rows.
- */
-export function applyRelationshipRefresh(db: Database.Database, bundle: RelationshipBundle | null): void {
-  if (!bundle) return;
+function groupCreditsAndWorks(bundle: RelationshipBundle) {
+  const recordingCreditsByMbid = new Map<string, RelationshipCredit[]>();
+  const workCreditsByMbid = new Map<string, RelationshipCredit[]>();
+  const releaseCreditsByMbid = new Map<string, RelationshipCredit[]>();
+  for (const credit of bundle.credits) {
+    const key = credit.entityMbid.trim().toLowerCase();
+    if (credit.scope === "recording") {
+      let list = recordingCreditsByMbid.get(key);
+      if (!list) recordingCreditsByMbid.set(key, (list = []));
+      list.push(credit);
+    } else if (credit.scope === "work") {
+      let list = workCreditsByMbid.get(key);
+      if (!list) workCreditsByMbid.set(key, (list = []));
+      list.push(credit);
+    } else if (credit.scope === "release") {
+      let list = releaseCreditsByMbid.get(key);
+      if (!list) releaseCreditsByMbid.set(key, (list = []));
+      list.push(credit);
+    }
+  }
+
+  const worksByRecordingMbid = new Map<string, RecordingWorkLink[]>();
+  for (const work of bundle.works) {
+    const key = work.recordingMbid.trim().toLowerCase();
+    let list = worksByRecordingMbid.get(key);
+    if (!list) worksByRecordingMbid.set(key, (list = []));
+    list.push(work);
+  }
+
+  return { recordingCreditsByMbid, workCreditsByMbid, releaseCreditsByMbid, worksByRecordingMbid };
+}
+
+function prepareRelationshipStatements(db: Database.Database) {
   const insertCredit = db.prepare(`
     INSERT INTO CatalogRelationshipCredits (
       scope, recording_id, edition_id, work_mbid, role, attribute,
       artist_mbid, credited_name, sort_name, credit_order, medium_position
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const recordingId = db.prepare(`SELECT id FROM Recordings WHERE mbid = ? COLLATE NOCASE`);
-  const editionId = db.prepare(`SELECT id FROM AlbumEditions WHERE mbid = ? COLLATE NOCASE`);
+  const recordingId = db.prepare(`SELECT id FROM Recordings WHERE mbid = ?`);
+  const editionId = db.prepare(`SELECT id FROM AlbumEditions WHERE mbid = ?`);
+  const deleteRecordingCredits = db.prepare(
+    `DELETE FROM CatalogRelationshipCredits WHERE scope = 'recording' AND recording_id IN ${SQL_JSON_LIST}`,
+  );
+  const deleteRecordingWorks = db.prepare(
+    `DELETE FROM RecordingWorks WHERE recording_id IN ${SQL_JSON_LIST}`,
+  );
+  const updateRecordings = db.prepare(
+    `UPDATE Recordings SET relationship_credits_at = CURRENT_TIMESTAMP WHERE id IN ${SQL_JSON_LIST}`,
+  );
+  const insertWork = db.prepare(`
+    INSERT OR REPLACE INTO RecordingWorks (recording_id, work_mbid, work_title, link_order, instrumental)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const deleteWorkCredits = db.prepare(
+    `DELETE FROM CatalogRelationshipCredits WHERE scope = 'work' AND work_mbid IN ${SQL_JSON_LIST}`,
+  );
+  const deleteReleaseCredits = db.prepare(
+    `DELETE FROM CatalogRelationshipCredits WHERE scope = 'release' AND edition_id IN ${SQL_JSON_LIST}`,
+  );
 
   const writeCredit = (credit: RelationshipCredit, recording: number | null, edition: number | null): void => {
     if (!credit.artistMbid || !credit.creditedName) return;
@@ -141,65 +186,124 @@ export function applyRelationshipRefresh(db: Database.Database, bundle: Relation
     );
   };
 
-  for (const batch of chunks(bundle.queriedRecordingMbids)) {
+  return {
+    recordingId,
+    editionId,
+    deleteRecordingCredits,
+    deleteRecordingWorks,
+    updateRecordings,
+    insertWork,
+    deleteWorkCredits,
+    deleteReleaseCredits,
+    writeCredit,
+  };
+}
+
+/**
+ * Asynchronously apply relationship credit refresh, taking the SQLite write gate
+ * per batch instead of across the entire refresh, and yielding to the event loop
+ * between batches so peer writers (heartbeats, imports, downloads) are not starved.
+ *
+ * A null bundle means the provider did not supply relationships (WS): keep
+ * the stored rows. An empty credit list for a queried MBID clears them.
+ * Does not insert ArtistMetadata rows.
+ */
+export async function applyRelationshipRefreshAsync(
+  db: Database.Database,
+  bundle: RelationshipBundle | null,
+): Promise<void> {
+  if (!bundle) return;
+  const {
+    recordingId,
+    editionId,
+    deleteRecordingCredits,
+    deleteRecordingWorks,
+    updateRecordings,
+    insertWork,
+    deleteWorkCredits,
+    deleteReleaseCredits,
+    writeCredit,
+  } = prepareRelationshipStatements(db);
+  const { recordingCreditsByMbid, workCreditsByMbid, releaseCreditsByMbid, worksByRecordingMbid } =
+    groupCreditsAndWorks(bundle);
+
+  const recordingChunks = chunks(bundle.queriedRecordingMbids);
+  for (let i = 0; i < recordingChunks.length; i++) {
+    const batch = recordingChunks[i];
     const present = batch.flatMap((mbid) => {
-      const row = recordingId.get(mbid) as { id: number } | undefined;
-      return row ? [{ mbid, id: row.id }] : [];
+      const normalized = mbid.trim().toLowerCase();
+      const row = recordingId.get(normalized) as { id: number } | undefined;
+      return row ? [{ mbid: normalized, id: row.id }] : [];
     });
-    if (present.length === 0) continue;
-    const ids = present.map((row) => row.id);
-    const idJson = jsonList(ids);
-    const byRecording = new Map(present.map((row) => [row.mbid.trim().toLowerCase(), row.id]));
-    db.transaction(() => {
-      db.prepare(`DELETE FROM CatalogRelationshipCredits WHERE scope = 'recording' AND recording_id IN ${SQL_JSON_LIST}`).run(idJson);
-      db.prepare(`DELETE FROM RecordingWorks WHERE recording_id IN ${SQL_JSON_LIST}`).run(idJson);
-      db.prepare(`UPDATE Recordings SET relationship_credits_at = CURRENT_TIMESTAMP WHERE id IN ${SQL_JSON_LIST}`).run(idJson);
-      for (const credit of bundle.credits) {
-        if (credit.scope !== "recording") continue;
-        const id = byRecording.get(credit.entityMbid.trim().toLowerCase());
-        if (id == null) continue;
-        writeCredit(credit, id, null);
-      }
-      const insertWork = db.prepare(`
-        INSERT OR REPLACE INTO RecordingWorks (recording_id, work_mbid, work_title, link_order, instrumental)
-        VALUES (?, ?, ?, ?, ?)
-      `);
-      for (const work of bundle.works) {
-        const id = byRecording.get(work.recordingMbid.trim().toLowerCase());
-        if (id == null || !work.workMbid || !work.title) continue;
-        insertWork.run(id, work.workMbid, work.title, work.order, work.instrumental ? 1 : 0);
-      }
-    })();
+    if (present.length > 0) {
+      const idJson = jsonList(present.map((row) => row.id));
+      await withSqliteWriteGate(() => {
+        db.transaction(() => {
+          deleteRecordingCredits.run(idJson);
+          deleteRecordingWorks.run(idJson);
+          updateRecordings.run(idJson);
+          for (const item of present) {
+            const credits = recordingCreditsByMbid.get(item.mbid);
+            if (credits) {
+              for (const credit of credits) writeCredit(credit, item.id, null);
+            }
+            const works = worksByRecordingMbid.get(item.mbid);
+            if (works) {
+              for (const work of works) {
+                if (!work.workMbid || !work.title) continue;
+                insertWork.run(item.id, work.workMbid, work.title, work.order, work.instrumental ? 1 : 0);
+              }
+            }
+          }
+        })();
+      }, "servarr:relationship-credits");
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
   const workMbids = [...new Set(bundle.works.map((work) => work.workMbid.trim().toLowerCase()).filter(Boolean))];
-  for (const batch of chunks(workMbids)) {
-    const batchIds = new Set(batch);
-    db.transaction(() => {
-      db.prepare(`DELETE FROM CatalogRelationshipCredits WHERE scope = 'work' AND work_mbid IN ${SQL_JSON_LIST}`).run(jsonList(batch));
-      for (const credit of bundle.credits) {
-        if (credit.scope !== "work" || !batchIds.has(credit.entityMbid.trim().toLowerCase())) continue;
-        writeCredit(credit, null, null);
-      }
-    })();
+  const workChunks = chunks(workMbids);
+  for (let i = 0; i < workChunks.length; i++) {
+    const batch = workChunks[i];
+    const idJson = jsonList(batch);
+    await withSqliteWriteGate(() => {
+      db.transaction(() => {
+        deleteWorkCredits.run(idJson);
+        for (const workMbid of batch) {
+          const credits = workCreditsByMbid.get(workMbid);
+          if (credits) {
+            for (const credit of credits) writeCredit(credit, null, null);
+          }
+        }
+      })();
+    }, "servarr:relationship-credits");
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
-  for (const batch of chunks(bundle.queriedReleaseMbids)) {
+  const releaseChunks = chunks(bundle.queriedReleaseMbids);
+  for (let i = 0; i < releaseChunks.length; i++) {
+    const batch = releaseChunks[i];
     const present = batch.flatMap((mbid) => {
-      const row = editionId.get(mbid) as { id: number } | undefined;
-      return row ? [{ mbid, id: row.id }] : [];
+      const normalized = mbid.trim().toLowerCase();
+      const row = editionId.get(normalized) as { id: number } | undefined;
+      return row ? [{ mbid: normalized, id: row.id }] : [];
     });
-    if (present.length === 0) continue;
-    const byEdition = new Map(present.map((row) => [row.mbid.trim().toLowerCase(), row.id]));
-    db.transaction(() => {
-      db.prepare(`DELETE FROM CatalogRelationshipCredits WHERE scope = 'release' AND edition_id IN ${SQL_JSON_LIST}`)
-        .run(jsonList(present.map((row) => row.id)));
-      for (const credit of bundle.credits) {
-        if (credit.scope !== "release") continue;
-        const id = byEdition.get(credit.entityMbid.trim().toLowerCase());
-        if (id == null) continue;
-        writeCredit(credit, null, id);
-      }
-    })();
+    if (present.length > 0) {
+      const idJson = jsonList(present.map((row) => row.id));
+      await withSqliteWriteGate(() => {
+        db.transaction(() => {
+          deleteReleaseCredits.run(idJson);
+          for (const item of present) {
+            const credits = releaseCreditsByMbid.get(item.mbid);
+            if (credits) {
+              for (const credit of credits) writeCredit(credit, null, item.id);
+            }
+          }
+        })();
+      }, "servarr:relationship-credits");
+    }
+    if (i < releaseChunks.length - 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
   }
 }
