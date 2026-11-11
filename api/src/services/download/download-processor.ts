@@ -1454,9 +1454,7 @@ export class DownloadProcessor {
             : (typeof currentDownloadState.progress === "number" || currentDownloadState.progress === null
                 ? currentDownloadState.progress as number | null
                 : undefined);
-        if (state.state === 'completed') {
-            nextProgress = typeof state.progress === "number" ? state.progress : 100;
-        } else if (catalogProgress && catalogProgress.totalFiles > 0) {
+        if (catalogProgress && catalogProgress.totalFiles > 0) {
             if (providerCountsMatchCatalog && typeof state.progress === "number") {
                 nextProgress = state.progress;
             } else {
@@ -2310,21 +2308,18 @@ export class DownloadProcessor {
                     const trackList = Array.isArray(currentDownloadState.tracks) ? currentDownloadState.tracks : [];
                     const inLibraryCount = trackList.filter((t) => t.status === "completed" || t.status === "skipped").length;
                     const unavailableCount = trackList.filter((t) => t.status === "error").length;
-                    const warningMessage = currentDownloadState.warningMessage || "";
-                    const warningMatch = warningMessage.match(/(\d+)\s+unavailable track/i);
-                    const effectiveUnavailableCount = Math.max(unavailableCount, warningMatch ? parseInt(warningMatch[1], 10) : 0);
                     const doneCount = Math.max(inLibraryCount, row?.done ?? 0);
                     const totalCount = Math.max(trackList.length, row?.total ?? 0);
                     const coveredWithUnavailable = totalCount > 0
                         && doneCount > 0
-                        && (doneCount + effectiveUnavailableCount >= totalCount)
-                        && effectiveUnavailableCount > 0;
+                        && (doneCount + unavailableCount >= totalCount)
+                        && unavailableCount > 0;
 
                     if (payload?.reason !== 'upgrade' && totalCount > 0 && (doneCount >= totalCount || coveredWithUnavailable)) {
                         const pct = Math.round(doneCount / totalCount * 100);
                         if (coveredWithUnavailable) {
                             console.log(
-                                `[DOWNLOAD-PROCESSOR] Download workspace empty but album ${providerId} already has ${doneCount}/${totalCount} tracks in library (${pct}%) and remaining ${effectiveUnavailableCount} unavailable track(s). ` +
+                                `[DOWNLOAD-PROCESSOR] Download workspace empty but album ${providerId} already has ${doneCount}/${totalCount} tracks in library (${pct}%) and remaining ${unavailableCount} unavailable track(s). ` +
                                 `Treating as complete with warning.`
                             );
                         } else {

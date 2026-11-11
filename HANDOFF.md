@@ -1,25 +1,22 @@
 # Session Handoff
 
 - **Last updated by:** Google Antigravity / Gemini
-- **Active branch:** `agent/issue-105`
-- **Related issue / PR:** Issue #105 (`fix(download): complete album with warning when remaining missing tracks are unavailable (#105)`)
+- **Active branch:** `agent/issue-105` / `agent/issue-106`
+- **Related issue / PR:** Issue #105 / PR #106 (`fix(download): complete album with warning when remaining missing tracks are unavailable (#105)`)
 
 ## Done
-- Resolved Issue #105 where an album that already has most tracks in the library failed as `All tracks unavailable: Failed to dl aac-lc: Unavailable` when the remaining missing tracks were unavailable at the provider:
-  1. **Download track-offers completion rule in `DownloadProcessor.downloadAlbumTrackOffers` (`api/src/services/download/download-processor.ts`):**
-     - When `completedOffersCount === 0` (all attempted offers in the current job were unavailable), evaluate whether tracks already in the library plus unavailable offers cover the album (`libraryDone > 0 && (libraryDone >= albumTotal || libraryDone + unavailableOffers.size >= albumTotal)`).
-     - When covered, do not throw `ProviderUnavailableError("All tracks unavailable: ...")`; instead proceed to finish with `outcome: "completedWithWarning"` and `warningMessage` listing the unavailable tracks.
-     - When no tracks exist in the library (`libraryDone === 0`), true all-unavailable albums continue to fail clearly with `ProviderUnavailableError("All tracks unavailable: ...")`.
-  2. **Empty workspace completion rule in `DownloadProcessor.dispatchDownloadPhase` (`api/src/services/download/download-processor.ts`):**
-     - When the download workspace produces no media files (`!hasDownloadedMediaFiles`), check whether existing library tracks plus unavailable tracks cover the album (`doneCount + effectiveUnavailableCount >= totalCount`).
-     - When covered, treat the attempt as complete with warning: mark `completed` in `commands`, preserve `outcome: "completedWithWarning"` and `warningMessage`, update album download status, and emit completion event.
-  3. **Terminal state progress normalization in `DownloadProcessor.writeDownloadState`:**
-     - Ensure terminal `state: 'completed'` preserves 100% progress even when partial warning albums complete with skipped/error tracks.
+- Addressed PO review findings for PR #106:
+  1. **Dropped human-readable warning-text parsing in `dispatchDownloadPhase`:**
+     - Removed `warningMatch` regex check on `warningMessage`.
+     - Derived `unavailableCount` directly from `trackList.filter((t) => t.status === "error").length`.
+  2. **Reverted out-of-scope `writeDownloadState` change:**
+     - Removed `if (state.state === 'completed') nextProgress = ...` so progress derivation remains unchanged.
+  3. **Kept Issue #105 core fixes:**
+     - `DownloadProcessor.downloadAlbumTrackOffers`: when `completedOffersCount === 0`, if existing library tracks plus unavailable tracks cover the album (`libraryDone > 0 && (libraryDone >= albumTotal || libraryDone + unavailableOffers.size >= albumTotal)`), completes with `outcome: "completedWithWarning"` and warningMessage rather than throwing `ProviderUnavailableError`.
+     - `DownloadProcessor.dispatchDownloadPhase`: when the workspace contains no files, if `doneCount + unavailableCount >= totalCount` (with `doneCount > 0` and `unavailableCount > 0`), marks command completed with warning, updates album download status, and emits completed event.
+     - True all-unavailable albums with an empty library continue to throw `ProviderUnavailableError("All tracks unavailable: ...")`.
   4. **Regression tests in `api/src/services/download/download-processor-same-provider-fallback.test.ts`:**
-     - Replaying named albums from Issue #105: Herman Brood — My Way: The Hits (23 of 24 tracks in library, 1 unavailable) and Van Dik Hout — Van Dik Hout 15 jaar (15 of 17 tracks in library, 2 unavailable) complete with `outcome: "completedWithWarning"` and warningMessage listing the unavailable tracks.
-     - Full download phase dispatch test verifying an album with 23 of 24 tracks in library and 1 unavailable track completes with `outcome: "completedWithWarning"` and status `'completed'`.
-     - True all-unavailable album with an empty library continues to fail clearly as all-tracks-unavailable.
-     - Clean completions and hard network/auth failures remain unaffected.
+     - All 6 tests pass, including the replayed named albums (Herman Brood and Van Dik Hout) and the empty workspace `dispatchDownloadPhase` dispatch test.
 - Verified with full `yarn ci`:
   - `yarn lint` passed with 0 errors.
   - `yarn typecheck` passed cleanly across both api and app.
@@ -28,4 +25,4 @@
   - `yarn build` passed cleanly across both api and app.
 
 ## Open Questions / Follow-ups for PO
-- None. Ready for review and merge.
+- None. Addressed both review comments surgically. Ready for review and merge.
