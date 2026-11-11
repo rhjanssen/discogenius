@@ -36,6 +36,7 @@ import {
   isAppleUnavailableTrackError,
   parseAppleDownloaderProgressLine,
   recordUnavailableAppleTrack,
+  resolveAppleAlbumTrackIds,
   waitForAppleMusicDownloaderReadiness,
 } from "./apple-music-backend.js";
 import { ProviderUnavailableError } from "../../download/provider-unavailable-error.js";
@@ -1291,4 +1292,168 @@ test("Apple downloader backend resolves file-N unavailable keys to provider trac
   assert.deepEqual(recordedUnavailable, [
     { id: "1440904919", reason: "Failed to dl aac-lc: Unavailable" },
   ]);
+});
+
+test("resolveAppleAlbumTrackIds resolves track IDs from ProviderItems with entity_type='release' (#98)", async () => {
+  const { initDatabase, db } = await import("../../../database.js");
+  initDatabase();
+
+  const albumId = "release-item-test-1";
+  const track1Id = "apple-track-res-1";
+  const track2Id = "apple-track-res-2";
+
+  db.prepare(`
+    INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
+    VALUES (8001, 'apple-music', 'release', ?, 'Test Album Release', 'available')
+    ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET availability = 'available'
+  `).run(albumId);
+
+  db.prepare(`
+    INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
+    VALUES (8002, 'apple-music', 'track', ?, 'Track 1', 'available')
+    ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET availability = 'available'
+  `).run(track1Id);
+
+  db.prepare(`
+    INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
+    VALUES (8003, 'apple-music', 'track', ?, 'Track 2', 'available')
+    ON CONFLICT(provider, entity_type, provider_id) DO UPDATE SET availability = 'available'
+  `).run(track2Id);
+
+  db.prepare(`
+    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
+    VALUES (8001, 8002, 1, 1)
+    ON CONFLICT(provider_edition_item_id, medium_position, position) DO UPDATE SET member_item_id = 8002
+  `).run();
+
+  db.prepare(`
+    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
+    VALUES (8001, 8003, 1, 2)
+    ON CONFLICT(provider_edition_item_id, medium_position, position) DO UPDATE SET member_item_id = 8003
+  `).run();
+
+  const resolved = resolveAppleAlbumTrackIds(albumId, { database: db });
+  assert.deepEqual(resolved, [track1Id, track2Id]);
+});
+
+test("replaying named albums with first-track failure downloads remaining tracks without failing whole album (#98)", async () => {
+  const namedAlbums = [
+    { title: "Collected", providerAlbumId: "1440897164", t1: "1440897165", t2: "1440897166" },
+    { title: "Time Signatures: A Career Retrospective", providerAlbumId: "1440812345", t1: "1440812346", t2: "1440812347" },
+    { title: "Renovating->Diverse City", providerAlbumId: "1440867890", t1: "1440867891", t2: "1440867892" },
+    { title: "Music by Ry Cooder", providerAlbumId: "1440899999", t1: "1440899991", t2: "1440899992" },
+  ];
+
+  for (const album of namedAlbums) {
+    const primaryAlbumLines = [
+      "Track 1 of 2: songs",
+      album.t1,
+      "Unavailable, trying to dl aac-lc",
+      "Failed to dl aac-lc: Unavailable",
+      "Error detected, exiting...",
+    ];
+    const followUpTrack2Lines = [
+      "Track 1 of 1: songs",
+      album.t2,
+      `Downloading ${album.t2}`,
+      "Downloaded",
+      "Decrypted",
+      "=======  [✔ ] Completed: 1/1  |  [⚠ ] Warnings: 0  |  [✖ ] Errors: 0  =======",
+    ];
+
+    const spawnedCalls: Array<{ args: string[] }> = [];
+    const recordedUnavailable: Array<{ id: string; reason: string }> = [];
+    const progressEmissions: any[] = [];
+    const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-named-album-"));
+
+    const backend = new AppleMusicBackend({
+      preflight: async () => {},
+      spawn: ((command: string, args: string[]) => {
+        spawnedCalls.push({ args });
+        if (args.some((a) => a.includes(`/album/${album.providerAlbumId}`))) {
+          return createMockChildProcess(primaryAlbumLines, 1);
+        }
+        if (args.some((a) => a.includes(`/song/${album.t2}`))) {
+          return createMockChildProcess(followUpTrack2Lines, 0);
+        }
+        return createMockChildProcess([], 1);
+      }) as any,
+      recordUnavailableTrack: async (id, reason) => {
+        recordedUnavailable.push({ id, reason });
+      },
+      countMediaFiles: () => 1,
+    });
+
+    await backend.download(
+      {
+        provider: "apple-music",
+        entityType: "album",
+        providerId: album.providerAlbumId,
+        trackIds: [album.t1, album.t2],
+        downloadPath: testDownloadDir,
+      },
+      {
+        onProgress: (p) => progressEmissions.push(p),
+      },
+    );
+
+    // Initial album process followed by single-track follow-up for track 2
+    assert.equal(spawnedCalls.length, 2, `Expected 2 spawn calls for ${album.title}`);
+    assert.ok(spawnedCalls[0].args.some((a) => a.includes(`/album/${album.providerAlbumId}`)));
+    assert.ok(spawnedCalls[1].args.some((a) => a.includes(`/song/${album.t2}`)));
+
+    // Track 1 recorded as unavailable
+    assert.deepEqual(recordedUnavailable, [
+      { id: album.t1, reason: "Failed to dl aac-lc: Unavailable" },
+    ]);
+
+    // Final progress has warningMessage
+    const lastProgress = progressEmissions[progressEmissions.length - 1];
+    assert.ok(lastProgress.warningMessage, `Expected warningMessage on ${album.title}`);
+    assert.match(lastProgress.warningMessage, /Completed with 1 unavailable track\(s\)/);
+  }
+});
+
+test("Apple downloader backend handles stderr Failed to dl aac-lc: Unavailable without exited-with-code prefix (#98)", async () => {
+  const testTrackId = "1440904999";
+  const recordedUnavailable: Array<{ id: string; reason: string }> = [];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-stderr-test-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => {
+      const cp = new EventEmitter() as any;
+      cp.stdout = new PassThrough();
+      cp.stderr = new PassThrough();
+      cp.kill = () => {};
+      queueMicrotask(() => {
+        cp.stderr.write("Failed to dl aac-lc: Unavailable\n");
+        cp.stdout.end();
+        cp.stderr.end();
+        cp.emit("close", 1);
+      });
+      return cp;
+    },
+    recordUnavailableTrack: async (id, reason) => {
+      recordedUnavailable.push({ id, reason });
+    },
+    countMediaFiles: () => 0,
+  });
+
+  await assert.rejects(
+    () => backend.download(
+      {
+        provider: "apple-music",
+        entityType: "track",
+        providerId: testTrackId,
+        downloadPath: testDownloadDir,
+      },
+      { onProgress: () => {} },
+    ),
+    (err: any) => {
+      assert.ok(err instanceof ProviderUnavailableError);
+      assert.equal(err.message, "Failed to dl aac-lc: Unavailable");
+      return true;
+    },
+  );
 });

@@ -2,6 +2,7 @@ import { ProviderUnavailableError } from "./provider-unavailable-error.js";
 import { errorIndicatesProviderAuth } from "../providers/provider-auth-error.js";
 import { readIntEnv } from "../../utils/env.js";
 import { streamingProviderManager } from "../providers/index.js";
+import { isAppleUnavailableTrackError } from "../providers/apple-music/apple-music-backend.js";
 
 /**
  * Same-offer retries before provider fallback (A1).
@@ -171,6 +172,9 @@ export function classifyDownloadFailure(error: unknown): DownloadFailureKind {
   const text = errorText(error);
   if (!text.trim()) {
     return "transient";
+  }
+  if (isAppleUnavailableTrackError(text)) {
+    return "permanent";
   }
   if (
     TRANSIENT_TRANSPORT_PATTERNS.some((pattern) => pattern.test(text))

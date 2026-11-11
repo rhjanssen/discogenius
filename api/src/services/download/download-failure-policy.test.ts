@@ -134,6 +134,19 @@ test("classifyDownloadFailure treats private YouTube and SoundCloud DRM as perma
   );
 });
 
+test("classifyDownloadFailure treats Apple unavailable track errors as permanent without same-offer retry (#98)", async () => {
+  assert.equal(classifyDownloadFailure(new Error("Failed to dl aac-lc: Unavailable")), "permanent");
+  assert.equal(classifyDownloadFailure(new Error("Failed to dl aac-lc via lite-server: Unavailable")), "permanent");
+  assert.equal(classifyDownloadFailure(new Error("apple-music-downloader exited with code 0: Failed to dl aac-lc: Unavailable")), "permanent");
+
+  let attempts = 0;
+  await assert.rejects(executeWithSameOfferRetries({ sleep: async () => {} }, async () => {
+    attempts++;
+    throw new Error("Failed to dl aac-lc: Unavailable");
+  }), /Failed to dl aac-lc: Unavailable/);
+  assert.equal(attempts, 1);
+});
+
 test("sameOfferBackoffMs doubles from base", () => {
   assert.equal(sameOfferBackoffMs(1), 100);
   assert.equal(sameOfferBackoffMs(2), 200);
