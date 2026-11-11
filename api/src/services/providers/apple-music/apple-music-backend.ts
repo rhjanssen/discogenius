@@ -105,7 +105,7 @@ export function resolveAppleAlbumTrackIds(
       JOIN ProviderEditionMembers mem ON mem.provider_edition_item_id = album_item.id
       JOIN ProviderItems member_item ON member_item.id = mem.member_item_id
       WHERE album_item.provider = 'apple-music'
-        AND album_item.entity_type = 'album'
+        AND album_item.entity_type IN ('release', 'album')
         AND album_item.provider_id = ?
       ORDER BY mem.medium_position, mem.position
     `).all(providerAlbumId) as Array<{ provider_id: string }>;
@@ -717,7 +717,15 @@ export class AppleMusicBackend implements DownloadBackend {
           if (isAppleSessionFailure(cleanLine)) {
             sessionErrorDetail = sessionErrorDetail || cleanLine;
             cp.kill();
-          } else if (!isAppleUnavailableTrackError(cleanLine)) {
+          } else if (isAppleUnavailableTrackError(cleanLine)) {
+            const trackId = event.currentProviderTrackId
+              || current.providerTrackId
+              || (albumTrackIds && current.currentFileNum ? albumTrackIds[current.currentFileNum - 1] : undefined)
+              || (request.trackIds && current.currentFileNum ? request.trackIds[current.currentFileNum - 1] : undefined)
+              || (request.entityType === "track" ? providerId : undefined);
+            const trackKey = trackId || `file-${current.currentFileNum || (unavailableTracks.size + 1)}`;
+            unavailableTracks.set(trackKey, cleanLine);
+          } else {
             fatalOtherError = fatalOtherError || event.statusMessage || cleanLine;
             cp.kill();
           }

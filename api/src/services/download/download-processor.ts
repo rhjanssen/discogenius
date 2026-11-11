@@ -91,6 +91,7 @@ import { asProviderAuthError, ProviderAuthError } from '../providers/provider-au
 import { providersNeedingReauth, providerNeedsReauth, queueHoldMessage, recordProviderAuthFailure } from '../providers/provider-auth-state.js';
 import { probeDeezerBeforeDownloadBatch, startDeezerAuthProbeLoop } from '../providers/deezer/deezer-arl-health.js';
 import { startAppleWrapperHoldProbeLoop } from '../providers/apple-music/apple-music-auth.js';
+import { isAppleUnavailableTrackError } from '../providers/apple-music/apple-music-backend.js';
 import { CommandWorkerPool } from '../commands/worker/command-worker-pool.js';
 import type { CacheInvalidateTarget } from '../commands/worker/command-worker-protocol.js';
 import {
@@ -2889,14 +2890,31 @@ export class DownloadProcessor {
      * Hybrid / partial album fetch: download only the missing track offers into
      * one job workspace, keeping catalog-anchored downloadState.tracks in sync.
      */
-    private async recordUnavailableProviderResource(error: unknown): Promise<void> {
-        if (!(error instanceof ProviderUnavailableError)) return;
-        const entityType = error.entityType === "album" ? "release" : error.entityType;
+    private async recordUnavailableProviderResource(
+        error: unknown,
+        fallback?: { provider: string; entityType: "track" | "album" | "release" | "video"; providerId: string },
+    ): Promise<void> {
+        let provider = fallback?.provider;
+        let entityType: string | undefined = fallback?.entityType;
+        let providerId = fallback?.providerId;
+        let reason = error instanceof Error ? error.message : String(error);
+
+        if (error instanceof ProviderUnavailableError) {
+            provider = error.provider;
+            entityType = error.entityType;
+            providerId = error.providerId;
+            reason = error.message;
+        } else if (!provider || !entityType || !providerId) {
+            return;
+        }
+
+        if (entityType === "album") entityType = "release";
+
         await withSqliteWriteGate(() => {
             db.prepare(`
             UPDATE ProviderItems SET availability = 'unavailable', availability_reason = ?, checked_at = ?
             WHERE provider = ? AND entity_type = ? AND provider_id = ?
-        `).run(error.message, new Date().toISOString(), error.provider, entityType, error.providerId);
+        `).run(reason, new Date().toISOString(), provider, entityType, providerId);
             markAcquisitionPlanningStale();
         }, 'download:unavailable-resource');
     }
@@ -2949,6 +2967,7 @@ export class DownloadProcessor {
 
         let fallbackPrimary: string | null = null;
         let fallbackUsed: string | null = null;
+        const unavailableOffers = new Map<string, string>();
         const durableOffers = offers.map((offer) => ({ ...offer }));
         const persistFallbackOffer = async (offerIndex: number, offer: DownloadTrackOffer): Promise<void> => {
             durableOffers[offerIndex] = { ...offer };
@@ -3019,10 +3038,20 @@ export class DownloadProcessor {
                             downloadPath, quality: offer.quality, slot }, { signal });
                         break;
                     } catch (error) {
-                        if (!(error instanceof ProviderUnavailableError)) throw error;
-                        await this.recordUnavailableProviderResource(error);
+                        const isUnavailable = error instanceof ProviderUnavailableError
+                            || isAppleUnavailableTrackError(error instanceof Error ? error.message : String(error));
+                        if (!isUnavailable) throw error;
+                        await this.recordUnavailableProviderResource(error, {
+                            provider,
+                            entityType: "track",
+                            providerId: offer.providerTrackId,
+                        });
                         const next = this.nextDownloadOffer(ranked, tried);
-                        if (!next) throw error;
+                        if (!next) {
+                            const reason = error instanceof Error ? error.message : String(error);
+                            unavailableOffers.set(offer.providerTrackId, reason);
+                            break;
+                        }
                         fallbackPrimary ||= provider;
                         fallbackUsed = next.provider;
                         offer = applyFallbackTrackOffer(offer, next);
@@ -3031,7 +3060,12 @@ export class DownloadProcessor {
                 }
                 const trackIndex = resolveDownloadTrackOfferIndex(tracks, offers[index]);
                 if (trackIndex < 0) throw new Error(`Download offer ${offer.providerTrackId} has no unique catalogue track occurrence`);
-                tracks[trackIndex] = { ...tracks[trackIndex], providerTrackId: offer.providerTrackId, provider: offer.provider || defaultProvider };
+                tracks[trackIndex] = {
+                    ...tracks[trackIndex],
+                    status: unavailableOffers.has(offer.providerTrackId) ? "error" : "queued",
+                    providerTrackId: offer.providerTrackId,
+                    provider: offer.provider || defaultProvider,
+                };
                 offers[index] = offer;
             }
             for (let offerIndex = 0; offerIndex < offers.length; offerIndex++) {
@@ -3040,6 +3074,9 @@ export class DownloadProcessor {
                 }
 
                 let offer = { ...offers[offerIndex] };
+                if (unavailableOffers.has(offer.providerTrackId)) {
+                    continue;
+                }
                 const primaryOfferProvider = offer.provider || defaultProvider;
                 const tried = new Set<string>([
                     makeOfferAttemptKey(primaryOfferProvider, offer.providerTrackId),
@@ -3188,9 +3225,40 @@ export class DownloadProcessor {
                         }
                         const authError = asProviderAuthError(providerId, error);
                         if (authError) throw authError;
-                        await this.recordUnavailableProviderResource(error);
+                        await this.recordUnavailableProviderResource(error, {
+                            provider: providerId,
+                            entityType: "track",
+                            providerId: offer.providerTrackId,
+                        });
                         const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) {
+                            const isUnavailable = error instanceof ProviderUnavailableError
+                                || isAppleUnavailableTrackError(error instanceof Error ? error.message : String(error));
+                            if (isUnavailable) {
+                                const reason = error instanceof Error ? error.message : String(error);
+                                unavailableOffers.set(offer.providerTrackId, reason);
+                                if (trackIndex >= 0) {
+                                    tracks[trackIndex] = {
+                                        ...tracks[trackIndex],
+                                        status: "error",
+                                        providerTrackId: offer.providerTrackId,
+                                        provider: providerId,
+                                    };
+                                }
+                                emitProgress({
+                                    state: "downloading",
+                                    currentFileNum,
+                                    totalFiles,
+                                    progress: Math.round(((deriveCatalogFileProgress(tracks)?.completed ?? 0) / totalFiles) * 100),
+                                    currentProviderTrackId: offer.providerTrackId,
+                                    currentTrackNum: offer.trackNum ?? tracks[trackIndex]?.trackNum,
+                                    currentVolumeNum: offer.volumeNum ?? tracks[trackIndex]?.volumeNum,
+                                    trackStatus: "error",
+                                    statusMessage: reason,
+                                    tracks,
+                                });
+                                break;
+                            }
                             throw error;
                         }
                         console.warn(
@@ -3212,6 +3280,20 @@ export class DownloadProcessor {
             }
 
             const completedFiles = deriveCatalogFileProgress(tracks)?.completed ?? 0;
+            const completedOffersCount = offers.filter((o) => !unavailableOffers.has(o.providerTrackId)).length;
+            if (completedOffersCount === 0) {
+                if (unavailableOffers.size > 0) {
+                    const firstReason = Array.from(unavailableOffers.values())[0];
+                    throw new ProviderUnavailableError(
+                        defaultProvider,
+                        "album",
+                        String(payload.providerId || workspaceKey),
+                        `All tracks unavailable: ${firstReason}`,
+                    );
+                }
+                throw new Error("No tracks downloaded");
+            }
+
             const finishState: DownloadStatePayload = {
                 state: "downloading",
                 currentFileNum: Math.min(totalFiles, completedFiles),
@@ -3221,13 +3303,22 @@ export class DownloadProcessor {
                 statusMessage: "Download finished, preparing import",
                 tracks,
             };
+            const warnings: string[] = [];
+            if (unavailableOffers.size > 0) {
+                warnings.push(
+                    `Completed with ${unavailableOffers.size} unavailable track(s) [${Array.from(unavailableOffers.entries()).map(([id, r]) => `${id}: ${r}`).join("; ")}]`,
+                );
+            }
             if (fallbackPrimary && fallbackUsed) {
-                const warningMessage = formatFallbackSuccessMessage(fallbackUsed, fallbackPrimary);
+                warnings.push(formatFallbackSuccessMessage(fallbackUsed, fallbackPrimary));
+                finishState.primaryProvider = fallbackPrimary;
+                finishState.fallbackProvider = fallbackUsed;
+            }
+            if (warnings.length > 0) {
+                const warningMessage = warnings.join(" ");
                 finishState.outcome = "completedWithWarning";
                 finishState.warningMessage = warningMessage;
                 finishState.statusMessage = warningMessage;
-                finishState.primaryProvider = fallbackPrimary;
-                finishState.fallbackProvider = fallbackUsed;
             }
             emitProgress(finishState);
         } finally {
