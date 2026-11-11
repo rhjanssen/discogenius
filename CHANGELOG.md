@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.25.4] - 2026-11-11
+
+### Fixed
+
+- Albums that already have most tracks in the library no longer fail as "All tracks unavailable" when the only remaining tracks are unavailable at the provider (for example Herman Brood – My Way: The Hits). They now complete with a warning that lists the unavailable tracks. Albums with nothing in the library and only unavailable tracks still fail clearly.
+
 ## [2.25.3] - 2026-11-11
 
 ### Fixed
