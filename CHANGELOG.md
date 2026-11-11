@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.25.3] - 2026-11-11
+
+### Fixed
+
+- Albums that finish with a warning (for example Apple Music albums with unavailable tracks, or imports with missing tracks) now store the "completed with warning" outcome, so they show up under the Warnings filter in queue history instead of as plain completed or empty.
+
 ## [2.25.2] - 2026-11-11
 
 ### Fixed
