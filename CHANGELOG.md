@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.25.5] - 2026-11-11
+
+### Fixed
+
+- SQLite no longer holds the write lock for minutes during credit sync. Unchanged credits skip the write lock, MBID lookups use the index, and relationship refreshes release the lock between batches so imports and heartbeats can proceed. This cuts the multi-minute "database is locked" stalls that slowed the API after v2.25.0.
+
 ## [2.25.4] - 2026-11-11
 
 ### Fixed
