@@ -450,6 +450,9 @@ export async function runGatedChunkedWrite<T>(
       });
       runChunk();
     }, label);
+    if (start + size < items.length) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
   }
   return items.length;
 }

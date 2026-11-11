@@ -33,7 +33,7 @@ export type TrackArtistCreditSyncResult = {
   error?: string;
 };
 
-const WRITE_CHUNK = 100;
+const WRITE_CHUNK = 50;
 
 function normalizeMbid(value: unknown): string {
   return String(value ?? "").trim().toLowerCase();
@@ -122,6 +122,32 @@ export class TrackArtistCreditSync {
       SELECT name, sort_name, locale, primary_for_locale, alias_type
       FROM ArtistLocaleAliases WHERE artist_mbid = ? ORDER BY ordinal
     `);
+    const checkSync = db.prepare(`SELECT 1 FROM ArtistLocaleAliasSync WHERE artist_mbid = ?`);
+    const entries = [...fetched.entries()].map(([mbid, aliases]) => [normalizeMbid(mbid), aliases] as const).filter(([mbid]) => mbid);
+
+    // Plan writes outside the write gate: compare stored aliases
+    const pendingWrites: Array<{
+      mbid: string;
+      same: boolean;
+      aliases: CatalogArtistLocaleAlias[];
+    }> = [];
+
+    for (const [mbid, aliases] of entries) {
+      const stored = readStored.all(mbid) as Array<{ name: string; sort_name: string | null; locale: string; primary_for_locale: number; alias_type: string | null }>;
+      const same = stored.length === aliases.length && stored.every((row, index) => {
+        const alias = aliases[index];
+        return row.name === alias.name && (row.sort_name ?? null) === (alias.sortName ?? null)
+          && row.locale === alias.locale && row.primary_for_locale === (alias.primaryForLocale ? 1 : 0)
+          && (row.alias_type ?? null) === (alias.type ?? null);
+      });
+      const needsMark = !checkSync.get(mbid);
+      if (!same || needsMark) {
+        pendingWrites.push({ mbid, same, aliases });
+      }
+    }
+
+    if (pendingWrites.length === 0) return 0;
+
     const deleteStored = db.prepare("DELETE FROM ArtistLocaleAliases WHERE artist_mbid = ?");
     const insert = db.prepare(`
       INSERT INTO ArtistLocaleAliases (artist_mbid, ordinal, name, sort_name, locale, primary_for_locale, alias_type, synced_at)
@@ -132,15 +158,7 @@ export class TrackArtistCreditSync {
       ON CONFLICT(artist_mbid) DO UPDATE SET synced_at = excluded.synced_at
     `);
     let changed = 0;
-    const entries = [...fetched.entries()].map(([mbid, aliases]) => [normalizeMbid(mbid), aliases] as const).filter(([mbid]) => mbid);
-    await runGatedChunkedWrite(entries, ([mbid, aliases]) => {
-      const stored = readStored.all(mbid) as Array<{ name: string; sort_name: string | null; locale: string; primary_for_locale: number; alias_type: string | null }>;
-      const same = stored.length === aliases.length && stored.every((row, index) => {
-        const alias = aliases[index];
-        return row.name === alias.name && (row.sort_name ?? null) === (alias.sortName ?? null)
-          && row.locale === alias.locale && row.primary_for_locale === (alias.primaryForLocale ? 1 : 0)
-          && (row.alias_type ?? null) === (alias.type ?? null);
-      });
+    await runGatedChunkedWrite(pendingWrites, ({ mbid, same, aliases }) => {
       mark.run(mbid);
       if (same) return;
       deleteStored.run(mbid);
@@ -189,21 +207,12 @@ export class TrackArtistCreditSync {
       }
     }
 
+    // Read stored credits and compare outside the write gate.
+    // Indexed lookup WHERE mbid = ? instead of scanning Tracks with lower(mbid) = ?.
     const findTracks = db.prepare(`
       SELECT id, recording_id
       FROM Tracks
-      WHERE lower(mbid) = ?
-    `);
-    const ensureArtist = db.prepare(`
-      INSERT INTO ArtistMetadata (mbid, name, sort_name, updated_at)
-      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(mbid) DO NOTHING
-    `);
-    const findArtistId = db.prepare(`
-      SELECT id
-      FROM ArtistMetadata
-      WHERE lower(mbid) = ?
-      LIMIT 1
+      WHERE mbid = ?
     `);
     const readStoredTrack = db.prepare(`
       SELECT
@@ -217,12 +226,6 @@ export class TrackArtistCreditSync {
       WHERE credit.track_id = ?
       ORDER BY credit.ordinal
     `);
-    const deleteStoredTrack = db.prepare("DELETE FROM TrackArtistCredits WHERE track_id = ?");
-    const insertTrack = db.prepare(`
-      INSERT INTO TrackArtistCredits (
-        track_id, artist_id, ordinal, credited_name, join_phrase, role
-      ) VALUES (?, ?, ?, ?, ?, NULL)
-    `);
     const readStoredRecording = db.prepare(`
       SELECT
         lower(artist.mbid) AS artist_mbid,
@@ -235,71 +238,132 @@ export class TrackArtistCreditSync {
       WHERE credit.recording_id = ?
       ORDER BY credit.ordinal
     `);
-    const deleteStoredRecording = db.prepare("DELETE FROM RecordingArtistCredits WHERE recording_id = ?");
-    const insertRecording = db.prepare(`
-      INSERT INTO RecordingArtistCredits (
-        recording_id, artist_id, ordinal, credited_name, join_phrase, role
-      ) VALUES (?, ?, ?, ?, ?, NULL)
-    `);
-    await runGatedChunkedWrite(entries, ([mbid, credits]) => {
+
+    type TrackCreditWritePlan = {
+      trackId: number;
+      recordingId: number | null;
+      updateTrack: boolean;
+      updateRecording: boolean;
+      credits: CatalogTrackArtistCredit[];
+    };
+    const pendingTrackWrites: TrackCreditWritePlan[] = [];
+
+    for (const [mbid, credits] of entries) {
       const tracks = findTracks.all(mbid) as Array<{ id: number; recording_id: number | null }>;
-      if (tracks.length === 0) return;
-      let trackChanged = false;
+      if (tracks.length === 0) continue;
       for (const track of tracks) {
         const stored = readStoredTrack.all(track.id) as Parameters<typeof sameCredit>[0];
-        if (!sameCredit(stored, credits)) {
-          deleteStoredTrack.run(track.id);
-          credits.forEach((credit, ordinal) => {
+        const updateTrack = !sameCredit(stored, credits);
+        let updateRecording = false;
+        if (track.recording_id != null) {
+          const storedRec = readStoredRecording.all(track.recording_id) as Parameters<typeof sameCredit>[0];
+          updateRecording = !sameCredit(storedRec, credits);
+        }
+        if (updateTrack || updateRecording) {
+          pendingTrackWrites.push({
+            trackId: track.id,
+            recordingId: track.recording_id,
+            updateTrack,
+            updateRecording,
+            credits,
+          });
+        }
+      }
+    }
+
+    if (pendingTrackWrites.length > 0) {
+      const ensureArtist = db.prepare(`
+        INSERT INTO ArtistMetadata (mbid, name, sort_name, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(mbid) DO NOTHING
+      `);
+      const findArtistId = db.prepare(`
+        SELECT id
+        FROM ArtistMetadata
+        WHERE mbid = ?
+        LIMIT 1
+      `);
+      const deleteStoredTrack = db.prepare("DELETE FROM TrackArtistCredits WHERE track_id = ?");
+      const insertTrack = db.prepare(`
+        INSERT INTO TrackArtistCredits (
+          track_id, artist_id, ordinal, credited_name, join_phrase, role
+        ) VALUES (?, ?, ?, ?, ?, NULL)
+      `);
+      const deleteStoredRecording = db.prepare("DELETE FROM RecordingArtistCredits WHERE recording_id = ?");
+      const insertRecording = db.prepare(`
+        INSERT INTO RecordingArtistCredits (
+          recording_id, artist_id, ordinal, credited_name, join_phrase, role
+        ) VALUES (?, ?, ?, ?, ?, NULL)
+      `);
+
+      await runGatedChunkedWrite(pendingTrackWrites, (plan) => {
+        if (plan.updateTrack) {
+          deleteStoredTrack.run(plan.trackId);
+          plan.credits.forEach((credit, ordinal) => {
             const artistMbid = normalizeMbid(credit.artistId);
             const artistName = String(credit.artistName || credit.creditedName).trim();
             ensureArtist.run(artistMbid, artistName, credit.artistSortName || null);
             const artistRow = findArtistId.get(artistMbid) as { id: number } | undefined;
             if (!artistRow) return;
             insertTrack.run(
-              track.id,
+              plan.trackId,
               artistRow.id,
               ordinal,
               String(credit.creditedName || credit.artistName).trim(),
               String(credit.joinPhrase ?? ""),
             );
           });
-          trackChanged = true;
+          result.changed += 1;
         }
-        if (track.recording_id != null) {
-          const storedRec = readStoredRecording.all(track.recording_id) as Parameters<typeof sameCredit>[0];
-          if (!sameCredit(storedRec, credits)) {
-            deleteStoredRecording.run(track.recording_id);
-            credits.forEach((credit, ordinal) => {
-              const artistMbid = normalizeMbid(credit.artistId);
-              const artistName = String(credit.artistName || credit.creditedName).trim();
-              ensureArtist.run(artistMbid, artistName, credit.artistSortName || null);
-              const artistRow = findArtistId.get(artistMbid) as { id: number } | undefined;
-              if (!artistRow) return;
-              insertRecording.run(
-                track.recording_id,
-                artistRow.id,
-                ordinal,
-                String(credit.creditedName || credit.artistName).trim(),
-                String(credit.joinPhrase ?? ""),
-              );
-            });
-          }
+        if (plan.updateRecording && plan.recordingId != null) {
+          deleteStoredRecording.run(plan.recordingId);
+          plan.credits.forEach((credit, ordinal) => {
+            const artistMbid = normalizeMbid(credit.artistId);
+            const artistName = String(credit.artistName || credit.creditedName).trim();
+            ensureArtist.run(artistMbid, artistName, credit.artistSortName || null);
+            const artistRow = findArtistId.get(artistMbid) as { id: number } | undefined;
+            if (!artistRow) return;
+            insertRecording.run(
+              plan.recordingId,
+              artistRow.id,
+              ordinal,
+              String(credit.creditedName || credit.artistName).trim(),
+              String(credit.joinPhrase ?? ""),
+            );
+          });
         }
-      }
-      if (trackChanged) {
-        result.changed += 1;
-      }
-    }, WRITE_CHUNK, "track-artist-credits:sync");
+      }, WRITE_CHUNK, "track-artist-credits:sync");
+    }
 
-    const repair = db.prepare(`
-      UPDATE ArtistMetadata
-      SET name = ?, sort_name = COALESCE(?, sort_name), updated_at = CURRENT_TIMESTAMP
-      WHERE lower(mbid) = ?
-        AND (name IS NOT ? OR (? IS NOT NULL AND sort_name IS NOT ?))
+    // Inspect stored artist names outside the write gate; update only those that actually differ
+    const checkArtist = db.prepare(`
+      SELECT name, sort_name
+      FROM ArtistMetadata
+      WHERE mbid = ?
+      LIMIT 1
     `);
-    await runGatedChunkedWrite([...artists.entries()], ([mbid, artist]) => {
-      result.artistsRepaired += repair.run(artist.name, artist.sortName, mbid, artist.name, artist.sortName, artist.sortName).changes;
-    }, WRITE_CHUNK, "track-artist-credits:artist-names");
+    const artistsNeedingRepair: Array<[string, { name: string; sortName: string | null }]> = [];
+    for (const [mbid, artist] of artists.entries()) {
+      const existing = checkArtist.get(mbid) as { name: string; sort_name: string | null } | undefined;
+      if (!existing) continue;
+      const needsName = existing.name !== artist.name;
+      const needsSort = artist.sortName != null && existing.sort_name !== artist.sortName;
+      if (needsName || needsSort) {
+        artistsNeedingRepair.push([mbid, artist]);
+      }
+    }
+
+    if (artistsNeedingRepair.length > 0) {
+      const repair = db.prepare(`
+        UPDATE ArtistMetadata
+        SET name = ?, sort_name = COALESCE(?, sort_name), updated_at = CURRENT_TIMESTAMP
+        WHERE mbid = ?
+          AND (name IS NOT ? OR (? IS NOT NULL AND sort_name IS NOT ?))
+      `);
+      await runGatedChunkedWrite(artistsNeedingRepair, ([mbid, artist]) => {
+        result.artistsRepaired += repair.run(artist.name, artist.sortName, mbid, artist.name, artist.sortName, artist.sortName).changes;
+      }, WRITE_CHUNK, "track-artist-credits:artist-names");
+    }
 
     result.aliasesChanged = await this.syncArtistLocaleAliases(
       [...artists.keys(), ...(options.extraArtistMbids ?? [])],

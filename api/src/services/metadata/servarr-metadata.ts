@@ -1286,10 +1286,8 @@ export class ServarrMetadataService {
     if (typeof provider.getRelationshipBundle !== "function") return;
     try {
       const bundle = await provider.getRelationshipBundle(recordings, releases);
-      const { applyRelationshipRefresh } = await import("./relationship-credit-store.js");
-      await withSqliteWriteGate(() => {
-        applyRelationshipRefresh(db, bundle);
-      }, "servarr:relationship-credits");
+      const { applyRelationshipRefreshAsync } = await import("./relationship-credit-store.js");
+      await applyRelationshipRefreshAsync(db, bundle);
     } catch (error) {
       console.warn(`[Catalog] Relationship credits were not refreshed: ${error instanceof Error ? error.message : error}`);
     }

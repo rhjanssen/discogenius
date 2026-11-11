@@ -9,7 +9,7 @@ import {
   picardCreditTags,
   type RelationshipCredit,
 } from "./relationship-credit-model.js";
-import { applyRelationshipRefresh, loadCreditSnapshot } from "../metadata/relationship-credit-store.js";
+import { applyRelationshipRefreshAsync, loadCreditSnapshot } from "../metadata/relationship-credit-store.js";
 
 const RECORDING = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 const RELEASE = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1";
@@ -82,26 +82,37 @@ test("relationship rows become Picard credits and skip mastering and instrumenta
   assert.deepEqual(onSecondDisc.filter((tag) => tag.tag === "djmixer").map((tag) => tag.value), ["DJ Dee"]);
 });
 
-test("a missing relationship payload keeps credits and an empty mirror payload clears them", () => {
+test("a missing relationship payload keeps credits and an empty mirror payload clears them", async () => {
   const db = openDb();
   db.prepare("INSERT INTO Recordings (mbid) VALUES (?)").run(RECORDING);
   db.prepare("INSERT INTO AlbumEditions (mbid) VALUES (?)").run(RELEASE);
-  const credit: RelationshipCredit = {
+  const recCredit: RelationshipCredit = {
     scope: "recording", entityMbid: RECORDING, role: "composer", attribute: "",
     artistMbid: COMPOSER, creditedName: "Bach", sortName: "Bach, J.S.", order: 1, mediumPosition: null,
   };
-  applyRelationshipRefresh(db, {
+  const releaseCredit: RelationshipCredit = {
+    scope: "release", entityMbid: RELEASE, role: "producer", attribute: "",
+    artistMbid: COMPOSER, creditedName: "Producer Bach", sortName: null, order: 1, mediumPosition: null,
+  };
+  const workCredit: RelationshipCredit = {
+    scope: "work", entityMbid: WORK, role: "lyricist", attribute: "",
+    artistMbid: COMPOSER, creditedName: "Lyricist Bach", sortName: null, order: 1, mediumPosition: null,
+  };
+  await applyRelationshipRefreshAsync(db, {
     queriedRecordingMbids: [RECORDING],
     queriedReleaseMbids: [RELEASE],
-    credits: [credit],
+    credits: [recCredit, releaseCredit, workCredit],
     works: [{ recordingMbid: RECORDING, workMbid: WORK, title: "Prelude", order: 1, instrumental: false }],
   });
-  applyRelationshipRefresh(db, null);
+  await applyRelationshipRefreshAsync(db, null);
   const kept = loadCreditSnapshot(db, [RECORDING], [RELEASE]);
   assert.equal(kept?.known.has(RECORDING), true);
-  assert.equal(kept?.credits.length, 1);
+  assert.equal(kept?.credits.length, 3);
   assert.equal(kept?.works.length, 1);
-  applyRelationshipRefresh(db, {
+  assert.equal(kept?.credits.some((c) => c.scope === "recording"), true);
+  assert.equal(kept?.credits.some((c) => c.scope === "release"), true);
+  assert.equal(kept?.credits.some((c) => c.scope === "work"), true);
+  await applyRelationshipRefreshAsync(db, {
     queriedRecordingMbids: [RECORDING],
     queriedReleaseMbids: [RELEASE],
     credits: [],
@@ -114,7 +125,7 @@ test("a missing relationship payload keeps credits and an empty mirror payload c
   db.close();
 });
 
-test("replacing relationship credits for 500 recordings stays bounded", () => {
+test("replacing relationship credits for 500 recordings stays bounded", async () => {
   const db = openDb();
   const insert = db.prepare("INSERT INTO Recordings (mbid) VALUES (?)");
   const mbids: string[] = [];
@@ -134,7 +145,7 @@ test("replacing relationship credits for 500 recordings stays bounded", () => {
     });
   }
   const started = Date.now();
-  applyRelationshipRefresh(db, {
+  await applyRelationshipRefreshAsync(db, {
     queriedRecordingMbids: mbids,
     queriedReleaseMbids: [],
     credits,

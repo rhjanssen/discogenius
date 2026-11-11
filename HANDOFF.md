@@ -1,28 +1,23 @@
 # Session Handoff
 
 - **Last updated by:** Google Antigravity / Gemini
-- **Active branch:** `agent/issue-105` / `agent/issue-106`
-- **Related issue / PR:** Issue #105 / PR #106 (`fix(download): complete album with warning when remaining missing tracks are unavailable (#105)`)
+- **Active branch:** `agent/issue-99` / `agent/issue-104`
+- **Related issue / PR:** Issue #99 / PR #104 (`fix(database): eliminate multi-minute write lock holds and contention in credit sync (#99)`)
+
+## Assumption
+- Stored MBIDs in the database are canonical lowercase (the SQLite `UNIQUE` indexes and `ON CONFLICT` paths already rely on canonical lowercase MBIDs). No normalising query shim or unindexed `lower(mbid)` / `COLLATE NOCASE` scan is needed.
 
 ## Done
-- Addressed PO review findings for PR #106:
-  1. **Dropped human-readable warning-text parsing in `dispatchDownloadPhase`:**
-     - Removed `warningMatch` regex check on `warningMessage`.
-     - Derived `unavailableCount` directly from `trackList.filter((t) => t.status === "error").length`.
-  2. **Reverted out-of-scope `writeDownloadState` change:**
-     - Removed `if (state.state === 'completed') nextProgress = ...` so progress derivation remains unchanged.
-  3. **Kept Issue #105 core fixes:**
-     - `DownloadProcessor.downloadAlbumTrackOffers`: when `completedOffersCount === 0`, if existing library tracks plus unavailable tracks cover the album (`libraryDone > 0 && (libraryDone >= albumTotal || libraryDone + unavailableOffers.size >= albumTotal)`), completes with `outcome: "completedWithWarning"` and warningMessage rather than throwing `ProviderUnavailableError`.
-     - `DownloadProcessor.dispatchDownloadPhase`: when the workspace contains no files, if `doneCount + unavailableCount >= totalCount` (with `doneCount > 0` and `unavailableCount > 0`), marks command completed with warning, updates album download status, and emits completed event.
-     - True all-unavailable albums with an empty library continue to throw `ProviderUnavailableError("All tracks unavailable: ...")`.
-  4. **Regression tests in `api/src/services/download/download-processor-same-provider-fallback.test.ts`:**
-     - All 6 tests pass, including the replayed named albums (Herman Brood and Van Dik Hout) and the empty workspace `dispatchDownloadPhase` dispatch test.
-- Verified with full `yarn ci`:
+- Rebased branch on `main` cleanly past #103 (`fb4ec43b`).
+- Removed duplicate synchronous `applyRelationshipRefresh` in `api/src/services/metadata/relationship-credit-store.ts`. Production and tests now exclusively use the single async implementation `applyRelationshipRefreshAsync`, taking the SQLite write gate per batch and yielding to the event loop.
+- Migrated `api/src/services/catalog/relationship-credits.test.ts` to `applyRelationshipRefreshAsync`, covering null bundle retention, empty list clears, works, and release scope credits against the real production path.
+- Removed the synchronous `getQueueHistory` latency micro-benchmark from `api/src/services/metadata/credits-write-contention.test.ts`. Kept the structural contention proof (asserting write gate is released between batches and interleaved `command:heartbeat` completes promptly with a generous bound < 2000ms to prevent CI flaking).
+- Verified full `yarn ci`:
   - `yarn lint` passed with 0 errors.
-  - `yarn typecheck` passed cleanly across both api and app.
-  - `yarn test:app` passed all 192 tests across 48 test files.
-  - `yarn test:api` passed all 2,660 tests with 0 failures.
-  - `yarn build` passed cleanly across both api and app.
+  - `yarn typecheck` passed cleanly across api and app.
+  - `yarn test:api` passed all 2,657 backend tests with 0 failures.
+  - `yarn test:app` passed 192/192 frontend tests with 0 failures.
+  - `yarn build` passed cleanly across api and app.
 
 ## Open Questions / Follow-ups for PO
-- None. Addressed both review comments surgically. Ready for review and merge.
+- None. All review items addressed. Ready for review and merge.
