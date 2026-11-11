@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.25.2] - 2026-11-11
+
+### Fixed
+
+- Apple Music albums downloaded track by track (compilations, retrospectives, partial or missing-track downloads) no longer fail as a whole when one track returns "Failed to dl aac-lc: Unavailable". Available tracks are downloaded and the album completes with a warning listing the unavailable tracks; only an album where every track is unavailable fails.
+- Apple album track IDs now resolve for releases stored as `release` in ProviderItems, so follow-up single-track downloads work after a first-track failure.
+- Transient download errors (timeouts, network or disk errors) no longer mark a track as permanently unavailable.
+
+### Changed
+
+- Agent dispatch workflow: non-agent label runs no longer cancel agent runs, and agent errors now fail visibly.
+
 ## [2.25.1] - 2026-11-10
 
 ### Fixed
