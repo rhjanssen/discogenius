@@ -30,9 +30,10 @@ on:
         required: false
         type: string
 
-concurrency:
-  group: agent-dispatch-${{ github.event.issue.number || github.event.pull_request.number || inputs.issue_number || github.run_id }}
-  cancel-in-progress: false
+# Concurrency lives on the agent jobs, not the workflow (#92). Creating an issue with
+# several labels fires one `labeled` run per label; a workflow-level group let the
+# runs for `ready`/`P1`/... cancel the pending `agent:auto` run. Non-agent label
+# events now skip `route` (job-level `if:`) and never join the per-issue group.
 
 permissions:
   actions: write
@@ -47,8 +48,14 @@ jobs:
     runs-on: ubuntu-24.04
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'issues' ||
-      github.event_name == 'pull_request' ||
+      (
+        (github.event_name == 'issues' || github.event_name == 'pull_request') &&
+        (
+          github.event.action == 'assigned' ||
+          startsWith(github.event.label.name, 'agent:') ||
+          contains(fromJSON('["gemini","claude","cursor"]'), github.event.label.name)
+        )
+      ) ||
       (
         (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
         (
@@ -87,22 +94,18 @@ jobs:
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             REQUESTED="$INPUT_AGENT"
           elif [ "$EVENT_NAME" = "issues" ] || [ "$EVENT_NAME" = "pull_request" ]; then
-            case "$LABEL_NAME" in
-              agent:gemini|gemini) REQUESTED="gemini" ;;
-              agent:claude|claude) REQUESTED="claude" ;;
-              agent:cursor|cursor) REQUESTED="cursor" ;;
-              agent:auto)          REQUESTED="auto" ;;
-              *)
-                if [ "${{ github.event.action }}" = "assigned" ] && [ -n "$NUM" ]; then
-                  LABELS=$(gh issue view "$NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name' || true)
-                  if echo "$LABELS" | grep -qxE 'agent:gemini|gemini'; then REQUESTED="gemini";
-                  elif echo "$LABELS" | grep -qxE 'agent:claude|claude'; then REQUESTED="claude";
-                  elif echo "$LABELS" | grep -qxE 'agent:cursor|cursor'; then REQUESTED="cursor";
-                  elif echo "$LABELS" | grep -qxE 'agent:auto|ready'; then REQUESTED="auto";
-                  fi
-                fi
-                ;;
-            esac
+            # Decide from the issue's current labels (#92): the triggering label wins
+            # while it is still present; otherwise use whatever agent label is on it now.
+            CURRENT=$(gh issue view "$NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name' 2>/dev/null || echo "$LABEL_NAME")
+            if [ -n "$LABEL_NAME" ] && echo "$CURRENT" | grep -qxF "$LABEL_NAME"; then
+              CURRENT="$LABEL_NAME"
+            fi
+            if echo "$CURRENT" | grep -qxE 'agent:gemini|gemini'; then REQUESTED="gemini";
+            elif echo "$CURRENT" | grep -qxE 'agent:claude|claude'; then REQUESTED="claude";
+            elif echo "$CURRENT" | grep -qxE 'agent:cursor|cursor'; then REQUESTED="cursor";
+            elif echo "$CURRENT" | grep -qxE 'agent:auto'; then REQUESTED="auto";
+            elif [ "${{ github.event.action }}" = "assigned" ] && echo "$CURRENT" | grep -qx 'ready'; then REQUESTED="auto";
+            fi
           else
             if echo "$COMMENT_BODY" | grep -qiE '@gemini'; then REQUESTED="gemini";
             elif echo "$COMMENT_BODY" | grep -qiE '@claude'; then REQUESTED="claude";
@@ -154,6 +157,9 @@ jobs:
     name: Gemini / Antigravity Agent (Subscription OAuth + Cached Full VM)
     needs: route
     if: needs.route.outputs.target_agent == 'gemini'
+    concurrency:
+      group: agent-run-${{ needs.route.outputs.issue_number }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -306,10 +312,37 @@ jobs:
             -f agent="${NEXT_LABEL#agent:}" -f issue_number="$ISSUE_NUMBER" \
             -f prompt="Continue from branch ${BRANCH} (WIP saved by Gemini after quota exhaustion). Follow AGENTS.md and HANDOFF.md." || true
 
+      # The agent step uses continue-on-error so the quota failover above can run;
+      # without this step an auth error (e.g. expired OAuth token) or a rejected push
+      # still concluded the job as "success".
+      - name: Push agent commits & fail visibly on agent error
+        if: ${{ !cancelled() && steps.run_gemini.outputs.quota_exhausted != 'true' }}
+        env:
+          AGENT_OUTCOME: ${{ steps.run_gemini.outcome }}
+        run: |
+          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          REASON=""
+          if [ "$AGENT_OUTCOME" != "success" ]; then
+            REASON="Gemini did not complete (step outcome: ${AGENT_OUTCOME:-not run}); see the run log, an expired auth token is a common cause."
+          elif [ "$(git rev-list --count "origin/${{ github.event.repository.default_branch }}..HEAD" 2>/dev/null || echo 0)" -gt 0 ] \
+            && ! git push -u origin "HEAD:refs/heads/$BRANCH" > /tmp/push.log 2>&1; then
+            cat /tmp/push.log
+            REASON="pushing \`$BRANCH\` failed: $(grep -m1 -E 'rejected|error' /tmp/push.log || tail -n1 /tmp/push.log). Commits that touch .github/workflows/ need a token with workflow scope; push those manually."
+          fi
+          if [ -n "$REASON" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+              --body "<!-- agent-loop-guard -->❌ **Gemini agent run failed:** $REASON ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+            echo "::error::$REASON"
+            exit 1
+          fi
+
   claude-agent:
     name: Claude Code Agent (Subscription OAuth + Cached Full VM)
     needs: route
     if: needs.route.outputs.target_agent == 'claude'
+    concurrency:
+      group: agent-run-${{ needs.route.outputs.issue_number }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -425,10 +458,37 @@ jobs:
             -f agent="${NEXT_LABEL#agent:}" -f issue_number="$ISSUE_NUMBER" \
             -f prompt="Continue from branch ${BRANCH} (WIP saved by Claude after quota exhaustion). Follow AGENTS.md and HANDOFF.md." || true
 
+      # The agent step uses continue-on-error so the quota failover above can run;
+      # without this step an auth error (e.g. expired OAuth token) or a rejected push
+      # still concluded the job as "success".
+      - name: Push agent commits & fail visibly on agent error
+        if: ${{ !cancelled() && steps.run_claude.outputs.quota_exhausted != 'true' }}
+        env:
+          AGENT_OUTCOME: ${{ steps.run_claude.outcome }}
+        run: |
+          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          REASON=""
+          if [ "$AGENT_OUTCOME" != "success" ]; then
+            REASON="Claude did not complete (step outcome: ${AGENT_OUTCOME:-not run}); see the run log, an expired auth token is a common cause."
+          elif [ "$(git rev-list --count "origin/${{ github.event.repository.default_branch }}..HEAD" 2>/dev/null || echo 0)" -gt 0 ] \
+            && ! git push -u origin "HEAD:refs/heads/$BRANCH" > /tmp/push.log 2>&1; then
+            cat /tmp/push.log
+            REASON="pushing \`$BRANCH\` failed: $(grep -m1 -E 'rejected|error' /tmp/push.log || tail -n1 /tmp/push.log). Commits that touch .github/workflows/ need a token with workflow scope; push those manually."
+          fi
+          if [ -n "$REASON" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+              --body "<!-- agent-loop-guard -->❌ **Claude agent run failed:** $REASON ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+            echo "::error::$REASON"
+            exit 1
+          fi
+
   cursor-agent:
     name: Cursor Cloud Agent Dispatch (Fallback / Explicit)
     needs: route
     if: needs.route.outputs.target_agent == 'cursor'
+    concurrency:
+      group: agent-run-${{ needs.route.outputs.issue_number }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
