@@ -17,6 +17,7 @@ const { db } = databaseModule;
 const { DownloadProcessor } = await import("./download-processor.js");
 const { downloadBackendRegistry } = await import("./download-backend.js");
 const { streamingProviderManager } = await import("../../providers/index.js");
+const { CommandQueueManager } = await import("../commands/command-queue-manager.js");
 
 function registerProvider(id: string): void {
   if ([...streamingProviderManager.getAllStreamingProviders()].some((provider) => provider.id === id)) return;
@@ -37,21 +38,31 @@ function seedOffer(input: {
   providerTrackId: string;
   qualityClass: string;
 }): void {
+  const existing = db.prepare(`
+    SELECT id FROM ProviderItems WHERE provider = ? AND entity_type = 'track' AND provider_id = ?
+  `).get(input.provider, input.providerTrackId) as { id: number } | undefined;
+  const itemId = existing?.id ?? input.itemId;
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
+      VALUES (?, ?, 'track', ?, ?, 'available')
+    `).run(itemId, input.provider, input.providerTrackId, input.providerTrackId);
+  } else {
+    db.prepare(`
+      UPDATE ProviderItems SET availability = 'available', availability_reason = NULL WHERE id = ?
+    `).run(itemId);
+  }
   db.prepare(`
-    INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title, availability)
-    VALUES (?, ?, 'track', ?, ?, 'available')
-  `).run(input.itemId, input.provider, input.providerTrackId, input.providerTrackId);
-  db.prepare(`
-    INSERT INTO ProviderTrackMatches (
+    INSERT OR REPLACE INTO ProviderTrackMatches (
       id, provider_track_item_id, recording_id, track_id, match_state,
       decision_source, confidence, method, matcher_version
     ) VALUES (?, ?, ?, ?, 'accepted', 'automatic', 1, 'fixture', 5)
-  `).run(input.itemId, input.itemId, input.recordingId, input.trackId);
+  `).run(input.itemId, itemId, input.recordingId, input.trackId);
   db.prepare(`
-    INSERT INTO ProviderItemAudioVariants (
+    INSERT OR REPLACE INTO ProviderItemAudioVariants (
       id, provider_item_id, variant_key, quality_class, availability
     ) VALUES (?, ?, ?, ?, 'available')
-  `).run(input.itemId, input.itemId, input.qualityClass, input.qualityClass);
+  `).run(input.itemId, itemId, input.qualityClass, input.qualityClass);
 }
 
 function entryFor(provider: string) {
@@ -517,6 +528,352 @@ test("downloadAlbumTrackOffers leaves ProviderItems.availability unchanged when 
     `).get() as { availability: string; availability_reason: string | null };
     assert.equal(row2Primary.availability, "available", "Primary track failing with transient error must stay available");
     assert.equal(row2Primary.availability_reason, null);
+  } finally {
+    clearInterval(processor.progressFlushTimer);
+    processor.progressBuffer?.clear();
+  }
+});
+
+function seedAlbumCatalog(input: {
+  artistId: number;
+  artistMbid: string;
+  artistName: string;
+  albumId: number;
+  groupMbid: string;
+  albumTitle: string;
+  editionId: number;
+  releaseMbid: string;
+}): void {
+  db.prepare("INSERT OR IGNORE INTO ArtistMetadata (id, mbid, name) VALUES (?, ?, ?)").run(input.artistId, input.artistMbid, input.artistName);
+  db.prepare("INSERT OR IGNORE INTO Albums (id, mbid, title, artist_mbid, primary_type) VALUES (?, ?, ?, ?, 'Album')").run(input.albumId, input.groupMbid, input.albumTitle, input.artistMbid);
+  db.prepare(`
+    INSERT OR IGNORE INTO AlbumEditions (id, mbid, release_group_id, title, release_group_mbid, artist_mbid)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(input.editionId, input.releaseMbid, input.albumId, input.albumTitle, input.groupMbid, input.artistMbid);
+}
+
+function seedAlbumTrack(input: {
+  editionId: number;
+  trackId: number;
+  recordingId: number;
+  trackMbid: string;
+  recordingMbid: string;
+  title: string;
+  position: number;
+  releaseMbid: string;
+}): void {
+  db.prepare(`
+    INSERT OR IGNORE INTO Recordings (id, mbid, title, length_ms, is_video)
+    VALUES (?, ?, ?, 180000, 0)
+  `).run(input.recordingId, input.recordingMbid, input.title);
+  db.prepare(`
+    INSERT OR IGNORE INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, release_mbid, recording_mbid)
+    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+  `).run(
+    input.trackId, input.trackMbid, input.editionId, input.recordingId,
+    input.position, input.title, input.releaseMbid, input.recordingMbid,
+  );
+}
+
+test("replaying named albums (Herman Brood and Van Dik Hout) with remaining unavailable tracks completes with warning (#105)", async () => {
+  registerProvider("apple-music");
+
+  const namedCases = [
+    {
+      caseName: "Herman Brood — My Way: The Hits",
+      artistName: "Herman Brood",
+      commandId: 95001,
+      artistId: 101,
+      albumId: 101,
+      editionId: 101,
+      providerAlbumId: "herman-brood-my-way",
+      totalTracks: 24,
+      inLibraryCount: 23,
+      unavailableTrackIds: ["1440897165"],
+    },
+    {
+      caseName: "Van Dik Hout — Van Dik Hout 15 jaar",
+      artistName: "Van Dik Hout",
+      commandId: 95002,
+      artistId: 102,
+      albumId: 102,
+      editionId: 102,
+      providerAlbumId: "van-dik-hout-15-jaar",
+      totalTracks: 17,
+      inLibraryCount: 15,
+      unavailableTrackIds: ["1440897170", "1440897171"],
+    },
+  ];
+
+  for (const tc of namedCases) {
+    seedAlbumCatalog({
+      artistId: tc.artistId,
+      artistMbid: `artist-${tc.commandId}`,
+      artistName: tc.artistName,
+      albumId: tc.albumId,
+      groupMbid: `group-${tc.commandId}`,
+      albumTitle: tc.caseName,
+      editionId: tc.editionId,
+      releaseMbid: `release-${tc.commandId}`,
+    });
+
+    const tracks = [];
+    const offers = [];
+    for (let i = 1; i <= tc.totalTracks; i++) {
+      const inLibrary = i <= tc.inLibraryCount;
+      const trackIdStr = !inLibrary
+        ? tc.unavailableTrackIds[i - tc.inLibraryCount - 1]
+        : String(1440897000 + i);
+      const isUnavailable = !inLibrary;
+      const trackId = tc.commandId * 100 + i;
+      const recordingId = tc.commandId * 100 + i;
+      const trackMbid = `track-${tc.commandId}-${i}`;
+      const recordingMbid = `rec-${tc.commandId}-${i}`;
+
+      seedAlbumTrack({
+        editionId: tc.editionId,
+        trackId,
+        recordingId,
+        trackMbid,
+        recordingMbid,
+        title: `Track ${i}`,
+        position: i,
+        releaseMbid: `release-${tc.commandId}`,
+      });
+
+      tracks.push({
+        title: `Track ${i}`,
+        trackNum: i,
+        status: inLibrary ? ("skipped" as const) : ("queued" as const),
+        providerTrackId: trackIdStr,
+        provider: "apple-music",
+        canonicalTrackMbid: trackMbid,
+        canonicalRecordingMbid: recordingMbid,
+      });
+
+      if (!inLibrary) {
+        offers.push({
+          provider: "apple-music",
+          providerTrackId: trackIdStr,
+          canonicalTrackMbid: trackMbid,
+          canonicalRecordingMbid: recordingMbid,
+          title: `Track ${i}`,
+        });
+        seedOffer({
+          recordingId,
+          recordingMbid,
+          trackId,
+          trackMbid,
+          itemId: tc.commandId * 100 + i,
+          provider: "apple-music",
+          providerTrackId: trackIdStr,
+          qualityClass: "lossless",
+        });
+      }
+    }
+
+    downloadBackendRegistry.register({
+      id: "apple-music-downloader",
+      supportedProviders: ["apple-music"],
+      capabilities: ["stereo"],
+      async preflight() {},
+      async download(request) {
+        if (tc.unavailableTrackIds.includes(request.providerId)) {
+          throw new ProviderUnavailableError("apple-music", "track", request.providerId, "Failed to dl aac-lc: Unavailable");
+        }
+      },
+    });
+
+    const processor = new DownloadProcessor() as any;
+    const progressEmissions: any[] = [];
+    processor.persistDownloadState = (commandId: number, state: any) => {
+      progressEmissions.push(state);
+    };
+
+    db.prepare(`
+      INSERT INTO commands (id, name, payload, status, worker_id)
+      VALUES (?, 'DownloadAlbum', ?, 'started', 'same-provider-test')
+    `).run(tc.commandId, JSON.stringify({
+      provider: "apple-music",
+      providerId: tc.providerAlbumId,
+      type: "album",
+      acquisitionMode: "trackOffers",
+      title: tc.caseName,
+      artist: tc.artistName,
+      trackOffers: offers,
+      downloadState: {
+        totalFiles: tc.totalTracks,
+        currentFileNum: tc.inLibraryCount,
+        progress: Math.round((tc.inLibraryCount / tc.totalTracks) * 100),
+        tracks,
+      },
+    }));
+
+    try {
+      await processor.downloadAlbumTrackOffers(tc.commandId, {
+        provider: "apple-music",
+        providerId: tc.providerAlbumId,
+        type: "album",
+        acquisitionMode: "trackOffers",
+        title: tc.caseName,
+        artist: tc.artistName,
+        trackOffers: offers,
+        downloadState: {
+          totalFiles: tc.totalTracks,
+          currentFileNum: tc.inLibraryCount,
+          progress: Math.round((tc.inLibraryCount / tc.totalTracks) * 100),
+          tracks,
+        },
+      }, entryFor("apple-music"));
+
+      const finishState = progressEmissions[progressEmissions.length - 1];
+      assert.ok(finishState, `Expected finishState for ${tc.caseName}`);
+      assert.equal(finishState.outcome, "completedWithWarning", `Expected completedWithWarning outcome for ${tc.caseName}`);
+      assert.ok(finishState.warningMessage, `Expected warningMessage for ${tc.caseName}`);
+      assert.match(
+        finishState.warningMessage,
+        new RegExp(`Completed with ${tc.unavailableTrackIds.length} unavailable track\\(s\\)`),
+      );
+      for (const trackId of tc.unavailableTrackIds) {
+        assert.match(finishState.warningMessage, new RegExp(`${trackId}: Failed to dl aac-lc: Unavailable`));
+      }
+    } finally {
+      clearInterval(processor.progressFlushTimer);
+      processor.progressBuffer?.clear();
+    }
+  }
+});
+
+test("dispatchDownloadPhase completes with warning when download workspace produces no files because remaining tracks are unavailable (#105)", async () => {
+  registerProvider("apple-music");
+  const commandId = 95010;
+  const albumId = 201;
+  const editionId = 201;
+  const artistId = 201;
+  const providerAlbumId = "brood-full-dispatch";
+  const totalTracks = 24;
+  const inLibraryCount = 23;
+  const unavailableTrackId = "1440897165";
+
+  seedAlbumCatalog({
+    artistId,
+    artistMbid: "artist-brood-dispatch",
+    artistName: "Herman Brood",
+    albumId,
+    groupMbid: "group-brood-dispatch",
+    albumTitle: "Herman Brood — My Way: The Hits",
+    editionId,
+    releaseMbid: "release-brood-dispatch",
+  });
+
+  const tracks = [];
+  for (let i = 1; i <= totalTracks; i++) {
+    const isUnavailable = i === 24;
+    const trackIdStr = isUnavailable ? unavailableTrackId : String(1440897000 + i);
+    const trackId = 70000 + i;
+    const recordingId = 70000 + i;
+    const trackMbid = `track-brood-${i}`;
+    const recordingMbid = `rec-brood-${i}`;
+
+    seedAlbumTrack({
+      editionId,
+      trackId,
+      recordingId,
+      trackMbid,
+      recordingMbid,
+      title: `Track ${i}`,
+      position: i,
+      releaseMbid: "release-brood-dispatch",
+    });
+
+    tracks.push({
+      title: `Track ${i}`,
+      trackNum: i,
+      status: isUnavailable ? ("queued" as const) : ("skipped" as const),
+      providerTrackId: trackIdStr,
+      provider: "apple-music",
+      canonicalTrackMbid: trackMbid,
+      canonicalRecordingMbid: recordingMbid,
+    });
+  }
+
+  const offers = [{
+    provider: "apple-music",
+    providerTrackId: unavailableTrackId,
+    canonicalTrackMbid: "track-brood-24",
+    canonicalRecordingMbid: "rec-brood-24",
+    title: "Track 24",
+  }];
+
+  seedOffer({
+    recordingId: 70024,
+    recordingMbid: "rec-brood-24",
+    trackId: 70024,
+    trackMbid: "track-brood-24",
+    itemId: 70024,
+    provider: "apple-music",
+    providerTrackId: unavailableTrackId,
+    qualityClass: "lossless",
+  });
+
+  downloadBackendRegistry.register({
+    id: "apple-music-downloader",
+    supportedProviders: ["apple-music"],
+    capabilities: ["stereo"],
+    async preflight() {},
+    async download(request) {
+      if (request.providerId === unavailableTrackId) {
+        throw new ProviderUnavailableError("apple-music", "track", request.providerId, "Failed to dl aac-lc: Unavailable");
+      }
+    },
+  });
+
+  const processor = new DownloadProcessor() as any;
+  processor.scheduleNext = () => {};
+  processor.ensureMetadataReady = async () => {};
+  processor.resolveDownloadMetadata = () => ({
+    title: "Herman Brood — My Way: The Hits",
+    artist: "Herman Brood",
+    cover: null,
+  });
+
+  db.prepare(`
+    INSERT INTO commands (id, name, payload, status)
+    VALUES (?, 'DownloadAlbum', ?, 'queued')
+  `).run(
+    commandId,
+    JSON.stringify({
+      provider: "apple-music",
+      providerId: providerAlbumId,
+      type: "album",
+      slot: "stereo",
+      title: "Herman Brood — My Way: The Hits",
+      artist: "Herman Brood",
+      acquisitionMode: "trackOffers",
+      trackOffers: offers,
+      downloadState: {
+        totalFiles: totalTracks,
+        currentFileNum: inLibraryCount,
+        progress: Math.round((inLibraryCount / totalTracks) * 100),
+        tracks,
+      },
+    }),
+  );
+
+  const command = CommandQueueManager.get(commandId)!;
+
+  try {
+    await processor.dispatchDownloadPhase(command);
+    processor.flushProgressBuffer();
+
+    const finalJob = CommandQueueManager.get(commandId);
+    assert.equal(finalJob?.status, "completed", "Job must be marked completed");
+    assert.equal(finalJob?.payload?.downloadState?.state, "completed");
+    assert.equal(finalJob?.payload?.downloadState?.outcome, "completedWithWarning");
+    const warningMessage = finalJob?.payload?.downloadState?.warningMessage;
+    assert.ok(warningMessage, "Expected warningMessage to be present");
+    assert.match(warningMessage, /Completed with 1 unavailable track\(s\)/);
+    assert.match(warningMessage, /1440897165: Failed to dl aac-lc: Unavailable/);
   } finally {
     clearInterval(processor.progressFlushTimer);
     processor.progressBuffer?.clear();
