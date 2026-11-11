@@ -379,6 +379,7 @@ export class SoundCloudBackend implements DownloadBackend {
           state: "downloading",
           statusMessage: options.warningMessage,
           warningMessage: options.warningMessage,
+          outcome: "completedWithWarning",
         });
       }
       return true;

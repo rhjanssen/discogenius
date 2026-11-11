@@ -37,13 +37,13 @@ export const QUEUE_HISTORY_MEDIA_KIND_OPTIONS: ReadonlyArray<{
 ];
 
 export function getQueueHistoryOutcomeBucket(
-    item: Pick<QueueItemContract, "status" | "error" | "outcome">,
+    item: Pick<QueueItemContract, "status" | "error" | "outcome"> & { warningMessage?: string | null },
 ): QueueHistoryOutcomeFilter | "other" {
     if (item.status === "failed" || Boolean(item.error)) {
         return "failed";
     }
 
-    if (item.status === "completed" && item.outcome === "completedWithWarning") {
+    if (item.status === "completed" && (item.outcome === "completedWithWarning" || Boolean(item.warningMessage?.trim()))) {
         return "warning";
     }
 

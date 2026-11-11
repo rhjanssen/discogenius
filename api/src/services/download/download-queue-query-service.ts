@@ -873,7 +873,13 @@ function queueHistoryOutcomeBucketSql(): string {
     CASE
       WHEN jq.status = 'failed' THEN 'failed'
       WHEN jq.status = 'completed'
-        AND json_extract(jq.payload, '$.downloadState.outcome') = 'completedWithWarning'
+        AND (
+          json_extract(jq.payload, '$.downloadState.outcome') = 'completedWithWarning'
+          OR (
+            json_extract(jq.payload, '$.downloadState.warningMessage') IS NOT NULL
+            AND trim(json_extract(jq.payload, '$.downloadState.warningMessage')) != ''
+          )
+        )
         THEN 'warning'
       WHEN jq.status = 'completed' THEN 'completed'
       ELSE 'other'
@@ -1135,16 +1141,19 @@ export class DownloadQueueQueryService {
   }
 
   static getQueueHistory(params: {
-    limit: number;
-    offset: number;
+    limit?: number;
+    offset?: number;
     outcomes?: readonly QueueHistoryOutcomeFilter[];
     mediaKinds?: readonly QueueHistoryMediaKindFilter[];
   }): QueueListResponseContract {
+    const limit = Number.isFinite(params.limit) ? Math.max(0, Math.floor(params.limit!)) : 50;
+    const offset = Number.isFinite(params.offset) ? Math.max(0, Math.floor(params.offset!)) : 0;
+    const normalizedParams = { ...params, limit, offset };
     const outcomesKey = (params.outcomes ?? []).slice().sort().join(",");
     const mediaKindsKey = (params.mediaKinds ?? []).slice().sort().join(",");
     return this.getSnapshot(
-      `history:${params.limit}:${params.offset}:${outcomesKey}:${mediaKindsKey}`,
-      () => this.buildQueueHistory(params),
+      `history:${limit}:${offset}:${outcomesKey}:${mediaKindsKey}`,
+      () => this.buildQueueHistory(normalizedParams),
     );
   }
 
@@ -1393,9 +1402,13 @@ export class DownloadQueueQueryService {
       state: getOptionalString(downloadState.state) as QueueItemContract["state"] | undefined,
       outcome: (() => {
         const outcome = getOptionalString(downloadState.outcome);
-        return outcome === "ok" || outcome === "completedWithWarning"
-          ? outcome
-          : undefined;
+        if (outcome === "ok" || outcome === "completedWithWarning") {
+          return outcome;
+        }
+        if (job.status === "completed" && typeof downloadState.warningMessage === "string" && downloadState.warningMessage.trim()) {
+          return "completedWithWarning";
+        }
+        return undefined;
       })(),
       warningMessage: getOptionalString(downloadState.warningMessage) ?? null,
       speed: getOptionalString(downloadState.speed) ?? undefined,

@@ -1329,6 +1329,9 @@ export class DownloadProcessor {
                 merged[key] = value;
             }
         }
+        if (typeof merged.warningMessage === "string" && merged.warningMessage.trim().length > 0 && !merged.outcome) {
+            merged.outcome = "completedWithWarning";
+        }
         // Reduce every partial event before coalescing. Keeping only the last
         // scalar event would lose other tracks completed during this interval.
         const tracks = state.tracks ?? buffered?.tracks ?? this.getProgressTracksForEvent(commandId);
@@ -1465,6 +1468,14 @@ export class DownloadProcessor {
                 nextProgress = Math.min(100, Math.round((base + inFlight) * 100));
             }
         }
+        const effectiveWarningMessage = typeof state.warningMessage === "string"
+            ? state.warningMessage
+            : (typeof currentDownloadState.warningMessage === "string" ? currentDownloadState.warningMessage : undefined);
+        const hasWarning = typeof effectiveWarningMessage === "string" && effectiveWarningMessage.trim().length > 0;
+        const currentOutcome = currentDownloadState.outcome === "ok" || currentDownloadState.outcome === "completedWithWarning"
+            ? currentDownloadState.outcome
+            : undefined;
+
         const payloadPatch: Record<string, unknown> = {
             downloadState: {
                 ...currentDownloadState,
@@ -1484,8 +1495,8 @@ export class DownloadProcessor {
                 size: state.size ?? currentDownloadState.size,
                 sizeleft: state.sizeleft ?? currentDownloadState.sizeleft,
                 tracks: mergedTracks,
-                outcome: state.outcome ?? currentDownloadState.outcome,
-                warningMessage: state.warningMessage ?? currentDownloadState.warningMessage,
+                outcome: state.outcome ?? currentOutcome ?? (hasWarning ? "completedWithWarning" : undefined),
+                warningMessage: effectiveWarningMessage,
                 primaryProvider: state.primaryProvider ?? currentDownloadState.primaryProvider,
                 fallbackProvider: state.fallbackProvider ?? currentDownloadState.fallbackProvider,
             },
@@ -2348,7 +2359,11 @@ export class DownloadProcessor {
                 );
             }
 
-            const completedDownloadState = (CommandQueueManager.get(job.id)?.payload?.downloadState as DownloadStatePayload | undefined) ?? {};
+            const bufferedDownloadState = this.progressBuffer.get(job.id)?.state as DownloadStatePayload | undefined;
+            const completedDownloadState = {
+                ...((CommandQueueManager.get(job.id)?.payload?.downloadState as DownloadStatePayload | undefined) ?? {}),
+                ...(bufferedDownloadState ?? {}),
+            };
             const importTracks = resetTracksForImportState(completedDownloadState.tracks ?? initialTracks);
 
             // Re-read the live queue payload so hybrid trackOffers fallbacks that
@@ -2375,6 +2390,8 @@ export class DownloadProcessor {
                 trackOffers: resolvedTrackOffers as any,
                 downloadPath: entry.downloadPath,
             });
+            const warningMsg = completedDownloadState.warningMessage?.trim();
+            const downloadOutcome = completedDownloadState.outcome || (warningMsg ? "completedWithWarning" : undefined);
             const importPayload: ImportDownloadCommand = {
                 // Source the provider identity from the offer that actually
                 // produced the files on disk. On a cross-provider fallback,
@@ -2416,7 +2433,7 @@ export class DownloadProcessor {
                 resolved,
                 ...prefetchedNetwork,
                 downloadState: {
-                    outcome: completedDownloadState.outcome,
+                    outcome: downloadOutcome,
                     warningMessage: completedDownloadState.warningMessage,
                     primaryProvider: completedDownloadState.primaryProvider,
                     fallbackProvider: completedDownloadState.fallbackProvider,
@@ -2441,13 +2458,12 @@ export class DownloadProcessor {
 
                 this.persistDownloadState(job.id, {
                     state: 'importPending',
-                    statusMessage: completedDownloadState.outcome === 'completedWithWarning'
-                        && completedDownloadState.warningMessage
-                        ? completedDownloadState.warningMessage
+                    statusMessage: downloadOutcome === 'completedWithWarning' && warningMsg
+                        ? warningMsg
                         : 'Waiting to import',
                     tracks: importTracks,
                     totalFiles: completedDownloadState.totalFiles,
-                    outcome: completedDownloadState.outcome,
+                    outcome: downloadOutcome,
                     warningMessage: completedDownloadState.warningMessage,
                     primaryProvider: completedDownloadState.primaryProvider,
                     fallbackProvider: completedDownloadState.fallbackProvider,
@@ -2754,14 +2770,20 @@ export class DownloadProcessor {
                         );
                     } else {
                         // Promote backend soft warnings (partial SoundCloud album,
-                        // skipped DRM/SNIP tracks) into completedWithWarning.
-                        const downloadState = (CommandQueueManager.get(commandId)?.payload?.downloadState
-                            || {}) as DownloadStatePayload;
-                        if (downloadState.warningMessage && downloadState.outcome !== "completedWithWarning") {
+                        // skipped DRM/SNIP tracks, Apple unavailable tracks) into completedWithWarning.
+                        const buffered = this.progressBuffer.get(commandId)?.state;
+                        const downloadState = {
+                            ...((CommandQueueManager.get(commandId)?.payload?.downloadState || {}) as DownloadStatePayload),
+                            ...(buffered || {}),
+                        };
+                        const warningMessage = typeof downloadState.warningMessage === "string"
+                            ? downloadState.warningMessage.trim()
+                            : "";
+                        if (warningMessage && downloadState.outcome !== "completedWithWarning") {
                             this.persistDownloadState(commandId, {
                                 outcome: "completedWithWarning",
-                                warningMessage: downloadState.warningMessage,
-                                statusMessage: downloadState.warningMessage,
+                                warningMessage,
+                                statusMessage: warningMessage,
                             });
                         }
                     }

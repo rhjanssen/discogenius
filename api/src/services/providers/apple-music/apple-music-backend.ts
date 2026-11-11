@@ -954,6 +954,7 @@ export class AppleMusicBackend implements DownloadBackend {
         ? `Finished album with ${unavailableCount} unavailable track(s)`
         : `Finished album ${providerId}`,
       warningMessage,
+      ...(unavailableCount > 0 ? { outcome: "completedWithWarning" as const } : {}),
     });
   }
 
