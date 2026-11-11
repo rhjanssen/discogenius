@@ -178,6 +178,33 @@ test("artist hydration persists each bounded catalogue batch before fetching the
   } finally { catalogProviderRegistry.getActive = original; }
 });
 
+test("syncArtistReleaseGroups reports progress for each batch so long hydrations emit work", async () => {
+  resetCatalog();
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const original = catalogProviderRegistry.getActive;
+  const ids = Array.from({ length: CATALOG_DETAIL_BATCH_SIZE * 3 }, (_, index) => `progress-group-${index}`);
+  catalogProviderRegistry.getActive = () => ({
+    getReleaseGroupDetails: async (batch: string[]) => batch.map((id) => ({
+      releaseGroupMbid: id,
+      detail: { id, title: id, artistid: "artist-mbid", type: "Album", images: [], Releases: [] },
+    })),
+  }) as any;
+  const progressCalls: Array<{ index: number; total: number }> = [];
+  try {
+    await servarrMetadataModule.servarrMetadata.syncArtistReleaseGroups("artist-mbid", ids, (index, total) => {
+      progressCalls.push({ index, total });
+    });
+    assert.equal(progressCalls.length, 3);
+    assert.deepEqual(progressCalls, [
+      { index: 1, total: ids.length },
+      { index: 1 + CATALOG_DETAIL_BATCH_SIZE, total: ids.length },
+      { index: 1 + CATALOG_DETAIL_BATCH_SIZE * 2, total: ids.length },
+    ]);
+  } finally {
+    catalogProviderRegistry.getActive = original;
+  }
+});
+
 test("a failed later catalogue fetch preserves earlier batches and fails the refresh", async () => {
   resetCatalog();
   const { catalogProviderRegistry } = await import("../catalog/index.js");

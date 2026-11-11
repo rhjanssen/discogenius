@@ -223,7 +223,7 @@ export class RefreshArtistService {
         }
     }
 
-    private static async hydrateScopedReleaseGroups(artistMbid: string): Promise<void> {
+    private static async hydrateScopedReleaseGroups(artistMbid: string, options?: RefreshOptions): Promise<void> {
         const releaseGroups = db.prepare(`
             SELECT DISTINCT rg.mbid
             FROM Albums rg
@@ -237,7 +237,16 @@ export class RefreshArtistService {
         // even though local MusicBrainz already had the data. content_hash still
         // skips unchanged payloads inside syncArtistReleaseGroups.
         const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
-        await servarrMetadata.syncArtistReleaseGroups(artistMbid, releaseGroupMbids);
+        await servarrMetadata.syncArtistReleaseGroups(artistMbid, releaseGroupMbids, (index, total) => {
+            options?.progress?.({
+                kind: "album",
+                index,
+                total,
+                albumId: "",
+                title: "",
+                created: false,
+            });
+        });
         // Covers wait for MatchArtistProviders.precacheArtistMediaCovers().
         // Hitting Cover Art Archive here made local-MB RefreshArtist look
         // rate-limited: every scoped album (and every collaborator's albums)
@@ -1249,6 +1258,7 @@ export class RefreshArtistService {
 
         {
             const isMonitored = isArtistLibraryMonitored(artistId);
+            options.progress?.({ kind: "status", message: `syncing MusicBrainz catalog for ${artistId}` });
             const catalogSync = await this.syncArtistMusicBrainzCatalog(
                 artistId,
                 options.forceUpdate === true,
@@ -1258,12 +1268,14 @@ export class RefreshArtistService {
             creditedArtistMbids = catalogSync.creditedArtistMbids;
             await yieldToEventLoop();
             if (artistMbid) {
-                await this.hydrateScopedReleaseGroups(artistMbid);
+                await this.hydrateScopedReleaseGroups(artistMbid, options);
                 await yieldToEventLoop();
+                options.progress?.({ kind: "status", message: `syncing catalog relations for ${artistId}` });
                 await this.syncCatalogVideoAudioRelations(artistMbid);
             }
         }
 
+        options.progress?.({ kind: "status", message: `refreshing biography for ${artistId}` });
         await refreshArtistBiography(artistId, options);
         await yieldToEventLoop();
 

@@ -74,7 +74,12 @@ export class ArtistPipelineService {
             deferProviderMatching: true,
             progress: (event) => {
                 if (event.kind === "status") {
-                    options.onProgress?.(10, "refreshing metadata");
+                    options.onProgress?.(10, event.message || "refreshing metadata");
+                } else if (event.kind === "album") {
+                    const total = Math.max(event.total, 1);
+                    const index = Math.min(event.index, total);
+                    const progress = Math.min(20, 10 + Math.floor((index / total) * 10));
+                    options.onProgress?.(progress, `refreshing metadata (${index}/${total})`);
                 }
             },
         });

@@ -482,6 +482,15 @@ export class CommandWorkerPool {
         await exited;
     }
 
+    static hasLiveWorkerHeartbeat(commandId: number, maxAgeMs = 60_000, now = Date.now()): boolean {
+        return this.workers.some((entry) =>
+            !entry.exited
+            && !entry.forcedExitError
+            && entry.settle?.commandId === commandId
+            && (now - entry.lastSeenAt) < maxAgeMs
+        );
+    }
+
     static getSnapshot(): CommandWorkerPoolSnapshot {
         return {
             started: this.started,

@@ -35,6 +35,7 @@ import {
 } from './download-state.js';
 import {
     forceReleaseSqliteWriteMutexOwner,
+    isSqliteWriteGateContended,
     isSqliteWriteMutexHeld,
     tryAcquireSqliteWriteMutex,
     releaseSqliteWriteMutex,
@@ -3747,7 +3748,7 @@ export class DownloadProcessorWorkerProxy {
         // A long rename/retag commit holds the writer. Heartbeats queue behind
         // that gate, so lease expiry here means "blocked on SQLite", not a dead
         // worker. Lidarr's busy timeout waits; it does not abort the client.
-        if (isSqliteWriteMutexHeld()) {
+        if (isSqliteWriteGateContended(now.getTime())) {
             return false;
         }
         const stale = CommandQueueManager.findStaleExecutionLeases({
