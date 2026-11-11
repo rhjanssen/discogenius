@@ -1454,7 +1454,9 @@ export class DownloadProcessor {
             : (typeof currentDownloadState.progress === "number" || currentDownloadState.progress === null
                 ? currentDownloadState.progress as number | null
                 : undefined);
-        if (catalogProgress && catalogProgress.totalFiles > 0) {
+        if (state.state === 'completed') {
+            nextProgress = typeof state.progress === "number" ? state.progress : 100;
+        } else if (catalogProgress && catalogProgress.totalFiles > 0) {
             if (providerCountsMatchCatalog && typeof state.progress === "number") {
                 nextProgress = state.progress;
             } else {
@@ -2300,15 +2302,37 @@ export class DownloadProcessor {
                 // Check if content already exists in library — if so, treat as already-imported.
                 if (type === 'album') {
                     const row = this.getCanonicalAlbumDownloadProgress(providerId, payload as DownloadCommand);
+                    const bufferedDownloadState = this.progressBuffer.get(job.id)?.state as DownloadStatePayload | undefined;
+                    const currentDownloadState = {
+                        ...((CommandQueueManager.get(job.id)?.payload?.downloadState as DownloadStatePayload | undefined) ?? {}),
+                        ...(bufferedDownloadState ?? {}),
+                    };
+                    const trackList = Array.isArray(currentDownloadState.tracks) ? currentDownloadState.tracks : [];
+                    const inLibraryCount = trackList.filter((t) => t.status === "completed" || t.status === "skipped").length;
+                    const unavailableCount = trackList.filter((t) => t.status === "error").length;
+                    const warningMessage = currentDownloadState.warningMessage || "";
+                    const warningMatch = warningMessage.match(/(\d+)\s+unavailable track/i);
+                    const effectiveUnavailableCount = Math.max(unavailableCount, warningMatch ? parseInt(warningMatch[1], 10) : 0);
+                    const doneCount = Math.max(inLibraryCount, row?.done ?? 0);
+                    const totalCount = Math.max(trackList.length, row?.total ?? 0);
+                    const coveredWithUnavailable = totalCount > 0
+                        && doneCount > 0
+                        && (doneCount + effectiveUnavailableCount >= totalCount)
+                        && effectiveUnavailableCount > 0;
 
-                    if (payload?.reason !== 'upgrade' && row && row.total > 0 && row.done >= row.total) {
-                        // Album already fully present in the library. The downloader
-                        // couldn't add anything new (items skipped or unavailable).
-                        const pct = Math.round(row.done / row.total * 100);
-                        console.log(
-                            `[DOWNLOAD-PROCESSOR] Download workspace empty but album ${providerId} already has ${row.done}/${row.total} tracks downloaded (${pct}%). ` +
-                            `Treating as complete.`
-                        );
+                    if (payload?.reason !== 'upgrade' && totalCount > 0 && (doneCount >= totalCount || coveredWithUnavailable)) {
+                        const pct = Math.round(doneCount / totalCount * 100);
+                        if (coveredWithUnavailable) {
+                            console.log(
+                                `[DOWNLOAD-PROCESSOR] Download workspace empty but album ${providerId} already has ${doneCount}/${totalCount} tracks in library (${pct}%) and remaining ${effectiveUnavailableCount} unavailable track(s). ` +
+                                `Treating as complete with warning.`
+                            );
+                        } else {
+                            console.log(
+                                `[DOWNLOAD-PROCESSOR] Download workspace empty but album ${providerId} already has ${doneCount}/${totalCount} tracks downloaded (${pct}%). ` +
+                                `Treating as complete.`
+                            );
+                        }
 
                         // Mark undownloadable tracks so the queue doesn't re-queue endlessly
                         await withSqliteWriteGate(() => updateAlbumDownloadStatus(String(payload.releaseGroupMbid || providerId)), 'download:album-status');
@@ -3306,16 +3330,25 @@ export class DownloadProcessor {
             const completedFiles = deriveCatalogFileProgress(tracks)?.completed ?? 0;
             const completedOffersCount = offers.filter((o) => !unavailableOffers.has(o.providerTrackId)).length;
             if (completedOffersCount === 0) {
-                if (unavailableOffers.size > 0) {
-                    const firstReason = Array.from(unavailableOffers.values())[0];
-                    throw new ProviderUnavailableError(
-                        defaultProvider,
-                        "album",
-                        String(payload.providerId || workspaceKey),
-                        `All tracks unavailable: ${firstReason}`,
-                    );
+                const libraryRow = this.getCanonicalAlbumDownloadProgress(String(payload.providerId || workspaceKey), currentPayload);
+                const libraryDone = Math.max(completedFiles, libraryRow?.done ?? 0);
+                const albumTotal = Math.max(totalFiles, libraryRow?.total ?? 0);
+                const tracksCoverAlbum = albumTotal > 0
+                    && libraryDone > 0
+                    && (libraryDone >= albumTotal || libraryDone + unavailableOffers.size >= albumTotal);
+
+                if (!tracksCoverAlbum) {
+                    if (unavailableOffers.size > 0) {
+                        const firstReason = Array.from(unavailableOffers.values())[0];
+                        throw new ProviderUnavailableError(
+                            defaultProvider,
+                            "album",
+                            String(payload.providerId || workspaceKey),
+                            `All tracks unavailable: ${firstReason}`,
+                        );
+                    }
+                    throw new Error("No tracks downloaded");
                 }
-                throw new Error("No tracks downloaded");
             }
 
             const finishState: DownloadStatePayload = {

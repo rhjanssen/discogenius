@@ -1,29 +1,31 @@
 # Session Handoff
 
 - **Last updated by:** Google Antigravity / Gemini
-- **Active branch:** `agent/issue-97` / `agent/issue-103`
-- **Related issue / PR:** Issue #97 / PR #103 (`fix(download): persist completedWithWarning outcome on warning completions (#97)`)
+- **Active branch:** `agent/issue-105`
+- **Related issue / PR:** Issue #105 (`fix(download): complete album with warning when remaining missing tracks are unavailable (#105)`)
 
 ## Done
-- Addressed all PO review findings for PR #103:
-  1. **Removed read-side fallbacks (clean-slate adherence):**
-     - Reverted `warningMessage`-based outcome inference in `api/src/services/download/download-queue-query-service.ts` (`queueHistoryOutcomeBucketSql` and `outcome` mapping in `mapDownloadQueueJob`).
-     - Reverted `warningMessage`-based outcome inference in `api/src/services/commands/command-history.ts` (`mapJob` and `getTaskEventMessage`).
-     - Reverted `warningMessage`-based inference in `app/src/pages/dashboard/queueHistoryFilters.ts`, `QueueHistoryPanel.tsx`, and `ActivityTab.tsx`. `outcome === "completedWithWarning"` is the single contract the filter and UI read.
-  2. **Reverted out-of-scope `getQueueHistory` limit/offset defaults** in `download-queue-query-service.ts`.
-  3. **Added end-to-end regression test for progress buffer root cause** in `api/src/services/download/queue-history-warnings-filter.test.ts`:
-     - Drives `DownloadProcessor` with a backend whose progress event carries `warningMessage` while only buffered in memory (not yet flushed to the DB payload).
-     - Asserts persisted `downloadState.outcome === "completedWithWarning"` and `warningMessage` at `importPending` (both in `downloadState` and `importPayload.downloadState`).
-     - Drives the import phase through `DownloadedTracksImportService` and asserts persisted `downloadState.outcome === "completedWithWarning"` and `warningMessage` after completion.
-     - Asserts `getQueueHistory({ limit: 50, offset: 0, outcomes: ["warning"] })` matches the completed warning album and `outcomes: ["completed"]` excludes it.
-  4. **Adjusted frontend tests** in `app/src/pages/dashboard/queueHistoryFilters.test.ts` to test classification via `outcome` without bare `warningMessage` fallback.
-  5. Kept write-path fixes: backends emit `outcome: "completedWithWarning"`, `persistDownloadState`/`writeDownloadState` derive warning outcome from `warningMessage`, buffered state merges into `completedDownloadState` in `downloadItem` and promotion, and `DownloadedTracksImportService.process` sets `completedWithWarning = Boolean(warningMessage)`.
-- Full `yarn ci` passed:
+- Resolved Issue #105 where an album that already has most tracks in the library failed as `All tracks unavailable: Failed to dl aac-lc: Unavailable` when the remaining missing tracks were unavailable at the provider:
+  1. **Download track-offers completion rule in `DownloadProcessor.downloadAlbumTrackOffers` (`api/src/services/download/download-processor.ts`):**
+     - When `completedOffersCount === 0` (all attempted offers in the current job were unavailable), evaluate whether tracks already in the library plus unavailable offers cover the album (`libraryDone > 0 && (libraryDone >= albumTotal || libraryDone + unavailableOffers.size >= albumTotal)`).
+     - When covered, do not throw `ProviderUnavailableError("All tracks unavailable: ...")`; instead proceed to finish with `outcome: "completedWithWarning"` and `warningMessage` listing the unavailable tracks.
+     - When no tracks exist in the library (`libraryDone === 0`), true all-unavailable albums continue to fail clearly with `ProviderUnavailableError("All tracks unavailable: ...")`.
+  2. **Empty workspace completion rule in `DownloadProcessor.dispatchDownloadPhase` (`api/src/services/download/download-processor.ts`):**
+     - When the download workspace produces no media files (`!hasDownloadedMediaFiles`), check whether existing library tracks plus unavailable tracks cover the album (`doneCount + effectiveUnavailableCount >= totalCount`).
+     - When covered, treat the attempt as complete with warning: mark `completed` in `commands`, preserve `outcome: "completedWithWarning"` and `warningMessage`, update album download status, and emit completion event.
+  3. **Terminal state progress normalization in `DownloadProcessor.writeDownloadState`:**
+     - Ensure terminal `state: 'completed'` preserves 100% progress even when partial warning albums complete with skipped/error tracks.
+  4. **Regression tests in `api/src/services/download/download-processor-same-provider-fallback.test.ts`:**
+     - Replaying named albums from Issue #105: Herman Brood — My Way: The Hits (23 of 24 tracks in library, 1 unavailable) and Van Dik Hout — Van Dik Hout 15 jaar (15 of 17 tracks in library, 2 unavailable) complete with `outcome: "completedWithWarning"` and warningMessage listing the unavailable tracks.
+     - Full download phase dispatch test verifying an album with 23 of 24 tracks in library and 1 unavailable track completes with `outcome: "completedWithWarning"` and status `'completed'`.
+     - True all-unavailable album with an empty library continues to fail clearly as all-tracks-unavailable.
+     - Clean completions and hard network/auth failures remain unaffected.
+- Verified with full `yarn ci`:
   - `yarn lint` passed with 0 errors.
-  - `yarn typecheck` passed cleanly across api and app.
-  - `yarn test:app` passed 192/192 tests across 48 test files.
-  - `yarn test:api` passed all 2,658 backend tests with 0 failures.
-  - `yarn build` passed cleanly across api and app.
+  - `yarn typecheck` passed cleanly across both api and app.
+  - `yarn test:app` passed all 192 tests across 48 test files.
+  - `yarn test:api` passed all 2,660 tests with 0 failures.
+  - `yarn build` passed cleanly across both api and app.
 
 ## Open Questions / Follow-ups for PO
-- None. Addressed all review items and verified with full CI. Ready for review and merge.
+- None. Ready for review and merge.
