@@ -18,19 +18,8 @@ describe("queueHistoryFilters", () => {
             status: "completed",
             error: null,
             outcome: "completedWithWarning",
-            warningMessage: "Completed with 1 unavailable track(s)",
-        })).toBe("warning");
-        expect(getQueueHistoryOutcomeBucket({
-            status: "completed",
-            error: null,
-            warningMessage: "Completed with 1 unavailable track(s)",
         })).toBe("warning");
         expect(getQueueHistoryOutcomeBucket({ status: "failed", error: "boom" })).toBe("failed");
-        expect(getQueueHistoryOutcomeBucket({
-            status: "failed",
-            error: "boom",
-            warningMessage: "Completed with 1 unavailable track(s)",
-        })).toBe("failed");
         expect(getQueueHistoryOutcomeBucket({ status: "completed", error: "late error" })).toBe("failed");
         expect(getQueueHistoryOutcomeBucket({ status: "cancelled", error: null })).toBe("other");
     });

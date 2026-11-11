@@ -266,8 +266,7 @@ const ActivityTab = ({
                 : "");
         const completedWithWarning = job.status === "completed"
             && (job.outcome === "completedWithWarning"
-                || (job.payload as { outcome?: string } | null | undefined)?.outcome === "completedWithWarning"
-                || Boolean(warningMessage));
+                || (job.payload as { outcome?: string } | null | undefined)?.outcome === "completedWithWarning");
         const currentError = source === "history" ? job.error : null;
         const level: EventLevel = currentError
             ? "error"

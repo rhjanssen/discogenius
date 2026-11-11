@@ -1,36 +1,29 @@
 # Session Handoff
 
 - **Last updated by:** Google Antigravity / Gemini
-- **Active branch:** `agent/issue-97`
+- **Active branch:** `agent/issue-97` / `agent/issue-103`
 - **Related issue / PR:** Issue #97 / PR #103 (`fix(download): persist completedWithWarning outcome on warning completions (#97)`)
 
 ## Done
-- Root-caused and resolved missing `outcome: "completedWithWarning"` on album downloads/imports that completed with warnings:
-  1. In `api/src/services/providers/apple-music/apple-music-backend.ts`, emitted `outcome: "completedWithWarning"` when `unavailableCount > 0` alongside `warningMessage`.
-  2. In `api/src/services/providers/soundcloud/soundcloud-backend.ts`, emitted `outcome: "completedWithWarning"` when `warningMessage` is present.
-  3. In `api/src/services/download/download-backend.ts`, added `outcome?: 'ok' | 'completedWithWarning'` to `DownloadProgress`.
-  4. In `api/src/services/download/download-processor.ts`:
-     - In `persistDownloadState`, automatically ensured `merged.outcome = "completedWithWarning"` if `merged.warningMessage` is non-empty and `merged.outcome` was not explicitly set.
-     - In `writeDownloadState`, derived `outcome: state.outcome ?? currentOutcome ?? (hasWarning ? "completedWithWarning" : undefined)` when `warningMessage` is present.
-     - In `downloadItem`, merged buffered in-flight progress into `completedDownloadState` so warnings from the download phase are not lost before import handoff, and propagated `downloadOutcome` to `importPayload.downloadState` and `persistDownloadState('importPending')`.
-     - In `downloadBackendMedia`, inspected both buffered in-flight progress and live command payload when promoting backend soft warnings into `completedWithWarning`.
-  5. In `api/src/services/mediafiles/downloaded-tracks-import-service.ts`:
-     - Simplified `completedWithWarning` to `Boolean(warningMessage)` so any warning from the download phase (`priorWarning`) or import phase (`gapWarning`) consistently flags `completedWithWarning`, persisting `outcome: "completedWithWarning"` and `warningMessage` in the terminal completed state.
-  6. Backwards-compatibility for existing historical records (e.g. Primula's 18 albums with `warningMessage` but empty `outcome`):
-     - In `api/src/services/download/download-queue-query-service.ts`, updated `queueHistoryOutcomeBucketSql` to bucket completed commands having non-empty `downloadState.warningMessage` as `'warning'`, and mapped `outcome` to `'completedWithWarning'` when missing. Also added safe defaults for `limit` (50) and `offset` (0) in `getQueueHistory`.
-     - In `api/src/services/commands/command-history.ts`, mapped `outcome` to `'completedWithWarning'` when `job.status === "completed"` and non-empty `warningMessage` is present, and updated `getTaskEventMessage` to display the warning.
-     - In `app/src/pages/dashboard/queueHistoryFilters.ts`, `QueueHistoryPanel.tsx`, and `ActivityTab.tsx`, recognized `warningMessage` presence on completed items as warning outcome.
-  7. Added comprehensive tests:
-     - `api/src/services/download/queue-history-warnings-filter.test.ts`: verified that completed albums with warning outcome or warningMessage match `outcomes: ["warning"]` and do not match `outcomes: ["completed"]` or `["failed"]`; verified that clean completions match `["completed"]` and not `["warning"]`; verified that hard failures match `["failed"]` and not `["warning"]`; verified that `writeDownloadState` persists `outcome: "completedWithWarning"`.
-     - `api/src/services/mediafiles/downloaded-tracks-import-service.test.ts`: verified `DownloadedTracksImportService.process` preserves `warningMessage` and sets `outcome: "completedWithWarning"` on completion with warnings, and clean completion does not set warning outcome.
-     - `api/src/services/providers/apple-music/apple-music-provider.test.ts`: asserted `finalProgress.outcome === "completedWithWarning"` when unavailable tracks exist.
-     - `app/src/pages/dashboard/queueHistoryFilters.test.ts`: tested warning bucket classification with `warningMessage`.
-- Verification:
+- Addressed all PO review findings for PR #103:
+  1. **Removed read-side fallbacks (clean-slate adherence):**
+     - Reverted `warningMessage`-based outcome inference in `api/src/services/download/download-queue-query-service.ts` (`queueHistoryOutcomeBucketSql` and `outcome` mapping in `mapDownloadQueueJob`).
+     - Reverted `warningMessage`-based outcome inference in `api/src/services/commands/command-history.ts` (`mapJob` and `getTaskEventMessage`).
+     - Reverted `warningMessage`-based inference in `app/src/pages/dashboard/queueHistoryFilters.ts`, `QueueHistoryPanel.tsx`, and `ActivityTab.tsx`. `outcome === "completedWithWarning"` is the single contract the filter and UI read.
+  2. **Reverted out-of-scope `getQueueHistory` limit/offset defaults** in `download-queue-query-service.ts`.
+  3. **Added end-to-end regression test for progress buffer root cause** in `api/src/services/download/queue-history-warnings-filter.test.ts`:
+     - Drives `DownloadProcessor` with a backend whose progress event carries `warningMessage` while only buffered in memory (not yet flushed to the DB payload).
+     - Asserts persisted `downloadState.outcome === "completedWithWarning"` and `warningMessage` at `importPending` (both in `downloadState` and `importPayload.downloadState`).
+     - Drives the import phase through `DownloadedTracksImportService` and asserts persisted `downloadState.outcome === "completedWithWarning"` and `warningMessage` after completion.
+     - Asserts `getQueueHistory({ limit: 50, offset: 0, outcomes: ["warning"] })` matches the completed warning album and `outcomes: ["completed"]` excludes it.
+  4. **Adjusted frontend tests** in `app/src/pages/dashboard/queueHistoryFilters.test.ts` to test classification via `outcome` without bare `warningMessage` fallback.
+  5. Kept write-path fixes: backends emit `outcome: "completedWithWarning"`, `persistDownloadState`/`writeDownloadState` derive warning outcome from `warningMessage`, buffered state merges into `completedDownloadState` in `downloadItem` and promotion, and `DownloadedTracksImportService.process` sets `completedWithWarning = Boolean(warningMessage)`.
+- Full `yarn ci` passed:
   - `yarn lint` passed with 0 errors.
   - `yarn typecheck` passed cleanly across api and app.
   - `yarn test:app` passed 192/192 tests across 48 test files.
-  - `yarn test:api` passed all 2,657 backend tests with 0 failures.
-  - `yarn --cwd api build` and `yarn --cwd app build` both built cleanly.
+  - `yarn test:api` passed all 2,658 backend tests with 0 failures.
+  - `yarn build` passed cleanly across api and app.
 
 ## Open Questions / Follow-ups for PO
-- None. Ready for review and merge.
+- None. Addressed all review items and verified with full CI. Ready for review and merge.

@@ -605,16 +605,12 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
         ? job.payload.downloadState as Record<string, unknown>
         : null;
     const outcomeRaw = typeof downloadState?.outcome === "string" ? downloadState.outcome : undefined;
-    const warningMessageRaw = typeof downloadState?.warningMessage === "string"
-        ? downloadState.warningMessage.trim()
-        : null;
     const outcome = outcomeRaw === "ok" || outcomeRaw === "completedWithWarning"
         ? outcomeRaw as "ok" | "completedWithWarning"
-        : (job.status === "completed" && Boolean(warningMessageRaw)
-            ? "completedWithWarning"
-            : undefined);
-    const warningMessage = warningMessageRaw
-        || (typeof downloadState?.statusMessage === "string" && outcome === "completedWithWarning"
+        : undefined;
+    const warningMessage = typeof downloadState?.warningMessage === "string"
+        ? downloadState.warningMessage
+        : (typeof downloadState?.statusMessage === "string" && outcome === "completedWithWarning"
             ? downloadState.statusMessage
             : null);
 
@@ -852,7 +848,7 @@ function getTaskEventMessage(job: TaskEventProjectionRow, context?: DescriptionL
     }
 
     if (job.status === "completed") {
-        if ((downloadState?.outcome === "completedWithWarning" || Boolean(warningMessage)) && warningMessage) {
+        if (downloadState?.outcome === "completedWithWarning" && warningMessage) {
             return `Completed with warning: ${description} (${warningMessage})`;
         }
         return `Completed: ${description}`;

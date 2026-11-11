@@ -129,7 +129,7 @@ function renderHistoryStatusIndicator(
         return <SemanticStatusIcon status="error" size={24} title="Failed" />;
     }
 
-    if (status === "completed" && (outcome === "completedWithWarning" || Boolean(warningMessage?.trim()))) {
+    if (status === "completed" && outcome === "completedWithWarning") {
         return (
             <SemanticStatusIcon
                 status="warning"
@@ -368,7 +368,7 @@ export function QueueHistoryPanel({
                                 ) : null}
                                 {row.error ? (
                                     <Text className={styles.queueHistoryErrorText}>{row.error}</Text>
-                                ) : (item.outcome === "completedWithWarning" || Boolean(item.warningMessage?.trim())) && item.warningMessage ? (
+                                ) : item.outcome === "completedWithWarning" && item.warningMessage ? (
                                     <Text className={styles.queueHistoryErrorText}>{item.warningMessage}</Text>
                                 ) : null}
                             </div>
