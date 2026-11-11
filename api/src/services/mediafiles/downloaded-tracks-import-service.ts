@@ -1727,9 +1727,7 @@ export class DownloadedTracksImportService {
             }${offerGaps.length > 5 ? ` and ${offerGaps.length - 5} more` : ""}`
             : "";
         const warningMessage = [priorWarning, gapWarning].filter(Boolean).join(" ");
-        const completedWithWarning = Boolean(warningMessage) && (
-            existingDownloadState.outcome === "completedWithWarning" || offerGaps.length > 0
-        );
+        const completedWithWarning = Boolean(warningMessage);
         options.updateState({
             progress: 100,
             description: "ImportDownload: completed",

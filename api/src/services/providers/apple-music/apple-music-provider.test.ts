@@ -969,8 +969,9 @@ test("Apple downloader backend downloads available album tracks and records unav
   assert.ok(track2Progress);
   assert.equal(track2Progress.statusMessage, "Failed to dl aac-lc: Unavailable");
 
-  // Final progress emission contains warningMessage
+  // Final progress emission contains warningMessage and completedWithWarning outcome (#97)
   const finalProgress = progressEmissions[progressEmissions.length - 1];
+  assert.equal(finalProgress.outcome, "completedWithWarning");
   assert.ok(finalProgress.warningMessage);
   assert.match(finalProgress.warningMessage, /1 unavailable track/);
   assert.match(finalProgress.warningMessage, /1440904919/);
@@ -1407,8 +1408,9 @@ test("replaying named albums with first-track failure downloads remaining tracks
       { id: album.t1, reason: "Failed to dl aac-lc: Unavailable" },
     ]);
 
-    // Final progress has warningMessage
+    // Final progress has warningMessage and completedWithWarning outcome (#97)
     const lastProgress = progressEmissions[progressEmissions.length - 1];
+    assert.equal(lastProgress.outcome, "completedWithWarning");
     assert.ok(lastProgress.warningMessage, `Expected warningMessage on ${album.title}`);
     assert.match(lastProgress.warningMessage, /Completed with 1 unavailable track\(s\)/);
   }

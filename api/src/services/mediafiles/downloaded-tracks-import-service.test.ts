@@ -16,6 +16,7 @@ const { db } = dbModule;
 const queueModule = await import("../commands/command-queue-manager.js");
 const routingModule = await import("../download/download-routing.js");
 const organizerModule = await import("./organizer.js");
+const tagServiceModule = await import("./audio-tag-service.js");
 const importModule = await import("./downloaded-tracks-import-service.js");
 
 beforeEach(() => {
@@ -206,4 +207,125 @@ test("import gaps keep the organizer cause for a path-too-long offered track", a
     assert.equal(missing[0].cause.startsWith("path component too long"), true);
     assert.equal(missing[0].providerId, "tidal:108");
     assert.equal(missing[0].position, "1-108");
+});
+
+test("DownloadedTracksImportService.process preserves warningMessage and sets outcome completedWithWarning on completion (#97)", async () => {
+  const providerId = "apple-warning-import-test";
+  const downloadPath = routingModule.getDownloadWorkspacePath("album", providerId, "apple-music");
+  fs.mkdirSync(downloadPath, { recursive: true });
+  fs.writeFileSync(path.join(downloadPath, "01.m4a"), "staged media");
+
+  const originalOrganizeDownload = organizerModule.OrganizerService.organizeDownload;
+  const originalAudioTagApply = tagServiceModule.AudioTagService.apply;
+  (organizerModule.OrganizerService as any).organizeDownload = async () => ({
+    processedTrackIds: ["t1"],
+    expectedTracks: 1,
+    totalTracksInStaging: 1,
+    importedTrackFileIds: { t1: 1001 },
+    trackGaps: [],
+  });
+  (tagServiceModule.AudioTagService as any).apply = async () => ({
+    missing: 0,
+    errors: [],
+    applied: 1,
+    skipped: 0,
+  });
+
+  const states: ImportDownloadState[] = [];
+  const warningMessage = "Completed with 1 unavailable track(s) [1440904919: Failed to dl aac-lc: Unavailable]";
+  const job = {
+    id: 97100,
+    name: queueModule.CommandNames.ImportDownload,
+    payload: {
+      type: "album",
+      providerId,
+      provider: "apple-music",
+      path: downloadPath,
+      downloadState: {
+        warningMessage,
+      },
+    },
+    status: "started",
+    progress: 0,
+    priority: 0,
+    attempts: 0,
+    created_at: new Date().toISOString(),
+  } as any;
+
+  try {
+    await importModule.DownloadedTracksImportService.process(job, {
+      updateState: (state) => states.push(state),
+    });
+
+    const completionState = states.find((s) => s.state === "completed");
+    assert.ok(completionState, "Expected completion state to be emitted");
+    assert.equal(completionState.outcome, "completedWithWarning");
+    assert.equal(completionState.warningMessage, warningMessage);
+    assert.equal(completionState.statusMessage, warningMessage);
+  } finally {
+    (organizerModule.OrganizerService as any).organizeDownload = originalOrganizeDownload;
+    (tagServiceModule.AudioTagService as any).apply = originalAudioTagApply;
+    if (fs.existsSync(downloadPath)) {
+      fs.rmSync(downloadPath, { recursive: true, force: true });
+    }
+  }
+});
+
+test("DownloadedTracksImportService.process without warning completes cleanly without completedWithWarning outcome (#97)", async () => {
+  const providerId = "apple-clean-import-test";
+  const downloadPath = routingModule.getDownloadWorkspacePath("album", providerId, "apple-music");
+  fs.mkdirSync(downloadPath, { recursive: true });
+  fs.writeFileSync(path.join(downloadPath, "01.m4a"), "staged media");
+
+  const originalOrganizeDownload = organizerModule.OrganizerService.organizeDownload;
+  const originalAudioTagApply = tagServiceModule.AudioTagService.apply;
+  (organizerModule.OrganizerService as any).organizeDownload = async () => ({
+    processedTrackIds: ["t1"],
+    expectedTracks: 1,
+    totalTracksInStaging: 1,
+    importedTrackFileIds: { t1: 1001 },
+    trackGaps: [],
+  });
+  (tagServiceModule.AudioTagService as any).apply = async () => ({
+    missing: 0,
+    errors: [],
+    applied: 1,
+    skipped: 0,
+  });
+
+  const states: ImportDownloadState[] = [];
+  const job = {
+    id: 97101,
+    name: queueModule.CommandNames.ImportDownload,
+    payload: {
+      type: "album",
+      providerId,
+      provider: "apple-music",
+      path: downloadPath,
+      downloadState: {},
+    },
+    status: "started",
+    progress: 0,
+    priority: 0,
+    attempts: 0,
+    created_at: new Date().toISOString(),
+  } as any;
+
+  try {
+    await importModule.DownloadedTracksImportService.process(job, {
+      updateState: (state) => states.push(state),
+    });
+
+    const completionState = states.find((s) => s.state === "completed");
+    assert.ok(completionState, "Expected completion state to be emitted");
+    assert.notEqual(completionState.outcome, "completedWithWarning");
+    assert.equal(completionState.warningMessage, undefined);
+    assert.equal(completionState.statusMessage, "Import completed");
+  } finally {
+    (organizerModule.OrganizerService as any).organizeDownload = originalOrganizeDownload;
+    (tagServiceModule.AudioTagService as any).apply = originalAudioTagApply;
+    if (fs.existsSync(downloadPath)) {
+      fs.rmSync(downloadPath, { recursive: true, force: true });
+    }
+  }
 });
