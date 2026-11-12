@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.25.6] - 2026-11-12
+
+### Fixed
+
+- A TIDAL timeout on one track no longer fails the whole album. Timed-out TIDAL requests are retried, and if a track still fails after retries while the rest of the album downloaded, the album completes with a warning that lists the failed tracks. Non-transient errors (auth, downloader down) still fail the album clearly.
+
 ## [2.25.5] - 2026-11-11
 
 ### Fixed
