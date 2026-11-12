@@ -150,7 +150,13 @@ function errorText(error: unknown): string {
   return String(error ?? "");
 }
 
+export { isTimeoutError } from "../../utils/timeout.js";
+import { isTimeoutError } from "../../utils/timeout.js";
+
 export function isDownloadCancellationError(error: unknown): boolean {
+  if (isTimeoutError(error)) {
+    return false;
+  }
   const text = errorText(error).toLowerCase();
   return text.includes("download cancelled")
     // Word boundary so ECONNABORTED stays a transport failure, not a cancel.
@@ -175,6 +181,9 @@ export function classifyDownloadFailure(error: unknown): DownloadFailureKind {
   }
   if (isAppleUnavailableTrackError(text)) {
     return "permanent";
+  }
+  if (isTimeoutError(error)) {
+    return "transient";
   }
   if (
     TRANSIENT_TRANSPORT_PATTERNS.some((pattern) => pattern.test(text))

@@ -201,6 +201,7 @@ export class TiddlBackend implements DownloadBackend {
     readonly supportedProviders = ["tidal"];
     readonly capabilities: Array<"stereo" | "spatial" | "video"> = ["stereo", "spatial", "video"];
 
+    private static readonly PREFLIGHT_CACHE_TTL_MS = 15 * 60_000;
     private readonly preflightCheckedAt = new Map<string, number>();
 
     async preflight(request: DownloadRequest, options: { signal?: AbortSignal } = {}): Promise<void> {
@@ -214,12 +215,12 @@ export class TiddlBackend implements DownloadBackend {
         }
         for (const id of new Set(ids)) {
             if (options.signal?.aborted) throw new Error("Download aborted");
-            if (Date.now() - (this.preflightCheckedAt.get(id) ?? 0) < 60_000) continue;
+            if (Date.now() - (this.preflightCheckedAt.get(id) ?? 0) < TiddlBackend.PREFLIGHT_CACHE_TTL_MS) continue;
             await assertTidalTrackAvailable(id, getTrack);
             this.preflightCheckedAt.set(id, Date.now());
         }
         for (const [id, checked] of this.preflightCheckedAt) {
-            if (Date.now() - checked >= 60_000) this.preflightCheckedAt.delete(id);
+            if (Date.now() - checked >= TiddlBackend.PREFLIGHT_CACHE_TTL_MS) this.preflightCheckedAt.delete(id);
         }
     }
 

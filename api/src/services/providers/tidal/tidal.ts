@@ -12,6 +12,7 @@ import {
 } from "./tidal-auth.js";
 import { tidalVideoQualityTag } from "./tidal-quality.js";
 import { resolveTidalVideoQualityTag } from "./tidal-video-probe.js";
+import { isTimeoutError } from "../../../utils/timeout.js";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 const TIDAL_API_BASE_V2 = "https://api.tidal.com/v2";
 // TIDAL's JSON:API developer platform. Our device-flow token is accepted here
@@ -190,7 +191,7 @@ function extractTidalTextMeta(data: any): TidalTextMeta {
  * Based on tidal-dl-ng: Retry(total=5, backoff_factor=1)
  * Schedule: 1s, 2s, 4s, 8s, 16s (total max wait: ~31s)
  */
-async function withRetry<T>(
+export async function withRetry<T>(
   fn: () => Promise<T>,
   context: string = 'API call',
   maxRetries: number = 5
@@ -202,9 +203,10 @@ async function withRetry<T>(
       const status = error.message?.match(/\d{3}/)?.[0];
       const is429 = status === '429';
       const is5xx = status && parseInt(status) >= 500 && parseInt(status) < 600;
+      const isTimeout = isTimeoutError(error);
 
       // Don't retry on non-retryable errors
-      if (!is429 && !is5xx && attempt === 1) {
+      if (!is429 && !is5xx && !isTimeout && attempt === 1) {
         throw error;
       }
 
@@ -392,14 +394,35 @@ async function tidalFetchWithRetry(
     await acquireRequestSlot(context);
     let response: Response;
     try {
-      // Per-attempt timeout unless the caller supplied its own signal, so a
-      // hung TIDAL connection can't freeze matching/downloads indefinitely.
-      response = await fetch(url, {
-        ...options,
-        signal: (options as { signal?: AbortSignal }).signal ?? AbortSignal.timeout(45_000),
-      });
-    } finally {
-      releaseRequestSlot();
+      try {
+        // Per-attempt timeout unless the caller supplied its own signal, so a
+        // hung TIDAL connection can't freeze matching/downloads indefinitely.
+        response = await fetch(url, {
+          ...options,
+          signal: (options as { signal?: AbortSignal }).signal ?? AbortSignal.timeout(45_000),
+        });
+      } finally {
+        releaseRequestSlot();
+      }
+    } catch (fetchError: any) {
+      const callerSignal = (options as { signal?: AbortSignal }).signal;
+      if (callerSignal?.aborted) {
+        throw fetchError;
+      }
+      const willRetry = attempt < maxRetries;
+      const isTimeout = isTimeoutError(fetchError);
+      console.warn(
+        `[TidalAPI] Request failed (${isTimeout ? 'timeout' : fetchError?.message || 'error'}) for ${context} - ${
+          willRetry ? `retry ${attempt}/${maxRetries}` : `giving up after ${maxRetries} attempts`
+        }`
+      );
+      if (willRetry) {
+        const waitSeconds = Math.pow(RETRY_BACKOFF_FACTOR, attempt);
+        const waitMs = Math.min(waitSeconds * 1000, RATE_LIMIT_MAX_DELAY_MS);
+        await sleep(waitMs);
+        continue;
+      }
+      throw fetchError;
     }
     lastResponse = response;
 

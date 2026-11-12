@@ -7,6 +7,7 @@ import {
   mapTidalOpenApiTrack,
   nullableExplicit,
   tidalSquareImageUrl,
+  withRetry,
 } from "./tidal.js";
 
 test("explicitness keeps the provider's three answers apart", () => {
@@ -175,4 +176,18 @@ test("TIDAL import artwork prefers playlist squareImage over landscape image", (
     subtitle: "The Hits",
     image: "https://resources.tidal.com/images/f0209f5c/833b/4ff3/aebb/22850b8db506/640x640.jpg",
   });
+});
+
+test("withRetry retries on timeout error and succeeds (#108)", async () => {
+  let attempts = 0;
+  const result = await withRetry(async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }
+    return "success";
+  }, "test-timeout", 3);
+
+  assert.equal(result, "success");
+  assert.equal(attempts, 2);
 });
