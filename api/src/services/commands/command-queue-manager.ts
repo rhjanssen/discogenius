@@ -1782,7 +1782,9 @@ ${orderBy}
             if (row.blocked_reason) return [];
 
             const parsedPayload = safeParsePayload(row.payload);
-            const provider = typeof parsedPayload?.provider === "string" ? parsedPayload.provider.trim().toLowerCase() : undefined;
+            const provider = typeof parsedPayload?.provider === "string"
+                ? (parsedPayload.provider.trim().toLowerCase() || undefined)
+                : undefined;
             const inRateLimitBackoff = provider != null && requestState.isRateLimited(provider, now.getTime());
 
             // A command sitting out a provider rate-limit retry after is in a
