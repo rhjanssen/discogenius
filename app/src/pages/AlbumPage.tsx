@@ -116,6 +116,7 @@ import {
   defaultTrackListEditionId,
   resolveTrackListTabPresentation,
 } from "@/pages/album/trackListTabPresentation";
+import { summarizeTrackFileSources } from "@/utils/sourceProvider";
 
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
 const Eye24 = bundleIcon(Eye24Filled, Eye24Regular);
@@ -768,6 +769,11 @@ const AlbumPage = () => {
       return { ...track, associated_video_id: associatedVideoId };
     });
   }, [associatedVideos, visibleTracks]);
+
+  const fileSourceSummary = useMemo(
+    () => summarizeTrackFileSources(tracksWithAssociatedVideos),
+    [tracksWithAssociatedVideos],
+  );
 
   const scrollToAssociatedVideo = useCallback((videoId: string) => {
     const elementId = albumAssociatedVideoElementId(videoId);
@@ -1940,6 +1946,7 @@ const AlbumPage = () => {
           isLoading={isAvailabilityLoading}
           decisionLabel={album.decision_label}
           decisionAction={album.decision_action}
+          fileSourceSummary={fileSourceSummary}
           onBackToAutomatic={() => void handleBackToAutomatic()}
           onOpenDialog={() => setEditionsDialogOpen(true)}
         />

@@ -9,6 +9,8 @@ import {
   videoResolutionExactPixels,
 } from "./qualityTier";
 
+import { formatSourceProviderLabel } from "./sourceProvider";
+
 /** File tech props used to build local library quality tooltips. */
 export interface LocalFileQualityProps {
   quality?: string | null;
@@ -25,6 +27,8 @@ export interface LocalFileQualityProps {
   video_codec?: string | null;
   /** Provider-advertised tier when the delivered file measured below it. */
   advertised_quality?: string | null;
+  /** Origin provider/source for this file (tidal, apple, deezer, youtube, external, unknown). */
+  source_provider?: string | null;
 }
 
 const VIDEO_CODEC_KEYS = new Set([
@@ -142,7 +146,9 @@ export function localVideoResolutionDescription(quality: string | null | undefin
 export function localFileQualityTooltip(file: LocalFileQualityProps | null | undefined): string {
   const measured = describeLocalFileQuality(file);
   const advertised = String(file?.advertised_quality || "").trim();
-  return advertised ? `${measured} · Provider advertised ${advertised}, delivered lower` : measured;
+  const base = advertised ? `${measured} · Provider advertised ${advertised}, delivered lower` : measured;
+  const sourceLabel = formatSourceProviderLabel(file?.source_provider);
+  return sourceLabel ? `${base} · Source: ${sourceLabel}` : base;
 }
 
 function describeLocalFileQuality(file: LocalFileQualityProps | null | undefined): string {

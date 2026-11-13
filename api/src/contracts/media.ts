@@ -23,6 +23,7 @@ export interface LibraryFileContract {
   provider?: string | null;
   provider_entity_type?: string | null;
   provider_id?: string | null;
+  source_provider?: string | null;
   library_slot?: string | null;
   file_type: string;
   file_path: string;
@@ -378,6 +379,9 @@ function parseLibraryFileContract(value: unknown, indexLabel: string): LibraryFi
     provider: expectNullableString(record.provider, `${indexLabel}.provider`),
     provider_entity_type: expectNullableString(record.provider_entity_type, `${indexLabel}.provider_entity_type`),
     provider_id: expectNullableString(record.provider_id, `${indexLabel}.provider_id`),
+    ...(record.source_provider !== undefined
+      ? { source_provider: expectNullableString(record.source_provider, `${indexLabel}.source_provider`) }
+      : {}),
     library_slot: expectNullableString(record.library_slot, `${indexLabel}.library_slot`),
     file_type: expectString(record.file_type, `${indexLabel}.file_type`),
     file_path: expectString(record.file_path, `${indexLabel}.file_path`),

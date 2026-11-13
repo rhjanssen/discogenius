@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -254,11 +254,11 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   db.prepare(`
     INSERT INTO TrackFiles (
       artist_metadata_id, library_id, release_group_id, album_edition_id, track_id,
-      recording_id, provider, provider_entity_type, provider_id,
+      recording_id, provider, provider_entity_type, provider_id, source_provider,
       file_path, relative_path, library_root, filename, extension, file_type,
       file_class, quality, source_quality, imported_quality
     ) VALUES (
-      '1', ?, ?, ?, ?, ?, 'tidal', 'track', 'tidal-track',
+      '1', ?, ?, ?, ?, ?, 'tidal', 'track', 'tidal-track', 'tidal',
       'C:/library/Song.flac', 'Song.flac', 'C:/library', 'Song.flac',
       'flac', 'track', 'audio', NULL, 'HIRES_LOSSLESS',
       'HIRES_LOSSLESS'
@@ -286,6 +286,7 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   assert.equal(detail.files.length, 1);
   assert.equal(detail.files[0]?.quality, "HIRES_LOSSLESS");
   assert.equal(detail.files[0]?.library_slot, "stereo");
+  assert.equal(detail.files[0]?.source_provider, "tidal");
 
   const stereo = trackQuery.listTracks({
     limit: 20,
@@ -310,4 +311,5 @@ test("tracklist remoteOffers include stereo and spatial from different providers
   assert.equal(files.length, 1);
   assert.equal(files[0]?.canonical_track_mbid, "track-1");
   assert.equal(files[0]?.library_slot, "stereo");
+  assert.equal(files[0]?.source_provider, "tidal");
 });

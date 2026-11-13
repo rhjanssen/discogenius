@@ -153,6 +153,7 @@ interface LibraryFileRow {
   provider?: string | null;
   provider_entity_type?: string | null;
   provider_id?: string | null;
+  source_provider?: string | null;
   library_slot?: string | null;
   file_type: string;
   file_path: string;
@@ -218,6 +219,7 @@ function normalizeLibraryFileRow(file: LibraryFileRow): LibraryFileContract {
     provider: file.provider ?? null,
     provider_entity_type: file.provider_entity_type ?? null,
     provider_id: file.provider_id ?? null,
+    source_provider: file.source_provider ?? null,
     library_slot: file.library_slot ?? null,
     file_type: file.file_type,
     file_path: file.file_path,
@@ -633,6 +635,7 @@ export function hydrateTrackRows(tracks: TrackRow[]): AlbumTrackContract[] {
         file.provider,
         file.provider_entity_type,
         file.provider_id,
+        file.source_provider,
         CASE WHEN EXISTS (
           SELECT 1
           FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
@@ -1059,6 +1062,7 @@ export function getTrackFiles(trackId: string): TrackFileDetails[] {
       file.provider,
       file.provider_entity_type,
       file.provider_id,
+      file.source_provider,
       CASE WHEN EXISTS (
         SELECT 1
         FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed

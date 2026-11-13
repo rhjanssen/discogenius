@@ -31,6 +31,8 @@ import { navigateToAlbum } from "@/utils/albumNavigation";
 import { formatDurationSeconds } from "@/utils/format";
 import { orderedQualityTags } from "@/utils/qualityTags";
 import { localFileQualityTooltip } from "@/utils/localQualityTooltip";
+import { ProviderMark } from "@/components/ui/ProviderMark";
+import { formatSourceProviderLabel, isProviderMarkSupported } from "@/utils/sourceProvider";
 import { mediaCoverSrc } from "@/utils/artwork";
 import { formatTrackPositionFrom, isMultiVolumeTrackList } from "@/utils/trackPosition";
 import type { TrackListItem } from "@/types/track-list";
@@ -961,13 +963,29 @@ const TrackList = <T extends TrackListItem>({
               {fileQualityTags.length > 0
                 ? fileQualityTags.map((quality) => {
                   const file = getFileForQualityTag(trackFiles, quality);
+                  const sourceLabel = formatSourceProviderLabel(file?.source_provider);
                   return (
-                    <QualityBadge
+                    <span
                       key={quality}
-                      quality={quality}
-                      size="small"
-                      tooltip={localFileQualityTooltip(file)}
-                    />
+                      style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+                    >
+                      <QualityBadge
+                        quality={quality}
+                        size="small"
+                        tooltip={localFileQualityTooltip(file)}
+                      />
+                      {file?.source_provider && isProviderMarkSupported(file.source_provider) ? (
+                        <AppTooltip content={`Source: ${sourceLabel}`} relationship="label">
+                          <span style={{ display: "inline-flex", alignItems: "center" }}>
+                            <ProviderMark provider={file.source_provider} size={14} />
+                          </span>
+                        </AppTooltip>
+                      ) : sourceLabel && file?.source_provider === "external" ? (
+                        <Text size={100} style={{ opacity: 0.75 }}>
+                          External
+                        </Text>
+                      ) : null}
+                    </span>
                   );
                 })
                 : <span className={styles.emptyValue}>—</span>}
