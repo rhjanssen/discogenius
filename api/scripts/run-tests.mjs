@@ -186,7 +186,7 @@ async function main() {
 
   const passthroughArgs = process.argv.slice(2);
   const explicitTestFiles = passthroughArgs.filter((arg) => /\.test\.(?:ts|mjs)$/.test(arg));
-  const runnerArgs = passthroughArgs.filter((arg) => !arg.endsWith(".test.ts"));
+  const runnerArgs = passthroughArgs.filter((arg) => !/\.test\.(?:ts|mjs)$/.test(arg));
   const testFiles = explicitTestFiles.length > 0
     ? explicitTestFiles.map((file) => file.replace(/\\/g, "/"))
     : collectTests(join(root, "src"), root);

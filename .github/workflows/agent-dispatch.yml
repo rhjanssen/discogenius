@@ -69,6 +69,8 @@ jobs:
     outputs:
       target_agent: ${{ steps.decide.outputs.target_agent }}
       issue_number: ${{ steps.decide.outputs.issue_number }}
+      target_branch: ${{ steps.decide.outputs.target_branch }}
+      is_pr: ${{ steps.decide.outputs.is_pr }}
       extra_prompt: ${{ steps.decide.outputs.extra_prompt }}
     steps:
       - name: Determine target agent & check cloud quota state
@@ -82,6 +84,8 @@ jobs:
           INPUT_ISSUE: ${{ inputs.issue_number }}
           INPUT_PROMPT: ${{ inputs.prompt }}
           ISSUE_NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+          IS_PR_EVENT: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_review_comment' || github.event.issue.pull_request != null }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           QUOTA_VAR: ${{ vars.AGENT_QUOTA_STATUS }}
           HAS_GEMINI_AUTH: ${{ secrets.GEMINI_OAUTH_CREDS_JSON != '' || secrets.GEMINI_API_KEY != '' }}
           HAS_CLAUDE_AUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.ANTHROPIC_API_KEY != '' }}
@@ -89,6 +93,21 @@ jobs:
           set -euo pipefail
           NUM="${ISSUE_NUM:-$INPUT_ISSUE}"
           echo "issue_number=$NUM" >> "$GITHUB_OUTPUT"
+
+          IS_PR="false"
+          TARGET_BRANCH="agent/issue-${NUM}"
+          if [ "$IS_PR_EVENT" = "true" ] || gh pr view "$NUM" --repo "${{ github.repository }}" --json headRefName >/dev/null 2>&1; then
+            IS_PR="true"
+            RESOLVED_HEAD="${PR_HEAD_REF:-}"
+            if [ -z "$RESOLVED_HEAD" ]; then
+              RESOLVED_HEAD=$(gh pr view "$NUM" --repo "${{ github.repository }}" --json headRefName -q .headRefName 2>/dev/null || true)
+            fi
+            if [ -n "$RESOLVED_HEAD" ]; then
+              TARGET_BRANCH="$RESOLVED_HEAD"
+            fi
+          fi
+          echo "is_pr=$IS_PR" >> "$GITHUB_OUTPUT"
+          echo "target_branch=$TARGET_BRANCH" >> "$GITHUB_OUTPUT"
 
           REQUESTED=""
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -114,7 +133,7 @@ jobs:
             fi
           fi
 
-          # Resolve 'auto': prefer Claude & Gemini first; reserve Cursor (shared with Grok Bot) as last resort
+          # Resolve 'auto': prefer Claude & Gemini first (Claude when 5h < 75%); reserve Cursor (shared with Grok Bot) as last resort
           if [ "$REQUESTED" = "auto" ]; then
             LABELS=""
             if [ -n "$NUM" ]; then
@@ -123,6 +142,8 @@ jobs:
             NOW_EPOCH=$(date +%s)
             CLAUDE_COOL_UNTIL=$(echo "${QUOTA_VAR:-{}}" | jq -r '.claudeCooldownUntil // 0' 2>/dev/null || echo 0)
             GEMINI_COOL_UNTIL=$(echo "${QUOTA_VAR:-{}}" | jq -r '.geminiCooldownUntil // 0' 2>/dev/null || echo 0)
+            CLAUDE_5H=$(echo "${QUOTA_VAR:-{}}" | jq -r '.claude.fiveHourUsagePercent // 0' 2>/dev/null || echo 0)
+            CLAUDE_5H_INT=${CLAUDE_5H%.*}
 
             CLAUDE_EXHAUSTED=0
             GEMINI_EXHAUSTED=0
@@ -131,7 +152,9 @@ jobs:
             [ "$CLAUDE_COOL_UNTIL" -gt "$NOW_EPOCH" ] 2>/dev/null && CLAUDE_EXHAUSTED=1 || true
             [ "$GEMINI_COOL_UNTIL" -gt "$NOW_EPOCH" ] 2>/dev/null && GEMINI_EXHAUSTED=1 || true
 
-            if [ "$GEMINI_EXHAUSTED" -eq 0 ] && [ "$HAS_GEMINI_AUTH" = "true" ]; then
+            if [ "$CLAUDE_EXHAUSTED" -eq 0 ] && [ "$HAS_CLAUDE_AUTH" = "true" ] && [ "${CLAUDE_5H_INT:-0}" -lt 75 ] 2>/dev/null; then
+              REQUESTED="claude"
+            elif [ "$GEMINI_EXHAUSTED" -eq 0 ] && [ "$HAS_GEMINI_AUTH" = "true" ]; then
               REQUESTED="gemini"
             elif [ "$CLAUDE_EXHAUSTED" -eq 0 ] && [ "$HAS_CLAUDE_AUTH" = "true" ]; then
               REQUESTED="claude"
@@ -284,7 +307,7 @@ jobs:
       - name: Save WIP & Auto-Failover if Gemini ran out of usage
         if: steps.run_gemini.outputs.quota_exhausted == 'true'
         run: |
-          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          BRANCH="${TARGET_BRANCH:-agent/issue-${ISSUE_NUMBER}}"
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
             git commit -m "wip(issue-${ISSUE_NUMBER}): save Gemini progress before quota failover" || true
@@ -320,7 +343,7 @@ jobs:
         env:
           AGENT_OUTCOME: ${{ steps.run_gemini.outcome }}
         run: |
-          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          BRANCH="${TARGET_BRANCH:-agent/issue-${ISSUE_NUMBER}}"
           REASON=""
           if [ "$AGENT_OUTCOME" != "success" ]; then
             REASON="Gemini did not complete (step outcome: $AGENT_OUTCOME); see the run log, an expired auth token is a common cause."
@@ -351,6 +374,8 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       CLAUDE_CREDENTIALS_JSON: ${{ secrets.CLAUDE_CREDENTIALS_JSON }}
       ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
+      TARGET_BRANCH: ${{ needs.route.outputs.target_branch }}
+      IS_PR: ${{ needs.route.outputs.is_pr }}
       EXTRA_PROMPT: ${{ needs.route.outputs.extra_prompt }}
     steps:
       - name: Checkout repository
@@ -383,11 +408,11 @@ jobs:
             chmod 600 ~/.claude/.credentials.json
           fi
 
-      - name: Prepare or resume issue branch (agent/issue-N)
+      - name: Prepare or resume issue/PR branch
         run: |
           git config user.name "claude[bot]"
           git config user.email "claude[bot]@users.noreply.github.com"
-          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          BRANCH="${TARGET_BRANCH:-agent/issue-${ISSUE_NUMBER}}"
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "Resuming existing branch $BRANCH from previous agent session..."
             git checkout -B "$BRANCH" "origin/$BRANCH"
@@ -400,16 +425,23 @@ jobs:
         continue-on-error: true
         run: |
           npm install -g @anthropic-ai/claude-code
-          ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
-          TITLE=$(echo "$ISSUE_JSON" | jq -r .title)
-          BODY=$(echo "$ISSUE_JSON" | jq -r .body)
-          URL=$(echo "$ISSUE_JSON" | jq -r .url)
+          BRANCH="${TARGET_BRANCH:-agent/issue-${ISSUE_NUMBER}}"
+          if [ "${IS_PR:-false}" = "true" ]; then
+            ITEM_JSON=$(gh pr view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
+            KIND="Pull Request"
+          else
+            ITEM_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "${{ github.repository }}" --json title,body,url)
+            KIND="Issue"
+          fi
+          TITLE=$(echo "$ITEM_JSON" | jq -r .title)
+          BODY=$(echo "$ITEM_JSON" | jq -r .body)
+          URL=$(echo "$ITEM_JSON" | jq -r .url)
 
-          PROMPT="Read AGENTS.md and HANDOFF.md first. You are working on GitHub Issue #${ISSUE_NUMBER}: ${TITLE} (${URL}).
-          If HANDOFF.md or existing commits on branch agent/issue-${ISSUE_NUMBER} show prior work from another agent, continue right where it left off.
-          Implement the requested changes, run 'yarn ci' to verify, update HANDOFF.md with your status, commit and push branch agent/issue-${ISSUE_NUMBER}, and open or update a Pull Request using 'gh pr create' or 'gh pr edit'.
+          PROMPT="Read AGENTS.md and HANDOFF.md first. You are working on GitHub ${KIND} #${ISSUE_NUMBER}: ${TITLE} (${URL}) on branch ${BRANCH}.
+          If HANDOFF.md or existing commits on branch ${BRANCH} show prior work from another agent, continue right where it left off.
+          Implement the requested changes, run 'yarn ci' to verify, update HANDOFF.md with your status, commit and push branch ${BRANCH}, and open or update a Pull Request using 'gh pr create' or 'gh pr edit'.
 
-          Issue body:
+          Description:
           ${BODY}
 
           Additional context:
@@ -420,7 +452,7 @@ jobs:
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
 
-          if grep -qiE '5-hour limit|usage limit|rate.?limit|quota exceeded|429|out of usage' /tmp/claude-agent.log; then
+          if [ "$EXIT_CODE" -ne 0 ] && tail -n 60 /tmp/claude-agent.log | grep -qiE '5-hour limit|usage limit|rate.?limit|quota exceeded|429|out of usage'; then
             echo "quota_exhausted=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
@@ -430,7 +462,7 @@ jobs:
       - name: Save WIP & Auto-Failover if Claude ran out of usage
         if: steps.run_claude.outputs.quota_exhausted == 'true'
         run: |
-          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          BRANCH="${TARGET_BRANCH:-agent/issue-${ISSUE_NUMBER}}"
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
             git commit -m "wip(issue-${ISSUE_NUMBER}): save Claude progress before quota failover" || true
@@ -466,7 +498,7 @@ jobs:
         env:
           AGENT_OUTCOME: ${{ steps.run_claude.outcome }}
         run: |
-          BRANCH="agent/issue-${ISSUE_NUMBER}"
+          BRANCH="${TARGET_BRANCH:-agent/issue-${ISSUE_NUMBER}}"
           REASON=""
           if [ "$AGENT_OUTCOME" != "success" ]; then
             REASON="Claude did not complete (step outcome: $AGENT_OUTCOME); see the run log, an expired auth token is a common cause."

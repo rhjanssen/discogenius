@@ -64,6 +64,9 @@ jobs:
       - name: API tests
         run: yarn test:api
 
+      - name: App tests
+        run: yarn test:app
+
       - name: Build
         run: yarn build
 
