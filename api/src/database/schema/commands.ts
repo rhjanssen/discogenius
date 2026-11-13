@@ -179,8 +179,10 @@ export function createDownloadQueueSchema(
       COALESCE(provider, json_extract(payload, '$.provider')))
     WHERE command_id IS NULL AND json_valid(payload)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_album_id ON DownloadQueue(album_id)`);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_album_order ON DownloadQueue(album_id, queue_order, id)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_artist_id ON DownloadQueue(artist_id)`);
   db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_provider_id ON DownloadQueue(provider_id)`);
+  db.exec(`CREATE INDEX ${ifNotExists} idx_download_queue_provider_order ON DownloadQueue(LOWER(provider), queue_order, id)`);
 }
 
 export function createCommandsSchema(db: Database.Database): void {

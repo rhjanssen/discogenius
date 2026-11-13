@@ -1,4 +1,11 @@
+import { Worker } from "node:worker_threads";
 import { db } from "../../database.js";
+import { DB_PATH } from "../config/bootstrap.js";
+import {
+  readQueuePage,
+  type QueuePageQuery,
+  type QueuePageRawResult,
+} from "./download-queue-reader.js";
 import { planHeadlineQualitySql, variantDisplayQualitySql, variantTierRankSql } from "../../utils/display-quality-sql.js";
 import type {
   DownloadProgressContract,
@@ -32,6 +39,8 @@ type QueueJobRow = {
   name: string;
   status: string;
   ref_id?: string | null;
+  plan_id?: number | null;
+  edition_id?: number | null;
   payload?: Record<string, unknown>;
   progress?: number;
   error?: string | null;
@@ -667,6 +676,7 @@ type WaitQueueJoinedRow = {
   media_kind: string;
   command_name: string;
   plan_id: number | null;
+  edition_id: number | null;
   provider: string | null;
   provider_id: string | null;
   artist_id: string | null;
@@ -682,7 +692,7 @@ type WaitQueueJoinedRow = {
   created_at: string;
   updated_at: string;
   command_status: string | null;
-  command_payload: unknown;
+  command_payload?: unknown;
   command_progress: number | null;
   command_error: string | null;
   started_at: string | null;
@@ -750,6 +760,8 @@ function waitRowToQueueJob(row: WaitQueueJoinedRow): QueueJobRow {
     name: row.command_name,
     status,
     ref_id: row.ref_key,
+    plan_id: row.plan_id ?? null,
+    edition_id: row.edition_id ?? null,
     payload,
     progress: typeof row.command_progress === "number" ? row.command_progress : 0,
     error: row.command_error,
@@ -769,6 +781,7 @@ const WAIT_QUEUE_LIST_SQL = `
     dq.media_kind,
     dq.command_name,
     dq.plan_id,
+    dq.edition_id,
     dq.provider,
     dq.provider_id,
     dq.artist_id,
@@ -1111,27 +1124,115 @@ export class DownloadQueueQueryService {
     };
   }
 
-  static getQueue(params: { limit: number; offset: number }): QueueListResponseContract {
-    return this.getSnapshot(`queue:${params.limit}:${params.offset}`, () => this.buildQueue(params));
+  private static readWorker: Worker | null = null;
+  private static readWorkerRequestId = 0;
+  private static readWorkerPending = new Map<number, {
+    resolve: (value: QueuePageRawResult) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  }>();
+
+  private static getOrCreateReadWorker(): Worker {
+    if (this.readWorker) return this.readWorker;
+    const source = import.meta.url.endsWith(".ts");
+    const entry = new URL(source
+      ? "../commands/worker/command-worker-bootstrap.mjs"
+      : "./download-queue-read-worker.js", import.meta.url);
+    const worker = new Worker(entry, {
+      execArgv: [],
+      workerData: source
+        ? { __entry: new URL("./download-queue-read-worker.ts", import.meta.url).href }
+        : undefined,
+    });
+    worker.unref();
+    worker.on("message", (msg: { requestId: number; value?: QueuePageRawResult; error?: string }) => {
+      const pending = this.readWorkerPending.get(msg.requestId);
+      if (!pending) return;
+      this.readWorkerPending.delete(msg.requestId);
+      if (this.readWorkerPending.size === 0) {
+        worker.unref();
+      }
+      clearTimeout(pending.timer);
+      if (msg.error || !msg.value) {
+        pending.reject(new Error(msg.error || "Queue read worker returned no result"));
+        return;
+      }
+      pending.resolve(msg.value);
+    });
+    const rejectAll = (err: Error) => {
+      for (const [id, pending] of this.readWorkerPending.entries()) {
+        clearTimeout(pending.timer);
+        pending.reject(err);
+        this.readWorkerPending.delete(id);
+      }
+      if (this.readWorker === worker) {
+        this.readWorker = null;
+      }
+    };
+    worker.on("error", (err) => rejectAll(err instanceof Error ? err : new Error(String(err))));
+    worker.on("exit", (code) => {
+      if (code !== 0) rejectAll(new Error(`Queue read worker exited with code ${code}`));
+      else if (this.readWorker === worker) this.readWorker = null;
+    });
+    this.readWorker = worker;
+    return worker;
   }
 
-  private static buildQueue(params: { limit: number; offset: number }): QueueListResponseContract {
-    const total = countActiveWaitRows();
-    const rows = db.prepare(WAIT_QUEUE_PAGE_SQL).all(params) as WaitQueueJoinedRow[];
-    attachStartedCommandPayloads(rows);
-    const jobs = rows.map((row) => waitRowToQueueJob(row));
-    const queuePositionById = getPendingDownloadQueuePositionsForWaitIds(
-      jobs.filter((job) => job.status === "queued").map((job) => job.id),
-    );
+  private static readQueuePageInWorker(params: QueuePageQuery): Promise<QueuePageRawResult> {
+    if (!DB_PATH || DB_PATH === ":memory:") {
+      return Promise.resolve(readQueuePage(db, params));
+    }
+    const worker = this.getOrCreateReadWorker();
+    const requestId = ++this.readWorkerRequestId;
+    return new Promise<QueuePageRawResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.readWorkerPending.delete(requestId);
+        if (this.readWorkerPending.size === 0) {
+          worker.unref();
+        }
+        reject(new Error("Queue read worker timed out"));
+      }, 15_000);
+      this.readWorkerPending.set(requestId, { resolve, reject, timer });
+      worker.ref();
+      worker.postMessage({ requestId, dbPath: DB_PATH, params });
+    });
+  }
+
+  private static mapRawQueuePage(raw: QueuePageRawResult): QueueListResponseContract {
+    const jobs = raw.rows.map((row) => waitRowToQueueJob(row));
+    const queuePositionById = new Map<number, number>(raw.queuePositionEntries);
     const items = jobs.map((job) => this.mapDownloadQueueJob(job, queuePositionById.get(job.id)));
 
     return {
       items,
-      total,
-      limit: params.limit,
-      offset: params.offset,
-      hasMore: params.offset + jobs.length < total,
+      total: raw.total,
+      limit: raw.limit,
+      offset: raw.offset,
+      hasMore: raw.hasMore,
+      nextCursor: raw.nextCursor,
     };
+  }
+
+  static getQueue(params: QueuePageQuery): QueueListResponseContract {
+    const key = `queue:${params.limit}:${params.offset ?? 0}:${params.cursor ?? ""}:${params.status ?? ""}:${params.provider ?? ""}:${params.album ?? ""}`;
+    return this.getSnapshot(key, () => this.mapRawQueuePage(readQueuePage(db, params)));
+  }
+
+  static async getQueueAsync(params: QueuePageQuery): Promise<QueueListResponseContract> {
+    this.ensureSnapshotInvalidation();
+    const key = `queue:${params.limit}:${params.offset ?? 0}:${params.cursor ?? ""}:${params.status ?? ""}:${params.provider ?? ""}:${params.album ?? ""}`;
+    const hit = this.snapshotCache.get(key);
+    const now = Date.now();
+    if (hit && (now - hit.at) < this.SNAPSHOT_TTL_MS) {
+      return hit.value as QueueListResponseContract;
+    }
+    const raw = await this.readQueuePageInWorker(params);
+    const value = this.mapRawQueuePage(raw);
+    if (this.snapshotCache.size > 32) {
+      this.snapshotCache.clear();
+    }
+    this.snapshotCache.set(key, { value, at: Date.now() });
+    return value;
   }
 
   static getQueueHistory(params: {
@@ -1405,6 +1506,9 @@ export class DownloadQueueQueryService {
       tracks,
       queuePosition,
       slot,
+      ref_key: job.ref_id ?? null,
+      plan_id: job.plan_id ?? null,
+      edition_id: job.edition_id ?? null,
     };
   }
 }

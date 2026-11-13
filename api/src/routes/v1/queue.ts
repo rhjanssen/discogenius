@@ -82,11 +82,22 @@ function normalizeDownloadMediaType(value: unknown): DownloadMediaType | null {
  * GET /api/v1/queue
  * List all active download queue items
  */
-router.get('/', (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
-    const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit || '100'), 10) || 100));
+    const limit = Math.max(1, Math.min(1000, parseInt(String(req.query.limit || '100'), 10) || 100));
     const offset = Math.max(0, parseInt(String(req.query.offset || '0'), 10) || 0);
-    res.json(DownloadQueueQueryService.getQueue({ limit, offset }));
+    const cursor = getQueueRequestString(req.query.cursor) ?? undefined;
+    const status = getQueueRequestString(req.query.status) ?? undefined;
+    const provider = getQueueRequestString(req.query.provider) ?? undefined;
+    const album = getQueueRequestString(req.query.album) ?? undefined;
+    res.json(await DownloadQueueQueryService.getQueueAsync({
+      limit,
+      offset,
+      cursor,
+      status,
+      provider,
+      album,
+    }));
   } catch (error: any) {
     console.error('[QUEUE-API] Error getting queue:', error);
     res.status(500).json({ error: 'Failed to get queue', message: error.message });

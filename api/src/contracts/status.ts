@@ -83,6 +83,9 @@ export interface QueueItemContract {
   outcome?: DownloadOutcomeContract;
   warningMessage?: string | null;
   tracks?: DownloadTrackProgressContract[];
+  ref_key?: string | null;
+  plan_id?: number | null;
+  edition_id?: number | null;
 }
 
 export interface QueueListResponseContract {
@@ -91,6 +94,7 @@ export interface QueueListResponseContract {
   limit: number;
   offset: number;
   hasMore: boolean;
+  nextCursor?: string | null;
 }
 
 export type QueueDetailsResponseContract = QueueItemContract[];
@@ -312,6 +316,9 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
       ? undefined
       : expectArray(record.tracks, `${label}.tracks`, (item, trackIndex) =>
         parseDownloadTrackProgressContract(item, trackIndex, `${label}.tracks`)),
+    ref_key: expectNullableString(record.ref_key, `${label}.ref_key`),
+    plan_id: expectOptionalNumber(record.plan_id, `${label}.plan_id`),
+    edition_id: expectOptionalNumber(record.edition_id, `${label}.edition_id`),
   };
 }
 
@@ -416,6 +423,7 @@ export function parseQueueListResponseContract(value: unknown): QueueListRespons
     limit: expectNumber(record.limit, "queue.limit"),
     offset: expectNumber(record.offset, "queue.offset"),
     hasMore: expectBoolean(record.hasMore, "queue.hasMore"),
+    ...(record.nextCursor !== undefined ? { nextCursor: expectNullableString(record.nextCursor, "queue.nextCursor") } : {}),
   };
 }
 
