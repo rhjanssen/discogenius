@@ -43,7 +43,7 @@ import { libraryMetadataBackfillService, type MetadataFillResult } from "./libra
 import { createCooperativeBatcher, yieldToEventLoop } from "../../utils/concurrent.js";
 import { isLyricSidecarExtension } from "../extras/lyrics/lyric-sidecar.js";
 import { shouldRematchUnmatchedFiles, type ScanFileFilter } from "./scan-file-filter.js";
-import { parseProviderFilenameToken } from "./path-utils.js";
+import { isCaseInsensitivePath, parseProviderFilenameToken } from "./path-utils.js";
 import { resolveVideoLibraryIds, selectLibraryVideo } from "../music/library-video-monitoring.js";
 import { deriveQuality, parseAudioFile } from "./audioUtils.js";
 import { isMediaRewriteTemporaryName } from "./media-file-rewrite.js";
@@ -508,19 +508,49 @@ export class DiskScanService {
         let cursor = 0;
         const read = db.prepare("SELECT id, file_path, relative_path, library_root FROM UnmappedFiles WHERE id > ? ORDER BY id LIMIT 100");
         const remove = db.prepare("DELETE FROM UnmappedFiles WHERE id = ? AND file_path = ?");
+        const checkTrack = db.prepare(`
+            SELECT id FROM TrackFiles
+            WHERE file_path = ?
+               OR (LOWER(REPLACE(file_path, '\\', '/')) = LOWER(REPLACE(?, '\\', '/')) AND ? = 1)
+            LIMIT 1
+        `);
+        const checkExtra = db.prepare(`
+            SELECT id FROM ExtraFiles
+            WHERE file_path = ?
+               OR (LOWER(REPLACE(file_path, '\\', '/')) = LOWER(REPLACE(?, '\\', '/')) AND ? = 1)
+            LIMIT 1
+        `);
         while (true) {
             const rows = read.all(cursor) as Array<{ id: number; file_path: string; relative_path: string | null; library_root: string }>;
             if (!rows.length) break;
-            const missing = rows.filter(row => isMissingLibraryFile({
-                filePath: row.file_path, relativePath: row.relative_path, libraryRoot: row.library_root,
-            }));
-            for (let start = 0; start < missing.length; start += 25) {
-                const batch = missing.slice(start, start + 25);
+            const pruneRows = rows.filter(row => {
+                if (isMissingLibraryFile({
+                    filePath: row.file_path, relativePath: row.relative_path, libraryRoot: row.library_root,
+                })) {
+                    return true;
+                }
+                const isInsensitive = isCaseInsensitivePath(row.file_path);
+                const hasLinkedTrack = Boolean(checkTrack.get(row.file_path, row.file_path, isInsensitive ? 1 : 0));
+                if (hasLinkedTrack) {
+                    return true;
+                }
+                const hasLinkedExtra = Boolean(checkExtra.get(row.file_path, row.file_path, isInsensitive ? 1 : 0));
+                return hasLinkedExtra;
+            });
+            for (let start = 0; start < pruneRows.length; start += 25) {
+                const batch = pruneRows.slice(start, start + 25);
                 unmappedOrphans += await withSqliteWriteGate(() => db.transaction(() => {
                     let removed = 0;
                     for (const row of batch) {
-                        if (isMissingLibraryFile({ filePath: row.file_path,
-                            relativePath: row.relative_path, libraryRoot: row.library_root })) {
+                        const isMissing = isMissingLibraryFile({
+                            filePath: row.file_path,
+                            relativePath: row.relative_path,
+                            libraryRoot: row.library_root,
+                        });
+                        const isInsensitive = isCaseInsensitivePath(row.file_path);
+                        const hasLinkedTrack = Boolean(checkTrack.get(row.file_path, row.file_path, isInsensitive ? 1 : 0));
+                        const hasLinkedExtra = Boolean(checkExtra.get(row.file_path, row.file_path, isInsensitive ? 1 : 0));
+                        if (isMissing || hasLinkedTrack || hasLinkedExtra) {
                             removed += remove.run(row.id, row.file_path).changes;
                         }
                     }
@@ -1097,7 +1127,29 @@ export class DiskScanService {
         // Collect all existing file paths for this artist (for quick lookup).
         // Duplicate extras are re-evaluated every scan so a later matcher fix
         // can promote them to TrackFiles instead of leaving a wrong extra.
-        const existingPaths = new Set<string>();
+        class ExistingPathTracker {
+            private readonly exact = new Set<string>();
+            private readonly folded = new Map<string, string>();
+
+            add(filePath: string): void {
+                const resolved = path.resolve(filePath);
+                this.exact.add(resolved);
+                if (isCaseInsensitivePath(resolved)) {
+                    this.folded.set(resolved.toLowerCase(), resolved);
+                }
+            }
+
+            has(filePath: string): boolean {
+                const resolved = path.resolve(filePath);
+                if (this.exact.has(resolved)) return true;
+                if (isCaseInsensitivePath(resolved)) {
+                    return this.folded.has(resolved.toLowerCase());
+                }
+                return false;
+            }
+        }
+
+        const existingPaths = new ExistingPathTracker();
         const metadataId = resolveArtistMetadataId(artistId);
         const sidecarArtistKey = resolveArtistMbid(artistId) ?? (metadataId != null ? String(metadataId) : artistId);
         const trackArtistKey = metadataId != null ? String(metadataId) : artistId;
@@ -1253,7 +1305,14 @@ export class DiskScanService {
                 }
 
                 const resolved = path.resolve(filePath);
-                if (existingPaths.has(resolved)) continue;
+                if (existingPaths.has(resolved)) {
+                    await withSqliteWriteGate(() => db.prepare(`
+                        DELETE FROM UnmappedFiles
+                        WHERE file_path = ?
+                           OR (LOWER(file_path) = LOWER(?) AND ? = 1)
+                    `).run(resolved, resolved, isCaseInsensitivePath(resolved) ? 1 : 0), "scan:clear-unmapped");
+                    continue;
+                }
 
                 // New file on disk — attempt to match and index
                 let match = this.matchFileToMedia(filePath, artistId, key);
@@ -1370,12 +1429,23 @@ export class DiskScanService {
                             if (audioExtensions.has(ext)) {
                                 const metadataMatch = matchAudioFileByMetadata(resolved, artistId, key, parsedTags);
                                 if (metadataMatch?.duplicateOfExisting) {
+                                    const isInsensitive = isCaseInsensitivePath(resolved);
                                     const isSelfTrackFile = Boolean(
                                         metadataMatch.existingFilePath === resolved ||
-                                        db.prepare("SELECT 1 FROM TrackFiles WHERE file_path = ? LIMIT 1").get(resolved)
+                                        (isInsensitive && metadataMatch.existingFilePath && metadataMatch.existingFilePath.toLowerCase() === resolved.toLowerCase()) ||
+                                        db.prepare(`
+                                            SELECT 1 FROM TrackFiles
+                                            WHERE file_path = ?
+                                               OR (LOWER(REPLACE(file_path, '\\', '/')) = LOWER(REPLACE(?, '\\', '/')) AND ? = 1)
+                                            LIMIT 1
+                                        `).get(resolved, resolved, isInsensitive ? 1 : 0)
                                     );
                                     if (isSelfTrackFile) {
-                                        await withSqliteWriteGate(() => db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved), "scan:clear-unmapped");
+                                        await withSqliteWriteGate(() => db.prepare(`
+                                            DELETE FROM UnmappedFiles
+                                            WHERE file_path = ?
+                                               OR (LOWER(file_path) = LOWER(?) AND ? = 1)
+                                        `).run(resolved, resolved, isInsensitive ? 1 : 0), "scan:clear-unmapped");
                                         unmappedReason = null;
                                     } else {
                                         const existing = metadataMatch.existingFilePath
@@ -1459,7 +1529,12 @@ export class DiskScanService {
                             } else if (videoExtensions.has(ext)) {
                                 const videoMatch = matchVideoFileByMetadata(resolved, artistId, key, parsedTags);
                                 if (videoMatch?.duplicateOfExisting) {
-                                    await withSqliteWriteGate(() => db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved), "scan:clear-unmapped");
+                                    const isInsensitive = isCaseInsensitivePath(resolved);
+                                    await withSqliteWriteGate(() => db.prepare(`
+                                        DELETE FROM UnmappedFiles
+                                        WHERE file_path = ?
+                                           OR (LOWER(file_path) = LOWER(?) AND ? = 1)
+                                    `).run(resolved, resolved, isInsensitive ? 1 : 0), "scan:clear-unmapped");
                                     unmappedReason = null;
                                 } else if (videoMatch) {
                                     match = {
@@ -1577,7 +1652,12 @@ export class DiskScanService {
                     existingPaths.add(resolved);
 
                     // Cleanup any existing unmapped_file record for this path
-                    await withSqliteWriteGate(() => db.prepare("DELETE FROM UnmappedFiles WHERE file_path = ?").run(resolved), "scan:clear-unmapped");
+                    const isInsensitive = isCaseInsensitivePath(resolved);
+                    await withSqliteWriteGate(() => db.prepare(`
+                        DELETE FROM UnmappedFiles
+                        WHERE file_path = ?
+                           OR (LOWER(file_path) = LOWER(?) AND ? = 1)
+                    `).run(resolved, resolved, isInsensitive ? 1 : 0), "scan:clear-unmapped");
                 } else if (options?.trackUnmappedFiles !== false && parsedForUnmapped && unmappedReason) {
                     try {
                         const {
@@ -2388,6 +2468,7 @@ export class DiskScanService {
      */
     private static findMediaByExpectedPath(filePath: string, artistId: string): { albumId: string | null; mediaId: string; quality: string | null } | null {
         const resolved = path.resolve(filePath);
+        const isInsensitive = isCaseInsensitivePath(resolved);
 
         // Check if any track's expected path matches this file. The provider join
         // carries the FULL identity triple (provider + entity_type + provider_id):
@@ -2405,9 +2486,13 @@ export class DiskScanService {
              AND pi.entity_type = COALESCE(lf.provider_entity_type, pi.entity_type)
              AND pi.entity_type IN ('track', 'video')
              AND (lf.provider IS NULL OR pi.provider = lf.provider)
-            WHERE lf.artist_metadata_id = ? AND lf.expected_path = ?
+            WHERE lf.artist_metadata_id = ?
+              AND (
+                lf.expected_path = ?
+                OR (LOWER(REPLACE(lf.expected_path, '\\', '/')) = LOWER(REPLACE(?, '\\', '/')) AND ? = 1)
+              )
             LIMIT 1
-        `).get(artistId, resolved) as any;
+        `).get(artistId, resolved, resolved, isInsensitive ? 1 : 0) as any;
 
         if (match) {
             return {

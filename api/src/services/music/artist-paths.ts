@@ -4,7 +4,7 @@ import fs from "fs";
 import { db } from "../../database.js";
 import { resolveArtistFolder, resolveArtistFolderFromRecord } from "../config/naming.js";
 import { Config } from "../config/config.js";
-import { normalizeComparablePath } from "../mediafiles/path-utils.js";
+import { isCaseInsensitivePath, normalizeComparablePath, renameToCanonicalCase, sameDirectoryEntry } from "../mediafiles/path-utils.js";
 import { extractNamingMbid } from "../mediafiles/import-discovery.js";
 
 type ArtistFolderSeed = {
@@ -224,6 +224,22 @@ export function resolveArtistFolderForImport(seed: ArtistFolderSeed, libraryRoot
   const matchDesired = existing.find((name) => name === desiredBase);
   if (matchDesired) {
     return !desiredDir || desiredDir === "." ? matchDesired : path.join(desiredDir, matchDesired);
+  }
+  if (isCaseInsensitivePath(libraryRoot)) {
+    const caseMatch = existing.find((name) => name.toLowerCase() === desiredBase.toLowerCase());
+    if (caseMatch) {
+      const parentDir = !desiredDir || desiredDir === "." ? libraryRoot : path.join(libraryRoot, desiredDir);
+      const fromPath = path.join(parentDir, caseMatch);
+      const toPath = path.join(parentDir, desiredBase);
+      try {
+        if (sameDirectoryEntry(fromPath, toPath)) {
+          renameToCanonicalCase(fromPath, toPath);
+        }
+      } catch (err) {
+        console.warn("[ArtistPaths] Failed to rename artist folder to canonical case:", err);
+      }
+      return desired;
+    }
   }
   const storedBase = path.basename(String(seed.existingPath || "").trim());
   const matchStored = storedBase ? existing.find((name) => name === storedBase) : undefined;

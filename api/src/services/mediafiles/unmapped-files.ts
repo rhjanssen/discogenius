@@ -38,6 +38,7 @@ function yearOf(date: string | null): number | null {
     return match ? Number(match[1]) : null;
 }
 import { db, withDbWrite } from "../../database.js";
+import { RequestValidationError } from "../../utils/request-validation.js";
 import { CommandNames } from "../commands/command-names.js";
 import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { isAutoImportStatusAllowed, planFolderAutoImport, titleDistance, type AutoImportCandidateRelease, type AutoImportFile, type CandidateQuery, type FingerprintEvidence, type FolderAutoImportPlan } from "./folder-auto-import-plan.js";
@@ -310,11 +311,40 @@ export class UnmappedFilesService {
         return validIds.length;
     }
 
+    private assertDeletableUnmappedFile(filePath: string): void {
+        const normalized = String(filePath || "").replace(/\\/g, "/");
+        const trackOccupant = db.prepare(`
+            SELECT id, file_path FROM TrackFiles
+            WHERE LOWER(REPLACE(file_path, '\\', '/')) = LOWER(?)
+            LIMIT 1
+        `).get(normalized) as { id: number; file_path: string } | undefined;
+
+        if (trackOccupant) {
+            throw new RequestValidationError(
+                `Refusing to delete unmapped file: path matches linked track file #${trackOccupant.id} (${trackOccupant.file_path})`
+            );
+        }
+
+        const extraOccupant = db.prepare(`
+            SELECT id, file_path FROM ExtraFiles
+            WHERE LOWER(REPLACE(file_path, '\\', '/')) = LOWER(?)
+            LIMIT 1
+        `).get(normalized) as { id: number; file_path: string } | undefined;
+
+        if (extraOccupant) {
+            throw new RequestValidationError(
+                `Refusing to delete unmapped file: path matches linked extra file #${extraOccupant.id} (${extraOccupant.file_path})`
+            );
+        }
+    }
+
     deleteFile(id: number): void {
         const file = this.repository.findById(id);
         if (!file) {
             throw new Error("File not found in tracking DB");
         }
+
+        this.assertDeletableUnmappedFile(file.file_path);
 
         if (fs.existsSync(file.file_path)) {
             fs.unlinkSync(file.file_path);
@@ -324,6 +354,10 @@ export class UnmappedFilesService {
 
     deleteFiles(ids: number[]): number {
         const files = this.repository.findByIds(ids);
+        for (const file of files) {
+            this.assertDeletableUnmappedFile(file.file_path);
+        }
+
         for (const file of files) {
             if (fs.existsSync(file.file_path)) {
                 fs.unlinkSync(file.file_path);
