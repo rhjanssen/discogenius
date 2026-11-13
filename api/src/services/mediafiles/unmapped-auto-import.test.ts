@@ -281,8 +281,10 @@ test("folder auto-import verifies AcoustID recording even when tags match, holdi
     assert.equal(fallbackReport.folders[0]?.decision, "import");
 
     // 4. Streaming download import path never calls the fingerprint/AcoustID path
+    const candidateFromRoot = path.resolve("api/src/services/mediafiles/import-service.ts");
+    const candidateFromApi = path.resolve("src/services/mediafiles/import-service.ts");
     const importServiceSource = fs.readFileSync(
-        path.resolve("api/src/services/mediafiles/import-service.ts"),
+        fs.existsSync(candidateFromRoot) ? candidateFromRoot : candidateFromApi,
         "utf8",
     );
     assert.equal(/verifyAudioFileRecording|identifyAudioFileByAcoustId|lookupAcoustId/.test(importServiceSource), false);
