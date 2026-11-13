@@ -20,6 +20,7 @@ export interface EditionsSummaryBarProps {
   isLoading?: boolean;
   decisionLabel?: string | null;
   decisionAction?: string | null;
+  fileSourceSummary?: string | null;
   onBackToAutomatic?: () => void;
   onOpenDialog: () => void;
 }
@@ -85,6 +86,7 @@ export function EditionsSummaryBar({
   isLoading = false,
   decisionLabel,
   decisionAction,
+  fileSourceSummary,
   onBackToAutomatic,
   onOpenDialog,
 }: EditionsSummaryBarProps) {
@@ -170,6 +172,11 @@ export function EditionsSummaryBar({
         {decisionLabel ? (
           <Text size={200} className={styles.mutedText}>
             {decisionLabel}
+          </Text>
+        ) : null}
+        {fileSourceSummary ? (
+          <Text size={200} className={styles.mutedText}>
+            File sources: {fileSourceSummary}
           </Text>
         ) : null}
       </div>

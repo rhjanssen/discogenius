@@ -49,6 +49,7 @@ import { captureLinkedExtras, releaseExtrasForDeletedTrackFiles } from "../extra
 import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
 import { MetadataFileService, getMetadataType } from "../extras/metadata/files/metadata-file-service.js";
 import { resolveVideoTypeSuffix } from "./video-naming.js";
+import { isNonProviderSource, normalizeSourceProvider } from "../../utils/source-provider.js";
 import { resolvePersistedVideoPlacement } from "../music/video-placement-resolver.js";
 import {
   buildLibraryArtistMonitoredExistsSql,
@@ -516,6 +517,12 @@ export type LibraryFileUpsertParams = {
   provider?: string | null;
   providerEntityType?: string | null;
   providerId?: string | null;
+  /**
+   * Where the bytes came from: a provider id (tidal, apple, deezer, youtube, ...)
+   * for a download import, or `external` for a manual/unmapped import. Omitted
+   * means "not stated" and never overwrites a known source.
+   */
+  sourceProvider?: string | null;
   librarySlot?: library_slot | string | null;
   sourceAudioVariantId?: number | null;
   fileClass?: "audio" | "video" | string | null;
@@ -2074,6 +2081,26 @@ export class LibraryFilesService {
     ExtraFileService.upsert(input);
   }
 
+  /**
+   * The ProviderItems row a file's bytes came from, or null when it is not
+   * (yet) known. Identity is the full (provider, entity_type, provider_id)
+   * triple; a bare provider_id is never an identity.
+   */
+  private static resolveSourceProviderItemId(
+    provider: string | null | undefined,
+    entityType: string | null,
+    providerId: string | null,
+  ): number | null {
+    const providerKey = String(provider ?? "").trim();
+    if (!providerKey || !providerId) return null;
+    if (entityType !== "track" && entityType !== "video") return null;
+    const row = db.prepare(`
+      SELECT id FROM ProviderItems
+      WHERE provider = ? AND entity_type = ? AND provider_id = ?
+    `).get(providerKey, entityType, providerId) as { id: number } | undefined;
+    return row?.id ?? null;
+  }
+
   static upsertLibraryFile(params: LibraryFileUpsertParams) {
     const ownershipRoot = resolveLibraryRootPath(params.libraryRoot, params.filePath)
       ?? params.libraryRoot;
@@ -2444,6 +2471,16 @@ export class LibraryFilesService {
       }
     }
 
+    const explicitSource = normalizeSourceProvider(params.sourceProvider) || null;
+    const sourceProvider = explicitSource ?? "unknown";
+    const providerItemId = explicitSource && !isNonProviderSource(explicitSource)
+      ? this.resolveSourceProviderItemId(
+        params.sourceProvider,
+        canonicalIdentity.providerEntityType,
+        canonicalIdentity.providerId,
+      )
+      : null;
+
     const insert = db.prepare(`
       INSERT INTO TrackFiles (
         artist_metadata_id,
@@ -2452,6 +2489,7 @@ export class LibraryFilesService {
         canonical_artist_mbid, canonical_release_group_mbid,
         canonical_release_mbid, canonical_track_mbid, canonical_recording_mbid,
         provider, provider_entity_type, provider_id, library_slot,
+        source_provider, provider_item_id,
         file_path, relative_path, library_root,
         filename, extension, file_size,
         file_type, quality,
@@ -2466,6 +2504,7 @@ export class LibraryFilesService {
         ?, ?,
         ?, ?, ?,
         ?, ?, ?, ?,
+        ?, ?,
         ?, ?, ?,
         ?, ?, ?,
         ?, ?,
@@ -2493,6 +2532,23 @@ export class LibraryFilesService {
         provider_entity_type = COALESCE(excluded.provider_entity_type, TrackFiles.provider_entity_type),
         provider_id = COALESCE(excluded.provider_id, TrackFiles.provider_id),
         library_slot = COALESCE(excluded.library_slot, TrackFiles.library_slot),
+        -- A real provider (a download import) replaces a weaker claim. 'external'
+        -- and 'unknown' only fill a gap, so a rescan can never relabel a
+        -- downloaded file as external.
+        source_provider = CASE
+          WHEN excluded.source_provider IS NULL OR excluded.source_provider = 'unknown' THEN TrackFiles.source_provider
+          WHEN TrackFiles.source_provider IS NULL OR TrackFiles.source_provider = 'unknown' THEN excluded.source_provider
+          WHEN excluded.source_provider = 'external' THEN TrackFiles.source_provider
+          ELSE excluded.source_provider
+        END,
+        provider_item_id = CASE
+          WHEN excluded.source_provider IS NOT NULL
+            AND excluded.source_provider NOT IN ('external', 'unknown')
+            AND excluded.provider_item_id IS NOT NULL THEN excluded.provider_item_id
+          WHEN excluded.source_provider IS NOT NULL
+            AND excluded.source_provider NOT IN ('external', 'unknown') THEN NULL
+          ELSE TrackFiles.provider_item_id
+        END,
         relative_path = excluded.relative_path,
         library_root = excluded.library_root,
         filename = excluded.filename,
@@ -2537,6 +2593,8 @@ export class LibraryFilesService {
       canonicalIdentity.providerEntityType,
       canonicalIdentity.providerId,
       canonicalIdentity.librarySlot,
+      sourceProvider,
+      providerItemId,
       params.filePath,
       relativePath,
       params.libraryRoot,

@@ -874,6 +874,7 @@ export class OrganizerService {
         filePath: dest,
         libraryRoot: organizedVideoRoot,
         fileType: "video",
+        sourceProvider: params.provider,
         quality: derivedVideoQuality,
         namingTemplate: videoNamingTemplate,
         expectedPath: dest,
@@ -1833,6 +1834,8 @@ export class OrganizerService {
     provider?: string | null;
     providerEntityType?: string | null;
     providerId?: string | null;
+    /** Defaults to `provider` for media files: the organizer only imports downloads. */
+    sourceProvider?: string | null;
     librarySlot?: string | null;
     canonicalArtistMbid?: string | null;
     canonicalReleaseGroupMbid?: string | null;
@@ -1840,8 +1843,10 @@ export class OrganizerService {
     canonicalTrackMbid?: string | null;
     canonicalRecordingMbid?: string | null;
   }): number {
+    const isMediaFile = params.fileType === "track" || params.fileType === "video";
     return LibraryFilesService.upsertLibraryFile({
       ...params,
+      sourceProvider: params.sourceProvider ?? (isMediaFile ? params.provider ?? null : null),
       removeFromUnmapped: true,
     });
   }

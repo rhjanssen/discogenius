@@ -2648,6 +2648,7 @@ export class DiskScanService {
         channels?: number | null;
         duration?: number | null;
         importedQuality?: string | null;
+        sourceProvider?: string | null;
     }) {
         await withSqliteWriteGate(() => db.transaction(() => {
             // Inspection must not release ownership. Replace a duplicate row
@@ -2656,6 +2657,9 @@ export class DiskScanService {
                 .run(params.filePath, DUPLICATE_EXTRA_FILE_TYPE);
             return LibraryFilesService.upsertLibraryFile({
                 ...params,
+                // A file the scan discovers was not produced by a download we ran;
+                // the upsert never relabels a row that already has a real source.
+                sourceProvider: params.sourceProvider ?? "external",
                 removeFromUnmapped: false,
             });
         })(), "scan:index-file");

@@ -205,6 +205,7 @@ export class CanonicalManualImportService {
           recording_id = @recordingId,
           file_class = 'audio',
           provider_item_id = NULL,
+          source_provider = 'external',
           provider = NULL,
           provider_entity_type = NULL,
           provider_id = NULL,
