@@ -117,7 +117,7 @@ export async function retrySqliteBusyAsync<T>(work: () => T | Promise<T>): Promi
 
 // SQLite's own timeout only covers writers outside our shared admission queue.
 // A synchronous timeout on the HTTP thread would freeze unrelated requests.
-const SQLITE_BUSY_TIMEOUT_MS = isMainThread ? 0 : 1000;
+export const SQLITE_BUSY_TIMEOUT_MS = isMainThread ? 0 : 1000;
 
 // Record the call site of transactions that block other writers for a second.
 // Operators can lower the threshold for profiling or set it to zero to disable.

@@ -1294,7 +1294,7 @@ const AlbumPage = () => {
       dispatchLibraryUpdated();
       toast({
         title: "Edition no longer monitored",
-        description: "Files already on disk were left untouched.",
+        description: "Automatic monitoring for this edition has been disabled.",
       });
     },
     onError: (mutationError) => {

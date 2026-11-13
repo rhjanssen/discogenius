@@ -42,9 +42,9 @@ const useStyles = makeStyles({
 });
 
 export function providerAuthWaitingText(label: string, held: number): string {
-  if (held === 1) return `1 album wacht tot ${label} weer verbonden is.`;
-  if (held > 1) return `${held.toLocaleString("nl-NL")} albums wachten tot ${label} weer verbonden is.`;
-  return `Downloads via ${label} wachten tot ${label} weer verbonden is.`;
+  if (held === 1) return `1 album is waiting for ${label} to reconnect.`;
+  if (held > 1) return `${held.toLocaleString("en-US")} albums are waiting for ${label} to reconnect.`;
+  return `Downloads via ${label} are waiting for ${label} to reconnect.`;
 }
 
 /** Provider connection problems, one Fluent MessageBar per provider. Copy comes from the server. */
@@ -62,7 +62,7 @@ export function ProviderAuthBanner({ items, onRetry, retrying = false }: Provide
   };
 
   return (
-    <MessageBarGroup className={styles.group} aria-label="Providerverbindingen">
+    <MessageBarGroup className={styles.group} aria-label="Provider connections">
       {items.map((item) => (
         <MessageBar key={item.provider} intent="warning" layout="multiline" politeness="assertive">
           <MessageBarBody>
@@ -78,7 +78,7 @@ export function ProviderAuthBanner({ items, onRetry, retrying = false }: Provide
               size="small"
               icon={<PlugConnected20Regular />}
             >
-              Opnieuw verbinden
+              Reconnect
             </Button>
             <Button
               appearance="secondary"
@@ -87,7 +87,7 @@ export function ProviderAuthBanner({ items, onRetry, retrying = false }: Provide
               onClick={onRetry}
               disabledFocusable={retrying}
             >
-              {retrying ? "Bezig…" : "Opnieuw proberen"}
+              {retrying ? "Retrying…" : "Try again"}
             </Button>
           </MessageBarActions>
         </MessageBar>

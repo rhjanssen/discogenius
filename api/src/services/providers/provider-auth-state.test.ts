@@ -98,7 +98,7 @@ test("needs_reauth holds unclaimed rows once, and a valid login resumes them onc
     const failed = await auth.recordProviderAuthFailure("tidal", "token has expired");
     assert.equal(failed.persisted, true);
     assert.equal(events.length, 1);
-    assert.equal(events[0]?.banner, "Tidal opnieuw inloggen");
+    assert.equal(events[0]?.banner, "Sign in to Tidal again");
     assert.equal(events[0]?.held, 2);
     assert.match(payloadOf("tidal-a"), /Waiting for Tidal login/);
     assert.match(payloadOf("tidal-b"), /Waiting for Tidal login/);

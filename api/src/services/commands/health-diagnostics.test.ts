@@ -82,7 +82,7 @@ test("a provider that needs re-login warns without making health unhealthy", asy
   assert.equal(snapshot.subsystems.providerAuth.status, "warning");
   assert.equal(snapshot.providerAuth[0]?.provider, "deezer");
   assert.equal(snapshot.providerAuth[0]?.status, "needs_reauth");
-  assert.equal(snapshot.providerAuth[0]?.banner, "Deezer opnieuw koppelen");
+  assert.equal(snapshot.providerAuth[0]?.banner, "Reconnect Deezer");
   assert.notEqual(snapshot.status, "unhealthy");
   const issue = snapshot.issues.find((item) => item.scope === "providers.auth");
   assert.equal(issue?.status, "warning");

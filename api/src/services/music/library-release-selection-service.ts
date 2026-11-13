@@ -591,8 +591,8 @@ export class LibraryReleaseSelectionService {
    * Stop monitoring one Edition.
    *
    * Removing the representative promotes the best remaining Edition; removing
-   * the last one unmonitors the Album itself. Files are never touched — that is
-   * a separate, explicit deletion command.
+   * the last one unmonitors the Album itself. Triggers unmonitored-file pruning
+   * when `remove_unmonitored_files` is enabled.
    */
   removeEdition(input: {
     releaseGroupMbid: string;
@@ -666,6 +666,11 @@ export class LibraryReleaseSelectionService {
       if (promoted === 0) throw new Error("This edition is not monitored in this library");
       this.demoteOtherEditions(input.libraryId, input.editionId, target.releaseGroupId);
     })();
+    this.notifyMonitoringChanged({
+      releaseGroupMbid: input.releaseGroupMbid,
+      libraryId: input.libraryId,
+      reason: "representative-changed",
+    });
     return this.getAvailability(input.releaseGroupMbid);
   }
 
@@ -690,6 +695,11 @@ export class LibraryReleaseSelectionService {
       editionId: input.editionId,
       providerPriority: getAcquisitionProviderPriority(),
       plannerVersion: ACQUISITION_PLANNER_VERSION,
+    });
+    this.notifyMonitoringChanged({
+      releaseGroupMbid: input.releaseGroupMbid,
+      libraryId: input.libraryId,
+      reason: "plan-reverted-to-automatic",
     });
     return this.getAvailability(input.releaseGroupMbid);
   }

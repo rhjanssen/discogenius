@@ -56,22 +56,22 @@ let tableReady: boolean | null = null;
 
 const COPY: Record<string, Omit<ProviderAuthCopy, "provider">> = {
   tidal: {
-    banner: "Tidal opnieuw inloggen",
+    banner: "Sign in to Tidal again",
     queueMessage: "Waiting for Tidal login",
     href: "/auth?provider=tidal#provider-connect-tidal",
-    settingsLabel: "Naar Tidal-login",
+    settingsLabel: "Go to Tidal login",
   },
   "apple-music": {
-    banner: "Apple Music-decryptie reageert niet",
+    banner: "Apple Music decryption wrapper is unreachable",
     queueMessage: "Waiting for the Apple Music decryption wrapper",
     href: "/auth?provider=apple-music",
-    settingsLabel: "Naar Apple Music",
+    settingsLabel: "Go to Apple Music",
   },
   deezer: {
-    banner: "Deezer opnieuw koppelen",
+    banner: "Reconnect Deezer",
     queueMessage: "Waiting for Deezer login",
     href: "/auth?provider=deezer#deezer-arl",
-    settingsLabel: "Naar Deezer-ARL",
+    settingsLabel: "Go to Deezer ARL",
   },
 };
 
@@ -82,10 +82,10 @@ export function providerAuthCopy(provider: string): ProviderAuthCopy {
   const label = id || "provider";
   return {
     provider: id,
-    banner: `${label} opnieuw koppelen`,
+    banner: `Reconnect ${label}`,
     queueMessage: `Waiting for ${label} login`,
     href: `/auth?provider=${encodeURIComponent(id)}`,
-    settingsLabel: `Naar ${label}`,
+    settingsLabel: `Go to ${label}`,
   };
 }
 

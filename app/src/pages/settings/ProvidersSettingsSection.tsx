@@ -74,7 +74,7 @@ function DeezerArlStatus({
     className: string;
 }) {
     const href = row?.href || "/auth?provider=deezer#deezer-arl";
-    const linkLabel = row?.settingsLabel || "Naar Deezer-ARL";
+    const linkLabel = row?.settingsLabel || "Go to Deezer ARL";
     const age = row?.credentialAgeDays;
     return (
         <Caption1 className={className}>
