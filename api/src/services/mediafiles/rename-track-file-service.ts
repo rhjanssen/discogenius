@@ -107,55 +107,8 @@ async function sidecarContentsMatch(source: string, destination: string): Promis
     && destinationIdentity === sidecarFileIdentity(destination);
 }
 
-/** Case-insensitive mounts report the destination as occupied when it is this
- * same file. A direct rename cannot change only the case, so callers hop
- * through a temporary name. Different files are never accepted here. */
-export function pathsDifferOnlyByCase(left: string, right: string): boolean {
-  const source = path.resolve(left).split(path.sep);
-  const expected = path.resolve(right).split(path.sep);
-  if (source.length !== expected.length || source.length === 0) return false;
-  let differs = false;
-  for (let index = 0; index < source.length; index++) {
-    if (source[index] === expected[index]) continue;
-    if (source[index].toLowerCase() !== expected[index].toLowerCase()) return false;
-    differs = true;
-  }
-  return differs;
-}
-
-export function sameDirectoryEntry(left: string, right: string): boolean {
-  try {
-    const source = fs.lstatSync(left);
-    const expected = fs.lstatSync(right);
-    return source.dev === expected.dev && source.ino === expected.ino;
-  } catch {
-    return false;
-  }
-}
-
-export function renameToCanonicalCase(source: string, expected: string): void {
-  if (!pathsDifferOnlyByCase(source, expected) || !sameDirectoryEntry(source, expected)) {
-    throw new Error("Case rename requires the same file under a different case");
-  }
-  const fromParts = path.resolve(source).split(path.sep);
-  const toParts = path.resolve(expected).split(path.sep);
-  const current = fromParts.slice();
-  for (let index = 1; index < current.length; index++) {
-    if (current[index] === toParts[index]) continue;
-    const parent = current.slice(0, index).join(path.sep) || path.sep;
-    const from = current.slice(0, index + 1).join(path.sep);
-    const temporary = path.join(parent, `.discogenius-case-${process.pid}-${index}`);
-    if (fs.existsSync(temporary)) throw new Error(`Case rename temporary path is occupied: ${temporary}`);
-    fs.renameSync(from, temporary);
-    try {
-      fs.renameSync(temporary, path.join(parent, toParts[index]));
-    } catch (error) {
-      try { fs.renameSync(temporary, from); } catch { /* the original error is the one to surface */ }
-      throw error;
-    }
-    current[index] = toParts[index];
-  }
-}
+import { pathsDifferOnlyByCase, sameDirectoryEntry, renameToCanonicalCase } from "./path-utils.js";
+export { pathsDifferOnlyByCase, sameDirectoryEntry, renameToCanonicalCase };
 
 function trackedAudioInDirectory(directory: string): number {
   const prefix = `${directory}${directory.endsWith("/") || directory.endsWith("\\") ? "" : path.sep}`;
@@ -397,7 +350,7 @@ export class RenameTrackFileService {
 
     const results: RenamePreviewItem[] = evaluated.map(({ row, resolvedFilePath, expectedPath, reason }) => {
       const missing = false;
-      const needsRename = Boolean(expectedPath && normalizeResolvedPath(expectedPath) !== normalizeResolvedPath(resolvedFilePath));
+      const needsRename = Boolean(expectedPath && path.resolve(expectedPath) !== path.resolve(resolvedFilePath));
 
       let conflict = false;
       let verifyDuplicate = false;
@@ -408,9 +361,10 @@ export class RenameTrackFileService {
         const decoded = decodeSyntheticId(row.id);
         const tableName = decoded.tableName;
         const normalizedExpected = normalizeResolvedPath(expectedPath);
+        const isCaseOnlySelf = pathsDifferOnlyByCase(resolvedFilePath, expectedPath) && sameDirectoryEntry(resolvedFilePath, expectedPath);
         const pageOccupantId = expectedOccupants.get(normalizedExpected);
-        const pageConflict = pageOccupantId != null && pageOccupantId !== row.id;
-        const dbConflict = Array.from(
+        const pageConflict = !isCaseOnlySelf && pageOccupantId != null && pageOccupantId !== row.id;
+        const dbConflict = !isCaseOnlySelf && Array.from(
           conflictOwnersByTable.get(tableName)?.get(normalizedExpected) ?? [],
         ).some((ownerId) => ownerId !== decoded.id);
 

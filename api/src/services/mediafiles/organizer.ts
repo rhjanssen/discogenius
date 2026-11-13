@@ -13,7 +13,7 @@ import { resolveArtistFolderForIdentityUpdate, resolveArtistFolderForImport, res
 import { parseAudioFile, deriveQuality, deriveVideoQuality, convertToMp4, embedVideoThumbnail } from "./audioUtils.js";
 import { LibraryFilesService, removeEmptyParents, resolveVideoTypeSuffix } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
-import { comparablePathColumnSql, normalizeComparablePath } from "./path-utils.js";
+import { comparablePathColumnSql, isCaseInsensitivePath, normalizeComparablePath, renameToCanonicalCase, sameDirectoryEntry } from "./path-utils.js";
 import { getDefaultStreamingSource, getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { MoveArtistService } from "./move-artist-service.js";
@@ -956,6 +956,25 @@ export class OrganizerService {
       deleted += LibraryFilesService.pruneDisabledMetadataFiles(artist.id).deleted;
     }
     console.log(`[Organizer] Pruned ${deleted} disabled metadata file(s).`);
+  }
+
+  private static canonicalizeCaseOnDisk(targetDir: string, rootPath: string): void {
+    if (!isCaseInsensitivePath(rootPath)) return;
+    const base = path.basename(targetDir);
+    const parent = path.dirname(targetDir);
+    if (!fs.existsSync(parent)) return;
+    try {
+      const entries = fs.readdirSync(parent);
+      const caseMatch = entries.find((e) => e.toLowerCase() === base.toLowerCase() && e !== base);
+      if (caseMatch) {
+        const fromPath = path.join(parent, caseMatch);
+        if (sameDirectoryEntry(fromPath, targetDir)) {
+          renameToCanonicalCase(fromPath, targetDir);
+        }
+      }
+    } catch {
+      // ignore rename errors during path canonicalization
+    }
   }
 
   private static ensureDir(dirPath: string) {
@@ -2578,14 +2597,16 @@ export class OrganizerService {
         statusMessage: "Finalizing album metadata",
       });
 
+      const artistDir = path.join(targetRoot, artistFolder);
+      this.canonicalizeCaseOnDisk(artistDir, targetRoot);
+      this.ensureDir(artistDir);
+
       const albumDirRelative = sampleRelativeTrackPath
         ? deriveAlbumDirRelativeFromTrackPath(trackTemplate, sampleRelativeTrackPath)
         : commonPathPrefix(renderedTrackDirs);
       const targetAlbumDir = path.join(targetRoot, artistFolder, albumDirRelative);
+      this.canonicalizeCaseOnDisk(targetAlbumDir, targetRoot);
       this.ensureDir(targetAlbumDir);
-
-      const artistDir = path.join(targetRoot, artistFolder);
-      this.ensureDir(artistDir);
       const artistPicPath = path.join(artistDir, metadataConfig.artist_picture_name || "folder.jpg");
       if (metadataConfig.save_artist_picture) {
         await this.relocateSingletonSidecar({
@@ -3241,6 +3262,7 @@ export class OrganizerService {
 
       // Extras (cover, artist picture, NFO) - ensure they exist when downloading individual tracks.
       const artistDir = path.join(targetRoot, artistFolder);
+      this.canonicalizeCaseOnDisk(artistDir, targetRoot);
       this.ensureDir(artistDir);
       const artistPicPath = path.join(artistDir, metadataConfig.artist_picture_name || "folder.jpg");
       if (metadataConfig.save_artist_picture) {
@@ -3283,6 +3305,7 @@ export class OrganizerService {
 
       const albumDirRelative = deriveAlbumDirRelativeFromTrackPath(trackTemplate, relativeTrackPath);
       const targetAlbumDir = path.join(targetRoot, artistFolder, albumDirRelative);
+      this.canonicalizeCaseOnDisk(targetAlbumDir, targetRoot);
       this.ensureDir(targetAlbumDir);
 
       const albumCoverPath = path.join(targetAlbumDir, metadataConfig.album_cover_name || "cover.jpg");
