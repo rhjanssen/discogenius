@@ -24,6 +24,10 @@ import { getDownloadQueueControlState } from "../download/download-queue-control
 import { listProviderAuthPublic, type ProviderAuthPublic } from "../providers/provider-auth-state.js";
 import { CommandNames } from "./command-names.js";
 import { importAdmissionStallMs, listStrandedImportHandoffs } from "./import-admission.js";
+import {
+  readLastDiskReconciliationResult,
+  type DiskReconciliationSnapshot,
+} from "../mediafiles/disk-reconciliation-service.js";
 
 // Single source of truth; see the note on the constant.
 const EXPECTED_SCHEMA_VERSION = BASE_SCHEMA_VERSION;
@@ -97,6 +101,7 @@ export interface HealthDiagnosticsSnapshot {
   };
   /** Current rows. Empty when the table is not there yet. Never contains secrets. */
   providerAuth: ProviderAuthPublic[];
+  reconciliation: DiskReconciliationSnapshot | null;
   issues: HealthCheckResult[];
 }
 
@@ -966,6 +971,47 @@ function readProviderAuthRows(): ProviderAuthPublic[] {
   }
 }
 
+function collectReconciliationCheck(reconciliation: DiskReconciliationSnapshot | null): HealthCheckResult {
+  if (!reconciliation) {
+    return {
+      scope: "library.reconciliation",
+      status: "ok",
+      message: "Disk reconciliation has not run yet",
+    };
+  }
+  const { unmapped, missing, misplaced, diskAudioFiles, trackFiles } = reconciliation;
+  if (unmapped === 0 && missing === 0 && misplaced === 0) {
+    return {
+      scope: "library.reconciliation",
+      status: "ok",
+      message: "Disk and database are in sync",
+      details: {
+        diskAudioFiles,
+        trackFiles,
+        unmapped,
+        missing,
+        misplaced,
+      },
+    };
+  }
+  const parts: string[] = [];
+  if (unmapped > 0) parts.push(`${unmapped} unmapped`);
+  if (missing > 0) parts.push(`${missing} missing`);
+  if (misplaced > 0) parts.push(`${misplaced} misplaced`);
+  return {
+    scope: "library.reconciliation",
+    status: "warning",
+    message: `Library reconciliation found ${parts.join(", ")} file(s)`,
+    details: {
+      diskAudioFiles,
+      trackFiles,
+      unmapped,
+      missing,
+      misplaced,
+    },
+  };
+}
+
 export function collectHealthDiagnosticsSnapshot(
   options: { deepResult?: DeepDatabaseHealthResult } = {},
 ): HealthDiagnosticsSnapshot {
@@ -1056,6 +1102,8 @@ export function collectHealthDiagnosticsSnapshot(
   const catalogCheck = collectCatalogCheck();
   const providerAuth = readProviderAuthRows();
   const providerAuthCheck = providerAuthCheckFrom(providerAuth);
+  const reconciliation = readLastDiskReconciliationResult();
+  const reconciliationCheck = collectReconciliationCheck(reconciliation);
 
   const issues = flattenChecks(
     [
@@ -1078,6 +1126,7 @@ export function collectHealthDiagnosticsSnapshot(
       statisticsCheck,
       catalogCheck,
       providerAuthCheck,
+      reconciliationCheck,
       safeCheck("files.recovery", "File mutation recovery", () => {
         const failures = db.prepare(`SELECT
           (SELECT COUNT(*) FROM FileMutationJournal WHERE recovery_error IS NOT NULL) +
@@ -1136,6 +1185,7 @@ export function collectHealthDiagnosticsSnapshot(
       providerAuth: providerAuthCheck,
     },
     providerAuth,
+    reconciliation,
     issues,
   };
 }
