@@ -477,6 +477,23 @@ async function resolveReleaseGroupArtwork(releaseGroup: any): Promise<string | n
     return resolveHydratedReleaseGroupArtwork(releaseGroup, "MusicBrainzReleaseGroupReadService");
 }
 
+const ALBUM_REMOTE_HYDRATION_TIMEOUT_MS = 10_000;
+
+function withRemoteTimeout<T>(promise: Promise<T>, label: string, timeoutMs = ALBUM_REMOTE_HYDRATION_TIMEOUT_MS): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    return Promise.race([
+        promise.finally(() => {
+            if (timer) clearTimeout(timer);
+        }),
+        new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+            timer.unref?.();
+        }),
+    ]);
+}
+
 async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
     review: string;
     source: string;
@@ -495,7 +512,10 @@ async function resolveProviderAlbumReview(releaseGroup: any): Promise<{
     // Failed attempts stamp review_last_updated so we do not 404 on every GET.
     try {
         const { RefreshAlbumService } = await import("../music/refresh-album-service.js");
-        const editorial = await RefreshAlbumService.refreshCanonicalAlbumReview(String(releaseGroup.mbid));
+        const editorial = await withRemoteTimeout(
+            RefreshAlbumService.refreshCanonicalAlbumReview(String(releaseGroup.mbid)),
+            `Album review lookup (${releaseGroup.mbid})`,
+        );
         if (editorial) {
             return {
                 review: editorial.text,
@@ -1250,15 +1270,24 @@ export class MusicBrainzReleaseGroupReadService {
         let releaseGroup = queryReleaseGroup(releaseGroupMbid);
         if (!releaseGroup) {
             try {
-                const detail = await catalogProviderRegistry.getActive().getReleaseGroup(releaseGroupMbid);
+                const detail = await withRemoteTimeout(
+                    catalogProviderRegistry.getActive().getReleaseGroup(releaseGroupMbid),
+                    `Remote release group lookup (${releaseGroupMbid})`,
+                );
                 if (detail) {
                     const artistMbid = (detail as any).artistid || (detail as any).artistId || (detail as any).ArtistId || (detail as any).Artist?.Id || (detail as any).Artist?.id || (detail as any).artists?.[0]?.id || (detail as any).artists?.[0]?.Id;
                     if (artistMbid) {
                         const artistExists = db.prepare("SELECT 1 FROM ArtistMetadata WHERE mbid = ? LIMIT 1").get(artistMbid);
                         if (!artistExists) {
-                            await servarrMetadata.syncArtist(artistMbid);
+                            await withRemoteTimeout(
+                                servarrMetadata.syncArtist(artistMbid),
+                                `Remote artist sync (${artistMbid})`,
+                            );
                         }
-                        await servarrMetadata.syncReleaseGroup(releaseGroupMbid, artistMbid);
+                        await withRemoteTimeout(
+                            servarrMetadata.syncReleaseGroup(releaseGroupMbid, artistMbid),
+                            `Remote release group sync (${releaseGroupMbid})`,
+                        );
                         releaseGroup = queryReleaseGroup(releaseGroupMbid);
                     }
                 }
@@ -1281,7 +1310,10 @@ export class MusicBrainzReleaseGroupReadService {
 
         if (Number(releaseCount?.count || 0) === 0) {
             try {
-                await servarrMetadata.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid);
+                await withRemoteTimeout(
+                    servarrMetadata.syncReleaseGroup(releaseGroupMbid, releaseGroup.artist_mbid),
+                    `Remote release group hydration (${releaseGroupMbid})`,
+                );
             } catch (error) {
                 console.warn(`[MusicBrainzReleaseGroupReadService] Failed to hydrate MusicBrainz release group ${releaseGroupMbid}:`, error);
             }
