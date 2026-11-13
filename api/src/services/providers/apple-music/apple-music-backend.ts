@@ -9,6 +9,8 @@ import { classifyNeutralAudio } from "../provider-quality.js";
 import {
   APPLE_MUSIC_DOWNLOADER_DIR,
   AppleMusicAuthToken,
+  handleAppleDecryptFailure,
+  handleAppleDecryptSuccess,
   loadStoredAppleMusicToken,
   resolveAppleStorefront,
   resolveAppleVideoMaxHeight,
@@ -17,6 +19,7 @@ import {
   syncTokenToDownloader,
 } from "./apple-music-auth.js";
 import { ProviderAuthError } from "../provider-auth-error.js";
+import { recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
 import { ProviderUnavailableError } from "../../download/provider-unavailable-error.js";
 import { db, withSqliteWriteGate } from "../../../database.js";
 import { markAcquisitionPlanningStale } from "../../music/acquisition-planning-control.js";
@@ -46,8 +49,15 @@ function isLikelyProviderId(value: string): boolean {
 export const APPLE_SESSION_FAILURE_PATTERN =
   /reading response from device|device:\s*eof|\bckc\b|decrypt failed|sign[\s-]?in|unauthor|invalid.*(?:token|session|user)|forbidden|\b401\b|\b403\b/i;
 
+export const APPLE_DECRYPT_FAILURE_PATTERN =
+  /\bdecrypt(?:ing|ion)?\b.*?\bfailed\b|\bfailed\b.*?\bdecrypt(?:ing|ion)?\b|failed to run v2(?::\s*decrypt)?|reading response from device|device:\s*eof|\bckc\b|decryption wrapper/i;
+
+export function isAppleDecryptFailure(text: string): boolean {
+  return APPLE_DECRYPT_FAILURE_PATTERN.test(text || "");
+}
+
 export function isAppleSessionFailure(text: string): boolean {
-  return APPLE_SESSION_FAILURE_PATTERN.test(text || "");
+  return APPLE_SESSION_FAILURE_PATTERN.test(text || "") || isAppleDecryptFailure(text);
 }
 
 export function isAppleUnavailableTrackError(text: string): boolean {
@@ -55,6 +65,7 @@ export function isAppleUnavailableTrackError(text: string): boolean {
   if (!clean) return false;
   if (/Unavailable,\s*trying to dl aac/i.test(clean)) return false;
   if (APPLE_SESSION_FAILURE_PATTERN.test(clean)) return false;
+  if (isAppleDecryptFailure(clean)) return false;
   if (/503\s+Service\s+Unavailable/i.test(clean)) return false;
   return /Unavailable/i.test(clean) || /Failed to dl aac-lc/i.test(clean);
 }
@@ -142,7 +153,7 @@ export async function recordUnavailableAppleTrack(
 
 export function describeAppleDownloaderFailure(code: number | null, errorDetail: string): string {
   const detail = (errorDetail || "").trim();
-  if (APPLE_SESSION_FAILURE_PATTERN.test(detail)) {
+  if (isAppleSessionFailure(detail) || isAppleDecryptFailure(detail)) {
     return "Apple Music decryption failed because the wrapper session expired or Apple rejected it. "
       + "Re-authenticate Apple Music from the Auth page (enter the Apple ID 2FA code promptly; the wrapper only waits ~60s). "
       + "If this persists, check the wrapper log for an Apple account playback-limit error before replacing the saved session."
@@ -337,13 +348,18 @@ export async function ensureAppleWrapperReadyForDownload(
     });
     missing = describeAppleDownloaderMissingPrerequisites(snapshot);
     if (!onlyWrapperPortsMissing(snapshot, missing)) {
-      if (!missing.length) console.log("[APPLE-MUSIC] Decryption wrapper answered again after restart.");
+      if (!missing.length) {
+        console.log("[APPLE-MUSIC] Decryption wrapper answered again after restart.");
+        await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() }).catch(() => undefined);
+      }
       return snapshot;
     }
   }
+  const authMsg = `Apple Music decryption wrapper is not answering (${missing.join(", ")})${requested ? " even after a restart" : ""}; Apple downloads are on hold until it responds.`;
+  await recordProviderAuthFailure("apple-music", authMsg).catch(() => undefined);
   throw new ProviderAuthError(
     "apple-music",
-    `Apple Music decryption wrapper is not answering (${missing.join(", ")})${requested ? " even after a restart" : ""}; Apple downloads are on hold until it responds.`,
+    authMsg,
     "wrapper_unreachable",
   );
 }
@@ -828,10 +844,15 @@ export class AppleMusicBackend implements DownloadBackend {
       unavailableTracks,
     );
 
-    if (primaryResult.sessionErrorDetail) {
+    const decryptErrorDetail = primaryResult.sessionErrorDetail
+      || (primaryResult.fatalOtherError && (isAppleSessionFailure(primaryResult.fatalOtherError) || isAppleDecryptFailure(primaryResult.fatalOtherError))
+        ? primaryResult.fatalOtherError : undefined);
+
+    if (decryptErrorDetail) {
+      await handleAppleDecryptFailure(decryptErrorDetail).catch(() => undefined);
       throw new ProviderAuthError(
         "apple-music",
-        describeAppleDownloaderFailure(primaryResult.code, primaryResult.sessionErrorDetail),
+        describeAppleDownloaderFailure(primaryResult.code, decryptErrorDetail),
         "session_expired",
       );
     }
@@ -943,6 +964,9 @@ export class AppleMusicBackend implements DownloadBackend {
     }
 
     const unavailableCount = unavailableTracks.size;
+    if (unavailableCount === 0) {
+      await handleAppleDecryptSuccess().catch(() => undefined);
+    }
     const warningMessage = unavailableCount > 0
       ? `Completed with ${unavailableCount} unavailable track(s) [${Array.from(unavailableTracks.entries()).map(([id, r]) => `${id}: ${r}`).join("; ")}]`
       : undefined;
@@ -980,10 +1004,15 @@ export class AppleMusicBackend implements DownloadBackend {
       unavailableTracks,
     );
 
-    if (result.sessionErrorDetail) {
+    const decryptErrorDetail = result.sessionErrorDetail
+      || (result.fatalOtherError && (isAppleSessionFailure(result.fatalOtherError) || isAppleDecryptFailure(result.fatalOtherError))
+        ? result.fatalOtherError : undefined);
+
+    if (decryptErrorDetail) {
+      await handleAppleDecryptFailure(decryptErrorDetail).catch(() => undefined);
       throw new ProviderAuthError(
         "apple-music",
-        describeAppleDownloaderFailure(result.code, result.sessionErrorDetail),
+        describeAppleDownloaderFailure(result.code, decryptErrorDetail),
         "session_expired",
       );
     }
@@ -998,6 +1027,7 @@ export class AppleMusicBackend implements DownloadBackend {
         throw new ProviderUnavailableError("apple-music", "track", providerId, reason);
       }
       if (result.code === 0 && !result.fatalOtherError) {
+        await handleAppleDecryptSuccess().catch(() => undefined);
         options.onProgress({
           progress: Math.round(((span.completed + 1) / span.total) * 100),
           state: "downloading",
@@ -1010,6 +1040,7 @@ export class AppleMusicBackend implements DownloadBackend {
 
     // Video:
     if (result.code === 0 && !result.fatalOtherError) {
+      await handleAppleDecryptSuccess().catch(() => undefined);
       options.onProgress({
         progress: Math.round(((span.completed + 1) / span.total) * 100),
         state: "downloading",

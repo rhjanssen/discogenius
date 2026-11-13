@@ -3,7 +3,7 @@ import net from "node:net";
 import path from "path";
 import { CONFIG_DIR, Config } from "../../config/config.js";
 import { configuredVideoMaxHeight } from "../provider-quality.js";
-import { providerNeedsReauth, recordProviderAuthOk } from "../provider-auth-state.js";
+import { providerNeedsReauth, recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
 
 /**
  * Apple Music auth (tiddl-style credential handoff).
@@ -624,10 +624,109 @@ export async function getWrapperLoginStatus(): Promise<AppleWrapperLoginStatus> 
   });
   // Apple jobs held because the wrapper stopped answering resume as soon as
   // the decryption server answers again (after a re-login or manual restart).
-  if (reconciled.status === "success" && decryptPortOpen && m3u8PortOpen && providerNeedsReauth("apple-music")) {
-    await recordProviderAuthOk("apple-music").catch(() => undefined);
+  if (reconciled.status === "success" && decryptPortOpen && m3u8PortOpen) {
+    if (providerNeedsReauth("apple-music")) {
+      await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() }).catch(() => undefined);
+    }
+  } else if ((!decryptPortOpen || !m3u8PortOpen) && loadStoredAppleMusicToken()) {
+    await recordProviderAuthFailure("apple-music", reconciled.message).catch(() => undefined);
   }
   return reconciled;
+}
+
+export const APPLE_DECRYPT_FAILURE_WINDOW_MS = 10 * 60 * 1000;
+export const APPLE_DECRYPT_FAILURE_THRESHOLD = 2;
+
+let decryptFailureTimestamps: number[] = [];
+
+export function resetAppleDecryptFailuresForTests(): void {
+  decryptFailureTimestamps = [];
+}
+
+export function recordAppleDecryptFailureTimestamp(now = Date.now()): number {
+  const cutoff = now - APPLE_DECRYPT_FAILURE_WINDOW_MS;
+  decryptFailureTimestamps = decryptFailureTimestamps.filter((t) => t > cutoff);
+  decryptFailureTimestamps.push(now);
+  return decryptFailureTimestamps.length;
+}
+
+export function hasRepeatedAppleDecryptFailures(now = Date.now()): boolean {
+  const cutoff = now - APPLE_DECRYPT_FAILURE_WINDOW_MS;
+  decryptFailureTimestamps = decryptFailureTimestamps.filter((t) => t > cutoff);
+  return decryptFailureTimestamps.length >= APPLE_DECRYPT_FAILURE_THRESHOLD;
+}
+
+export async function handleAppleDecryptFailure(
+  errorDetail: string,
+  options: { checkPorts?: boolean; portsOpen?: boolean; now?: number } = {},
+): Promise<void> {
+  const count = recordAppleDecryptFailureTimestamp(options.now);
+  const host = resolveAppleWrapperHost();
+  let portsOpen = options.portsOpen;
+  if (portsOpen === undefined && options.checkPorts !== false) {
+    try {
+      const [dOpen, mOpen] = await Promise.all([
+        checkWrapperPort(host, 10020, 1500),
+        checkWrapperPort(host, 20020, 1500),
+      ]);
+      portsOpen = dOpen && mOpen;
+    } catch {
+      portsOpen = false;
+    }
+  }
+
+  if (portsOpen === false) {
+    const message = `Apple Music decryption wrapper is unreachable (ports 10020/20020 not answering); Apple downloads are held until it responds. [detail: ${errorDetail}]`;
+    await recordProviderAuthFailure("apple-music", message);
+  } else if (count >= APPLE_DECRYPT_FAILURE_THRESHOLD) {
+    const message = `Apple Music decryption failed repeatedly (${count} failures in ${Math.round(APPLE_DECRYPT_FAILURE_WINDOW_MS / 60000)}m): ${errorDetail}`;
+    await recordProviderAuthFailure("apple-music", message);
+  }
+}
+
+export async function handleAppleDecryptSuccess(): Promise<void> {
+  decryptFailureTimestamps = [];
+  if (loadStoredAppleMusicToken()) {
+    await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() });
+  }
+}
+
+/**
+ * Health probe checking wrapper reachability and recent decrypt failures.
+ * Sets Apple to non-ok when ports are unreachable or failures repeat in a window,
+ * and sets status back to ok with lastOkAt updated when reachable.
+ */
+export async function probeAppleWrapperHealth(
+  deps: {
+    checkPort?: (host: string, port: number) => Promise<boolean>;
+    hasToken?: () => boolean;
+  } = {},
+): Promise<{ ok: boolean; status: "ok" | "needs_reauth" | "idle"; message: string }> {
+  const hasToken = deps.hasToken ? deps.hasToken() : Boolean(loadStoredAppleMusicToken());
+  if (!hasToken) {
+    return { ok: true, status: "idle", message: "Apple Music is not configured." };
+  }
+  const host = resolveAppleWrapperHost();
+  const check = deps.checkPort ?? checkWrapperPort;
+  const [decryptPortOpen, m3u8PortOpen] = await Promise.all([
+    check(host, 10020),
+    check(host, 20020),
+  ]);
+  if (!decryptPortOpen || !m3u8PortOpen) {
+    const missing: string[] = [];
+    if (!decryptPortOpen) missing.push("10020");
+    if (!m3u8PortOpen) missing.push("20020");
+    const message = `Apple Music decryption wrapper is unreachable (ports ${missing.join(", ")} not answering). Start it with docker compose up -d apple-music-wrapper.`;
+    await recordProviderAuthFailure("apple-music", message);
+    return { ok: false, status: "needs_reauth", message };
+  }
+  if (hasRepeatedAppleDecryptFailures()) {
+    const message = `Apple Music decryption failed repeatedly in the last ${Math.round(APPLE_DECRYPT_FAILURE_WINDOW_MS / 60000)} minutes.`;
+    await recordProviderAuthFailure("apple-music", message);
+    return { ok: false, status: "needs_reauth", message };
+  }
+  await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() });
+  return { ok: true, status: "ok", message: "Decryption wrapper is reachable." };
 }
 
 /** Held Apple jobs are re-checked this often; no network when nothing is held. */
@@ -652,13 +751,19 @@ export async function runAppleWrapperHoldProbe(
 export function startAppleWrapperHoldProbeLoop(): void {
   if (appleHoldProbeLoop) return;
   appleHoldProbeLoop = setInterval(() => {
-    void runAppleWrapperHoldProbe()
-      .then((result) => {
-        if (result === "cleared") console.log("[APPLE] Wrapper answers again; released held Apple downloads.");
-      })
-      .catch((error) => {
-        console.error("[APPLE] Wrapper hold probe failed:", error instanceof Error ? error.message : "unknown");
+    if (providerNeedsReauth("apple-music")) {
+      void runAppleWrapperHoldProbe()
+        .then((result) => {
+          if (result === "cleared") console.log("[APPLE] Wrapper answers again; released held Apple downloads.");
+        })
+        .catch((error) => {
+          console.error("[APPLE] Wrapper hold probe failed:", error instanceof Error ? error.message : "unknown");
+        });
+    } else if (loadStoredAppleMusicToken()) {
+      void probeAppleWrapperHealth().catch((error) => {
+        console.error("[APPLE] Wrapper health probe failed:", error instanceof Error ? error.message : "unknown");
       });
+    }
   }, APPLE_WRAPPER_HOLD_PROBE_INTERVAL_MS);
   appleHoldProbeLoop.unref?.();
 }
