@@ -661,3 +661,88 @@ test("a failed manual import leaves the replaced file in Unmapped, on disk", asy
     resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
   }
 });
+
+test("manual import holds confident AcoustID mismatch in review unless forced, and falls back when unverified", async () => {
+  fixture();
+  try {
+    let importerCalled = false;
+    const mismatchService = new CanonicalManualImportService(
+      db,
+      async () => {
+        importerCalled = true;
+        db.prepare(`
+          INSERT INTO TrackFiles (id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+            file_path, relative_path, filename, extension, file_class)
+          VALUES (1, 1, '/library/stereo', 'track', 1, 10, 1000, 100, '/library/stereo/Artist/Release A/01 Track A.flac',
+            'Artist/Release A/01 Track A.flac', '01 Track A.flac', 'flac', 'audio')
+        `).run();
+        return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 1 } };
+      },
+      async () => ({
+        status: "mismatch",
+        verified: false,
+        reason: 'Fingerprint matches rec-wrong ("Wrong Track") not rec-1 ("Track A")',
+        matchedRecordingId: null,
+        detectedRecordingIds: ["rec-wrong"],
+        detectedLabel: 'rec-wrong ("Wrong Track")',
+        expectedLabel: 'rec-1 ("Track A")',
+      }),
+    );
+
+    const rejected = await mismatchService.import({
+      libraryId: 1,
+      editionId: 10,
+      mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+    });
+    assert.equal(importerCalled, false);
+    assert.equal(rejected.imported, 0);
+    assert.equal(rejected.skipped, 1);
+    assert.match(rejected.reviewReasons?.["1"] ?? "", /Fingerprint matches rec-wrong/);
+    assert.match(
+      (db.prepare("SELECT reason FROM UnmappedFiles WHERE id = 1").get() as { reason: string }).reason,
+      /Fingerprint matches rec-wrong/,
+    );
+
+    // Explicit force overrides the confident mismatch
+    const forced = await mismatchService.import({
+      libraryId: 1,
+      editionId: 10,
+      force: true,
+      mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+    });
+    assert.equal(importerCalled, true);
+    assert.equal(forced.imported, 1);
+
+    // No AcoustID result / API error falls back to tag/length import and records unverified
+    const fallbackService = new CanonicalManualImportService(
+      db,
+      async () => {
+        db.prepare(`
+          INSERT INTO TrackFiles (id, artist_metadata_id, library_root, file_type, library_id, album_edition_id, track_id, recording_id,
+            file_path, relative_path, filename, extension, file_class)
+          VALUES (2, 1, '/library/stereo', 'track', 1, 10, 1000, 100, '/library/stereo/Artist/Release A/01 Track A.flac',
+            'Artist/Release A/01 Track A.flac', '01 Track A.flac', 'flac', 'audio')
+        `).run();
+        return { requested: 1, imported: 1, duplicates: 0, skipped: 0, importedFileIds: { 1: 2 } };
+      },
+      async () => ({
+        status: "unverified",
+        verified: false,
+        reason: "no_match",
+        matchedRecordingId: null,
+        detectedRecordingIds: [],
+        detectedLabel: null,
+        expectedLabel: 'rec-1 ("Track A")',
+      }),
+    );
+    const unverifiedResult = await fallbackService.import({
+      libraryId: 1,
+      editionId: 10,
+      mappings: [{ unmappedFileId: 1, trackId: 1000 }],
+    });
+    assert.equal(unverifiedResult.imported, 1);
+    assert.equal(unverifiedResult.unverified, 1);
+  } finally {
+    resetActiveSchemaRows(db, ["UnmappedFiles", "Libraries", "MetadataProfiles", "quality_profiles"]);
+  }
+});

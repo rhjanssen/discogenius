@@ -67,18 +67,37 @@ type AcoustIdPost = (
     url: string,
     data: Buffer,
     config: Record<string, unknown>,
-) => Promise<{ status?: number; data?: any }>;
+) => Promise<{ status?: number; headers?: Record<string, unknown>; data?: any }>;
 
 export interface AcoustIdLookupOptions {
     /** Explicit null/blank exercises the missing-client boundary. */
     clientId?: string | null;
     post?: AcoustIdPost;
     bypassCache?: boolean;
+    /** Override minimum delay between uncached AcoustID requests (default 350ms <= 3 req/s). */
+    minIntervalMs?: number;
+    /** Override HTTP 429 retry backoff delays in milliseconds. */
+    retryDelaysMs?: readonly number[];
+}
+
+export function isAcoustIdConfigured(): boolean {
+    return Boolean(
+        resolveAcoustIdClientId({
+            env: process.env,
+            appConfig: Config.getAppConfig(),
+        }),
+    );
 }
 
 const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = 1100;
 let musicBrainzRequestChain: Promise<void> = Promise.resolve();
 let lastMusicBrainzRequestAt = 0;
+
+const ACOUSTID_MIN_REQUEST_INTERVAL_MS = 350;
+const ACOUSTID_DEFAULT_RETRY_DELAYS_MS = [1000, 2000, 4000] as const;
+let acoustIdRequestChain: Promise<void> = Promise.resolve();
+let lastAcoustIdRequestAt = 0;
+
 const ACOUSTID_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const ACOUSTID_CACHE_MAX_ENTRIES = 256;
 const acoustIdLookupCache = new Map<string, {
@@ -94,6 +113,27 @@ export function getMusicBrainzHeaders() {
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function scheduleAcoustIdRequest<T>(
+    request: () => Promise<T>,
+    minIntervalMs: number = ACOUSTID_MIN_REQUEST_INTERVAL_MS,
+): Promise<T> {
+    const interval = Math.max(0, minIntervalMs);
+    const run = acoustIdRequestChain.then(async () => {
+        if (interval > 0 && lastAcoustIdRequestAt > 0) {
+            const elapsed = Date.now() - lastAcoustIdRequestAt;
+            if (elapsed < interval) {
+                await delay(interval - elapsed);
+            }
+        }
+
+        lastAcoustIdRequestAt = Date.now();
+        return request();
+    });
+
+    acoustIdRequestChain = run.then(() => undefined, () => undefined);
+    return run;
 }
 
 export async function scheduleMusicBrainzRequest<T>(request: () => Promise<T>): Promise<T> {
@@ -387,22 +427,51 @@ export async function lookupAcoustIdDetailed(
         fingerprint,
     });
 
+    const body = gzipSync(Buffer.from(params.toString(), "utf8"));
+    const retryDelaysMs = options.retryDelaysMs ?? ACOUSTID_DEFAULT_RETRY_DELAYS_MS;
+    const minIntervalMs = options.minIntervalMs ?? ACOUSTID_MIN_REQUEST_INTERVAL_MS;
+
     try {
         const post = options.post ?? (axios.post.bind(axios) as AcoustIdPost);
-        const response = await post(
-            "https://api.acoustid.org/v2/lookup",
-            gzipSync(Buffer.from(params.toString(), "utf8")),
-            {
-                timeout: 10000,
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Content-Encoding": "gzip",
-                },
-                validateStatus: (status: number) => status < 500,
-            },
-        );
+        let response: { status?: number; headers?: Record<string, unknown>; data?: any } | undefined;
+
+        for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+            response = await scheduleAcoustIdRequest(
+                () => post(
+                    "https://api.acoustid.org/v2/lookup",
+                    body,
+                    {
+                        timeout: 10000,
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "Content-Encoding": "gzip",
+                        },
+                        validateStatus: (status: number) => status < 500,
+                    },
+                ),
+                minIntervalMs,
+            );
+
+            const isRateLimited = response.status === 429 || response.data?.error?.code === 5;
+            if (!isRateLimited || attempt === retryDelaysMs.length) {
+                break;
+            }
+
+            const retryAfterHeader = response.headers?.["retry-after"] ?? response.headers?.["Retry-After"];
+            const retryAfterSec = typeof retryAfterHeader === "string" || typeof retryAfterHeader === "number"
+                ? Number(retryAfterHeader)
+                : Number.NaN;
+            const backoffMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+                ? Math.min(30_000, Math.round(retryAfterSec * 1000))
+                : retryDelaysMs[attempt];
+            if (backoffMs > 0) {
+                await delay(backoffMs);
+            }
+        }
+
         if (
-            (typeof response.status === "number" && response.status >= 400)
+            !response
+            || (typeof response.status === "number" && response.status >= 400)
             || response.data?.status !== "ok"
         ) {
             return {
@@ -410,10 +479,10 @@ export async function lookupAcoustIdDetailed(
                 matches: [],
                 cached: false,
                 error: String(
-                    response.data?.error?.message
-                    || response.data?.error?.code
-                    || response.data?.error
-                    || `AcoustID returned HTTP ${response.status ?? "error"}`,
+                    response?.data?.error?.message
+                    || response?.data?.error?.code
+                    || response?.data?.error
+                    || `AcoustID returned HTTP ${response?.status ?? "error"}`,
                 ),
             };
         }
