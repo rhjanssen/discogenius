@@ -14,6 +14,7 @@ export interface UnmappedFile {
     filename: string;
     extension: string;
     file_size: number | null;
+    file_mtime_ms?: number | null;
     duration: number | null;
     bitrate: number | null;
     sample_rate: number | null;

@@ -6,6 +6,7 @@ import { MoveArtistService } from "../../mediafiles/move-artist-service.js";
 import { RenameTrackFileService } from "../../mediafiles/rename-track-file-service.js";
 import { AudioTagService } from "../../mediafiles/audio-tag-service.js";
 import { parseFileSelectionIds } from "../../mediafiles/file-selection.js";
+import { UnmappedFilesService } from "../../mediafiles/unmapped-files.js";
 import { ArtistStatisticsService } from "../../music/artist-statistics-service.js";
 import { resolveArtistMetadataId } from "../../music/managed-artists.js";
 import { appEvents, AppEvent } from "../app-events.js";
@@ -93,8 +94,14 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             return result;
         },
         perArtist ? null : async () => {
-            if (job.payload.trackUnmappedFiles !== false) await runRootInventoryWorkUnit(job, ctx);
-            return DiskScanService.pruneUnmappedFiles();
+            if (job.payload.trackUnmappedFiles !== false) {
+                await runRootInventoryWorkUnit(job, ctx);
+            }
+            const pruned = await DiskScanService.pruneUnmappedFiles();
+            if (job.payload.trackUnmappedFiles !== false) {
+                await new UnmappedFilesService().recheckExistingUnmappedFiles();
+            }
+            return pruned;
         },
         addNewArtists ? () => DiskScanService.discoverNewArtists(
             event => ctx.updateCommandDescription(job, {
@@ -106,6 +113,10 @@ export const handleRescanFolders: CommandHandler<"RescanFolders"> = async (job, 
             },
         ) : undefined,
     );
+
+    if (perArtist && job.payload.trackUnmappedFiles !== false) {
+        await new UnmappedFilesService().recheckExistingUnmappedFiles({ artistIds });
+    }
 
     const reviewFiles = (CommandQueueManager.get(job.id)?.payload.rootInventory?.reviewFiles ?? 0)
         + (scanResult.discovery?.reviewFilesAdded ?? 0);

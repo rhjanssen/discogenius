@@ -749,6 +749,101 @@ export class UnmappedFilesService {
     }
 
     /**
+     * Re-evaluate existing non-ignored unmapped files whose file size/mtime
+     * changed or whose artist catalog was updated since the last check.
+     * Matching folders queue ImportUnmappedFiles (rename + retag); non-matching
+     * folders update their reason, file_size, file_mtime_ms, and updated_at.
+     */
+    async recheckExistingUnmappedFiles(options?: {
+        artistIds?: readonly string[];
+    }): Promise<{ checkedFolders: number; skippedFolders: number; queuedFiles: number; updatedFolders: number }> {
+        const allRows = this.repository.findAll().filter((row) => !row.ignored);
+        const artistFilter = options?.artistIds?.length
+            ? new Set(options.artistIds.map((id) => String(id).trim()).filter(Boolean))
+            : null;
+        let allowedArtistNames: Set<string> | null = null;
+        if (artistFilter && artistFilter.size > 0) {
+            allowedArtistNames = new Set<string>();
+            for (const id of artistFilter) {
+                const row = db.prepare("SELECT name FROM ArtistMetadata WHERE id = ? OR mbid = ? LIMIT 1").get(id, id) as { name?: string } | undefined;
+                if (row?.name) allowedArtistNames.add(row.name.toLowerCase());
+            }
+        }
+
+        const byFolder = new Map<string, UnmappedFile[]>();
+        for (const row of allRows) {
+            const folder = path.dirname(row.file_path);
+            const list = byFolder.get(folder) ?? [];
+            list.push(row);
+            byFolder.set(folder, list);
+        }
+
+        let checkedFolders = 0;
+        let skippedFolders = 0;
+        let queuedFiles = 0;
+        let updatedFolders = 0;
+
+        for (const files of byFolder.values()) {
+            const anchor = files[0];
+            if (!anchor) continue;
+            if (allowedArtistNames && allowedArtistNames.size > 0) {
+                const folderArtist = String(anchor.detected_artist || "").trim().toLowerCase();
+                if (!folderArtist || !allowedArtistNames.has(folderArtist)) continue;
+            }
+
+            let needsRecheck = false;
+            const statsById = new Map<number, fs.Stats>();
+            for (const file of files) {
+                let stats: fs.Stats;
+                try {
+                    stats = fs.statSync(file.file_path);
+                } catch {
+                    continue;
+                }
+                statsById.set(file.id, stats);
+                if (!isUnmappedFileCheckCurrent({
+                    fileSize: file.file_size,
+                    fileMtimeMs: file.file_mtime_ms ?? null,
+                    updatedAt: file.updated_at ?? null,
+                    statsSize: stats.size,
+                    statsMtimeMs: stats.mtimeMs,
+                    artistName: file.detected_artist,
+                })) {
+                    needsRecheck = true;
+                }
+            }
+
+            if (statsById.size === 0) continue;
+            if (!needsRecheck) {
+                skippedFolders++;
+                continue;
+            }
+
+            checkedFolders++;
+            const planned = await this.planAutoImportForFolder(anchor, { writeCatalog: true });
+            const queued = await this.autoImportFolderGroup(anchor, planned);
+            if (queued > 0) {
+                queuedFiles += queued;
+            } else {
+                updatedFolders++;
+            }
+            await withDbWrite(() => {
+                const stamp = db.prepare(`
+                    UPDATE UnmappedFiles
+                    SET file_size = ?, file_mtime_ms = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                `);
+                for (const file of planned.files) {
+                    const stats = statsById.get(file.id);
+                    if (stats) stamp.run(stats.size, stats.mtimeMs, file.id);
+                }
+            });
+        }
+
+        return { checkedFolders, skippedFolders, queuedFiles, updatedFolders };
+    }
+
+    /**
      * Import one folder of unmapped files without a person when its tags prove
      * a single canonical release in the catalog and every file maps to its own
      * track (docs/PRODUCT_VISION.md ADR-2). Otherwise the folder stays in
@@ -1046,3 +1141,71 @@ async function readIdentityTags(filePath: string): Promise<PlanningIdentity> {
         return { tags: {}, durationSeconds: null };
     }
 }
+
+export function hasArtistCatalogChangedSince(params: {
+    artistId?: string | number | null;
+    artistName?: string | null;
+    since?: string | null;
+}): boolean {
+    const since = String(params.since || "").trim();
+    if (!since) return true;
+
+    let artistRow: { id: number } | undefined;
+    const rawId = params.artistId != null ? String(params.artistId).trim() : "";
+    if (rawId) {
+        artistRow = db.prepare(`
+            SELECT id FROM ArtistMetadata WHERE id = ? OR mbid = ? LIMIT 1
+        `).get(rawId, rawId) as { id: number } | undefined;
+    }
+    if (!artistRow && params.artistName) {
+        artistRow = db.prepare(`
+            SELECT id FROM ArtistMetadata WHERE lower(name) = lower(?) LIMIT 1
+        `).get(params.artistName.trim()) as { id: number } | undefined;
+    }
+    if (!artistRow) {
+        return true;
+    }
+
+    const changed = db.prepare(`
+        SELECT 1 FROM ArtistMetadata am
+        WHERE am.id = ?
+          AND (
+            datetime(am.updated_at) > datetime(?)
+            OR EXISTS (
+              SELECT 1 FROM Albums a
+              WHERE a.artist_metadata_id = am.id
+                AND datetime(a.updated_at) > datetime(?)
+            )
+            OR EXISTS (
+              SELECT 1 FROM AlbumEditions ae
+              WHERE ae.artist_metadata_id = am.id
+                AND datetime(ae.updated_at) > datetime(?)
+            )
+          )
+        LIMIT 1
+    `).get(artistRow.id, since, since, since);
+    return Boolean(changed);
+}
+
+export function isUnmappedFileCheckCurrent(params: {
+    fileSize: number | null | undefined;
+    fileMtimeMs: number | null | undefined;
+    updatedAt: string | null | undefined;
+    statsSize: number;
+    statsMtimeMs: number;
+    artistId?: string | number | null;
+    artistName?: string | null;
+}): boolean {
+    if (params.fileSize == null || params.fileMtimeMs == null || !params.updatedAt) {
+        return false;
+    }
+    if (params.fileSize !== params.statsSize || Math.abs(params.fileMtimeMs - params.statsMtimeMs) >= 1) {
+        return false;
+    }
+    return !hasArtistCatalogChangedSince({
+        artistId: params.artistId,
+        artistName: params.artistName,
+        since: params.updatedAt,
+    });
+}
+
