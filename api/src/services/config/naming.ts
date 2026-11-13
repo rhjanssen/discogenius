@@ -211,6 +211,14 @@ function displayArtistTokenName(name: string, mbid?: string | null): string {
   return translateStoredArtistName(mbid, fallback, null, getArtistNameTranslationOptions()).name;
 }
 
+function displayLocaleArtistTokenName(name: string, mbid?: string | null): string {
+  const fallback = name || "Unknown Artist";
+  return translateStoredArtistName(mbid, fallback, null, {
+    ...getArtistNameTranslationOptions(),
+    enabled: true,
+  }).name;
+}
+
 function toCleanText(input: string): string {
   return cleanTitle(input);
 }
@@ -279,7 +287,9 @@ export function getPrettyProviderName(provider: string | null | undefined): stri
 
 function buildDerived(context: NamingContext) {
   const artistMbId = context.artistMbId || "";
-  const artistName = displayArtistTokenName(context.artistName || "Unknown Artist", artistMbId);
+  const artistOriginalName = context.artistName || "Unknown Artist";
+  const artistName = displayArtistTokenName(artistOriginalName, artistMbId);
+  const artistLocaleName = displayLocaleArtistTokenName(artistOriginalName, artistMbId);
   const artistId = context.artistId || "";
   const artistDisambiguation = context.artistDisambiguation || "";
   const artistGenre = context.artistGenre || "";
@@ -300,7 +310,9 @@ function buildDerived(context: NamingContext) {
 
   const trackTitle = context.trackTitle || "Unknown Track";
   const trackArtistMbId = context.trackArtistMbId || artistMbId;
+  const trackArtistOriginalName = context.trackArtistName || artistOriginalName;
   const trackArtistName = displayArtistTokenName(context.trackArtistName || artistName, trackArtistMbId);
+  const trackArtistLocaleName = displayLocaleArtistTokenName(trackArtistOriginalName, trackArtistMbId);
   const trackMbId = context.trackMbId || "";
 
   const trackNumber = Number(context.trackNumber || 0);
@@ -334,6 +346,8 @@ function buildDerived(context: NamingContext) {
 
   return {
     artistName,
+    artistOriginalName,
+    artistLocaleName,
     artistMbId,
     artistDisambiguation,
     artistGenre,
@@ -359,6 +373,8 @@ function buildDerived(context: NamingContext) {
     releaseGroup,
     trackTitle,
     trackArtistName,
+    trackArtistOriginalName,
+    trackArtistLocaleName,
     trackArtistMbId,
     trackMbId,
     recordingId,
@@ -421,6 +437,34 @@ function resolveTokenValue(
     case "artistcleannamthe":
     case "artistcleannamethe":
       baseValue = cleanTitleThe(derived.artistName);
+      break;
+    case "artistoriginalname":
+      baseValue = derived.artistOriginalName;
+      break;
+    case "artistoriginalcleanname":
+      baseValue = cleanTitle(derived.artistOriginalName);
+      break;
+    case "artistoriginalnamethe":
+      baseValue = titleThe(derived.artistOriginalName);
+      break;
+    case "artistoriginalcleannamethe":
+      baseValue = cleanTitleThe(derived.artistOriginalName);
+      break;
+    case "artistlocalename":
+    case "artistalias":
+      baseValue = derived.artistLocaleName;
+      break;
+    case "artistlocalecleanname":
+    case "artistcleanalias":
+      baseValue = cleanTitle(derived.artistLocaleName);
+      break;
+    case "artistlocalenamethe":
+    case "artistaliasthe":
+      baseValue = titleThe(derived.artistLocaleName);
+      break;
+    case "artistlocalecleannamethe":
+    case "artistcleanaliasthe":
+      baseValue = cleanTitleThe(derived.artistLocaleName);
       break;
     case "artistmbid":
       baseValue = derived.artistMbId;
@@ -557,6 +601,22 @@ function resolveTokenValue(
       break;
     case "trackartistcleannamethe":
       baseValue = cleanTitleThe(derived.trackArtistName);
+      break;
+    case "trackartistoriginalname":
+      baseValue = derived.trackArtistOriginalName;
+      break;
+    case "trackartistoriginalcleanname":
+      baseValue = cleanTitle(derived.trackArtistOriginalName);
+      break;
+    case "trackartistoriginalnamethe":
+      baseValue = titleThe(derived.trackArtistOriginalName);
+      break;
+    case "trackartistoriginalcleannamethe":
+      baseValue = cleanTitleThe(derived.trackArtistOriginalName);
+      break;
+    case "trackartistlocalename":
+    case "trackartistalias":
+      baseValue = derived.trackArtistLocaleName;
       break;
     case "trackartistmbid":
       baseValue = derived.trackArtistMbId;
@@ -734,7 +794,7 @@ type CompiledNamingTemplate = {
 const NAMING_TEMPLATE_CACHE_LIMIT = 128;
 const namingTemplatePlanCache = new Map<string, CompiledNamingTemplate>();
 const SpecialMarkerRegex = /\uE000DISCOGENIUS_SPECIAL_(\d+)\uE000/g;
-const TitleTokenRegex = /(\{\{|\}\})|\{([- ._[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)?)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
+const TitleTokenRegex = /(\{\{|\}\})|\{([- ._[(]*)([a-zA-Z0-9]+(?:[- ._]+[a-zA-Z0-9]+)*)(?::([ a-zA-Z0-9+-:]+(?<![- ])))?([- ._)\]]*)\}/g;
 
 function getTokenLetterCase(tokenName: string): TokenLetterCase {
   const letters = tokenName.replace(/[^a-zA-Z]/g, "");
@@ -922,6 +982,18 @@ const KNOWN_TOKEN_NAMES = new Set([
   "artistnamethe",
   "artistcleannamthe",
   "artistcleannamethe",
+  "artistoriginalname",
+  "artistoriginalcleanname",
+  "artistoriginalnamethe",
+  "artistoriginalcleannamethe",
+  "artistlocalename",
+  "artistlocalecleanname",
+  "artistlocalenamethe",
+  "artistlocalecleannamethe",
+  "artistalias",
+  "artistcleanalias",
+  "artistaliasthe",
+  "artistcleanaliasthe",
   "artistmbid",
   "artistdisambiguation",
   "artistgenre",
@@ -968,6 +1040,12 @@ const KNOWN_TOKEN_NAMES = new Set([
   "trackartistcleanname",
   "trackartistnamethe",
   "trackartistcleannamethe",
+  "trackartistoriginalname",
+  "trackartistoriginalcleanname",
+  "trackartistoriginalnamethe",
+  "trackartistoriginalcleannamethe",
+  "trackartistlocalename",
+  "trackartistalias",
   "trackartistmbid",
   "trackmbid",
   "recordingid",
@@ -1078,7 +1156,24 @@ export function validateNamingTemplate(
     errors.push(`Unknown token${unknownTokens.length === 1 ? "" : "s"}: ${unknownTokens.join(", ")}.`);
   }
 
-  if (kind === "artist_folder" && !hasAnyToken(tokens, ["artistName", "artistCleanName", "artistNameThe", "artistCleanNameThe"])) {
+  if (kind === "artist_folder" && !hasAnyToken(tokens, [
+    "artistName",
+    "artistCleanName",
+    "artistNameThe",
+    "artistCleanNameThe",
+    "artistOriginalName",
+    "artistOriginalCleanName",
+    "artistOriginalNameThe",
+    "artistOriginalCleanNameThe",
+    "artistLocaleName",
+    "artistLocaleCleanName",
+    "artistLocaleNameThe",
+    "artistLocaleCleanNameThe",
+    "artistAlias",
+    "artistCleanAlias",
+    "artistAliasThe",
+    "artistCleanAliasThe",
+  ])) {
     errors.push("Artist folder template must include an artist name token.");
   }
 

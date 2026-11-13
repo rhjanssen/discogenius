@@ -119,3 +119,35 @@ test("options come from metadata config; default for this install is on, en then
   assert.equal(tags.getArtistNameTranslationOptions({ translate_artist_names: false }).enabled, false);
   assert.deepEqual(tags.getArtistNameTranslationOptions(), ON);
 });
+
+test("naming tokens distinguish {Artist Original Name} from {Artist Locale Name} / {Artist Alias} (#79)", async () => {
+  const naming = await import("../config/naming.js");
+  const { updateConfig } = await import("../config/config.js");
+
+  updateConfig("metadata", { translate_artist_names: false, artist_name_locales: "en,nl" });
+  assert.equal(
+    naming.renderRelativePath("{Artist Name}", { artistName: "Пётр Ильич Чайковский", artistMbId: TCHAIKOVSKY }),
+    "Пётр Ильич Чайковский",
+  );
+  assert.equal(
+    naming.renderRelativePath("{Artist Locale Name}", { artistName: "Пётр Ильич Чайковский", artistMbId: TCHAIKOVSKY }),
+    "Pyotr Ilyich Tchaikovsky",
+  );
+  assert.equal(
+    naming.renderRelativePath("{Artist Alias}", { artistName: "Пётр Ильич Чайковский", artistMbId: TCHAIKOVSKY }),
+    "Pyotr Ilyich Tchaikovsky",
+  );
+
+  updateConfig("metadata", { translate_artist_names: true, artist_name_locales: "en,nl" });
+  assert.equal(
+    naming.renderRelativePath("{Artist Name}", { artistName: "Пётр Ильич Чайковский", artistMbId: TCHAIKOVSKY }),
+    "Pyotr Ilyich Tchaikovsky",
+  );
+  assert.equal(
+    naming.renderRelativePath("{Artist Original Name}", { artistName: "Пётр Ильич Чайковский", artistMbId: TCHAIKOVSKY }),
+    "Пётр Ильич Чайковский",
+  );
+  assert.deepEqual(naming.validateNamingTemplate("{Artist Original Name} {mbid-{Artist MbId}}", "artist_folder").errors, []);
+  assert.deepEqual(naming.validateNamingTemplate("{Artist Locale Name} {mbid-{Artist MbId}}", "artist_folder").errors, []);
+  assert.deepEqual(naming.validateNamingTemplate("{Artist Alias} {mbid-{Artist MbId}}", "artist_folder").errors, []);
+});

@@ -127,3 +127,33 @@ test("exposes stable id/name", () => {
   assert.equal(provider.id, "servarr-metadata");
   assert.ok(provider.name.length > 0);
 });
+
+test("getArtistLocaleAliases fetches MusicBrainz locale aliases in online catalog mode (#79)", async () => {
+  const mbid = "9ddd7abc-9e1b-471d-8031-583bc6bc8be9";
+  const requestedUrls: string[] = [];
+  const provider = new ServarrMetadataCatalogProvider(
+    spyService().service as any,
+    (async (url: string | URL) => {
+      requestedUrls.push(String(url));
+      return new Response(JSON.stringify({
+        aliases: [
+          { name: "Pyotr Ilyich Tchaikovsky", "sort-name": "Tchaikovsky, Pyotr Ilyich", locale: "en", primary: true, type: "Artist name" },
+          { name: "Tchaikovsky", locale: "", primary: false, type: "Search hint" },
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch,
+  );
+
+  const aliases = await provider.getArtistLocaleAliases([mbid]);
+  assert.equal(requestedUrls.length, 1);
+  assert.match(requestedUrls[0], /musicbrainz\.org\/ws\/2\/artist\/9ddd7abc-9e1b-471d-8031-583bc6bc8be9\?inc=aliases&fmt=json/);
+  assert.deepEqual(aliases.get(mbid), [
+    {
+      name: "Pyotr Ilyich Tchaikovsky",
+      sortName: "Tchaikovsky, Pyotr Ilyich",
+      locale: "en",
+      primaryForLocale: true,
+      type: "Artist name",
+    },
+  ]);
+});

@@ -17,6 +17,7 @@
  */
 import { servarrMetadata, ServarrMetadataService } from "../metadata/servarr-metadata.js";
 import type {
+  CatalogArtistLocaleAlias,
   CatalogProvider,
   CatalogSearchOptions,
   CatalogSearchResults,
@@ -40,13 +41,102 @@ export class ServarrMetadataCatalogProvider implements CatalogProvider {
    * canonical metadata client — a different object from the one the rest of the
    * ingestion path talks to.
    */
-  constructor(private readonly service: Pick<
-    ServarrMetadataService,
-    "getArtistInfo" | "getAlbumInfo" | "searchForNewArtist" | "searchAll"
-  > = servarrMetadata) {}
+  constructor(
+    private readonly service: Pick<
+      ServarrMetadataService,
+      "getArtistInfo" | "getAlbumInfo" | "searchForNewArtist" | "searchAll"
+    > = servarrMetadata,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
 
   async getArtist(artistMbid: string): Promise<LidarrArtist> {
     return this.service.getArtistInfo(artistMbid);
+  }
+
+  async getArtistLocaleAliases(artistMbids: string[]): Promise<Map<string, CatalogArtistLocaleAlias[]>> {
+    const result = new Map<string, CatalogArtistLocaleAlias[]>();
+    const uniqueMbids = [...new Set(artistMbids.map((id) => String(id || "").trim().toLowerCase()).filter(Boolean))];
+    for (const mbid of uniqueMbids) {
+      let aliases: CatalogArtistLocaleAlias[] = [];
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8_000);
+        try {
+          const response = await this.fetchImpl(
+            `https://musicbrainz.org/ws/2/artist/${encodeURIComponent(mbid)}?inc=aliases&fmt=json`,
+            {
+              headers: {
+                Accept: "application/json",
+                "User-Agent": "Discogenius/1.0 (https://github.com/rhjanssen/discogenius)",
+              },
+              signal: controller.signal,
+            },
+          );
+          if (response.ok) {
+            const payload = await response.json() as {
+              aliases?: Array<{
+                name?: unknown;
+                "sort-name"?: unknown;
+                locale?: unknown;
+                primary?: unknown;
+                type?: unknown;
+              }>;
+            };
+            aliases = (Array.isArray(payload?.aliases) ? payload.aliases : [])
+              .map((alias) => {
+                const name = String(alias?.name ?? "").trim();
+                const locale = String(alias?.locale ?? "").trim();
+                if (!name || !locale) return null;
+                return {
+                  name,
+                  sortName: alias?.["sort-name"] ? String(alias["sort-name"]).trim() : null,
+                  locale,
+                  primaryForLocale: Boolean(alias?.primary),
+                  type: alias?.type ? String(alias.type).trim() : null,
+                } satisfies CatalogArtistLocaleAlias;
+              })
+              .filter((entry): entry is CatalogArtistLocaleAlias => entry !== null);
+          }
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch {
+        // Fall through to best-effort Servarr alias inspection below.
+      }
+
+      if (aliases.length === 0) {
+        try {
+          const artist = await this.service.getArtistInfo(mbid) as LidarrArtist & {
+            aliases?: Array<string | { name?: unknown; sortName?: unknown; "sort-name"?: unknown; locale?: unknown; primary?: unknown; primaryForLocale?: unknown; type?: unknown }>;
+          };
+          const rawAliases = Array.isArray(artist?.aliases) ? artist.aliases : [];
+          aliases = rawAliases
+            .map((alias) => {
+              if (!alias || typeof alias !== "object") return null;
+              const name = String(alias.name ?? "").trim();
+              const locale = String(alias.locale ?? "").trim();
+              if (!name || !locale) return null;
+              return {
+                name,
+                sortName: alias.sortName
+                  ? String(alias.sortName).trim()
+                  : alias["sort-name"]
+                    ? String(alias["sort-name"]).trim()
+                    : null,
+                locale,
+                primaryForLocale: Boolean(alias.primaryForLocale ?? alias.primary),
+                type: alias.type ? String(alias.type).trim() : null,
+              } satisfies CatalogArtistLocaleAlias;
+            })
+            .filter((entry): entry is CatalogArtistLocaleAlias => entry !== null);
+        } catch {
+          // Ignore Servarr fallback failure
+        }
+      }
+
+      result.set(mbid, aliases);
+    }
+    return result;
   }
 
   async getArtistReleaseGroups(artistMbid: string): Promise<MusicBrainzReleaseGroupForMatching[]> {
