@@ -1,7 +1,8 @@
 import { Router } from "express";
-import { withDbWrite } from "../database.js";
+import { db, withDbWrite } from "../database.js";
 import { AudioTagService } from "../services/mediafiles/audio-tag-service.js";
 import { parseFileSelectionIds } from "../services/mediafiles/file-selection.js";
+import { listDerivativeSourceFiles } from "../services/metadata/derivative-release.js";
 import { CommandNames } from "../services/commands/command-names.js";
 import { CommandQueueManager } from "../services/commands/command-queue-manager.js";
 import { CommandPriority, CommandTrigger } from "../services/commands/command-trigger.js";
@@ -160,6 +161,15 @@ router.post("/strip", async (req, res) => {
   } catch (error: any) {
     const message = error instanceof Error ? error.message : "Strip tags failed";
     res.status(isRequestValidationError(error) ? 400 : 500).json({ detail: message });
+  }
+});
+
+router.get("/derivative-sources", (_req, res) => {
+  try {
+    const items = listDerivativeSourceFiles(db);
+    res.json({ items, total: items.length });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
   }
 });
 
