@@ -752,6 +752,49 @@ test('watchdog does not kill a worker while another writer holds SQLite', async 
     }
 });
 
+test('watchdog does not kill a worker sitting out a provider rate-limit retry after', async () => {
+    const id = pushTrack('rate-limit-watchdog');
+    const owner = 'download-attempt:rate-limit-watchdog';
+    claim(id, owner);
+    db.prepare(`
+        UPDATE commands
+        SET heartbeat_at = '2026-01-01 00:00:09',
+            lease_expires_at = '2026-01-01 00:01:00',
+            last_progress_at = '2026-01-01 00:00:00',
+            payload = json_set(payload, '$.provider', 'apple-music')
+        WHERE id = ?
+    `).run(id);
+
+    let terminations = 0;
+    const proxy = new DownloadProcessorWorkerProxy() as any;
+    proxy.worker = {
+        terminate: async () => {
+            terminations += 1;
+            return 1;
+        },
+    };
+
+    const { providerRequestState } = await import('../providers/provider-request-state.js');
+    const requestState = providerRequestState();
+    requestState.defer('apple-music', Date.parse('2026-01-01T00:00:30.000Z'));
+
+    try {
+        const terminatedDuringBackoff = await proxy.runWatchdogOnce(
+            new Date('2026-01-01T00:00:10.000Z'),
+        );
+        assert.equal(terminatedDuringBackoff, false, 'must not terminate while in rate-limit backoff');
+        assert.equal(terminations, 0);
+
+        const terminatedAfterDeadline = await proxy.runWatchdogOnce(
+            new Date('2026-01-01T00:00:35.000Z'),
+        );
+        assert.equal(terminatedAfterDeadline, true, 'must terminate after retry deadline expired');
+        assert.equal(terminations, 1);
+    } finally {
+        requestState.resetForTests();
+    }
+});
+
 test('bounded infrastructure retries poison the third interrupted download attempt', () => {
     const id = pushTrack('poison');
     for (let attempt = 1; attempt <= 3; attempt += 1) {

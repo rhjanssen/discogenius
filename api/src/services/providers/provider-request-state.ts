@@ -36,6 +36,16 @@ export class ProviderRequestState {
     }
     return Number(current);
   }
+
+  isRateLimited(provider: string, now: number = Date.now()): boolean {
+    return this.retryAt(provider) > now;
+  }
+
+  resetForTests(): void {
+    for (let index = 0; index < LANES; index++) {
+      Atomics.store(this.deadlines, index, 0n);
+    }
+  }
 }
 
 export function providerRequestState(): ProviderRequestState {

@@ -12,11 +12,14 @@ import test from "node:test";
 import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import {
+  DEFAULT_WRITE_GATE_SHIELD_CAP_MS,
   SQLITE_WRITE_MUTEX_OWNER_WORKER_DATA_KEY,
   SQLITE_WRITE_MUTEX_WORKER_DATA_KEY,
   forceReleaseSqliteWriteMutexOwner,
   getOrCreateSqliteWriteMutexSab,
+  isSqliteWriteGateContended,
   isSqliteWriteMutexHeld,
+  resetSqliteWriteGateContentionForTests,
   sqliteWriteMutexDiagnostics,
   sqliteWriteMutexWorkerData,
   withSqliteWriteMutexAsync,
@@ -267,5 +270,55 @@ test("an interrupted diagnostic counter update cannot block an empty writer queu
     assert.equal(withSqliteWriteMutexSync(() => "written"), "written");
   } finally {
     Atomics.store(view, 3, prior);
+  }
+});
+
+test("worker thread hold and release updates shared grace window observed by main thread", { timeout: 10_000 }, async () => {
+  resetSqliteWriteGateContentionForTests();
+  const holder = holdWorker("worker-grace-window");
+  try {
+    await holder.acquired;
+    assert.equal(isSqliteWriteMutexHeld(), true);
+    assert.equal(isSqliteWriteGateContended(), true);
+
+    // Hold for > 1000ms so that the recorded hold duration qualifies for the grace period
+    await new Promise((resolve) => setTimeout(resolve, 1050));
+    holder.worker.postMessage("release");
+    await new Promise((resolve) => holder.worker.once("exit", resolve));
+
+    assert.equal(isSqliteWriteMutexHeld(), false);
+
+    // Main thread observes the grace period recorded into the shared view by the worker thread
+    const now = Date.now();
+    assert.equal(isSqliteWriteGateContended(now), true, "main thread must observe grace window written by worker thread");
+    assert.equal(isSqliteWriteGateContended(now + 65_000), false, "grace window must expire after grace period");
+  } finally {
+    await holder.worker.terminate();
+    forceReleaseSqliteWriteMutexOwner(holder.token);
+    resetSqliteWriteGateContentionForTests();
+  }
+});
+
+test("write gate shield expires when hold duration exceeds shield cap", () => {
+  resetSqliteWriteGateContentionForTests();
+  const actualNow = Date.now;
+  const simulatedNow = 1_800_000_000_000;
+  Date.now = () => simulatedNow;
+  try {
+    withSqliteWriteMutexSync(() => {
+      // Just acquired
+      assert.equal(isSqliteWriteGateContended(simulatedNow), true);
+      // Within cap (e.g. 30 seconds into cap)
+      assert.equal(isSqliteWriteGateContended(simulatedNow + 30_000), true);
+      // Exceeds cap (e.g. 120s + 1ms)
+      assert.equal(
+        isSqliteWriteGateContended(simulatedNow + DEFAULT_WRITE_GATE_SHIELD_CAP_MS + 1),
+        false,
+        "watchdog recovery must not be shielded when gate hold exceeds cap",
+      );
+    }, "test:hold-cap");
+  } finally {
+    Date.now = actualNow;
+    resetSqliteWriteGateContentionForTests();
   }
 });

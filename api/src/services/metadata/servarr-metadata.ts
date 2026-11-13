@@ -812,7 +812,11 @@ export class ServarrMetadataService {
    * Fetch and reconcile bounded catalogue batches. Keep edition/track payloads
    * out of memory after their batch and persist progress before the next fetch.
    */
-  async syncArtistReleaseGroups(artistMbid: string, releaseGroupMbids: string[]): Promise<void> {
+  async syncArtistReleaseGroups(
+    artistMbid: string,
+    releaseGroupMbids: string[],
+    onProgress?: (index: number, total: number) => void,
+  ): Promise<void> {
     const mbids = Array.from(new Set(releaseGroupMbids.map((mbid) => String(mbid || "").trim()).filter(Boolean)));
     if (mbids.length === 0) {
       return;
@@ -820,6 +824,7 @@ export class ServarrMetadataService {
     const { catalogProviderRegistry } = await import("../catalog/index.js");
     const provider = catalogProviderRegistry.getActive();
     for (let offset = 0; offset < mbids.length; offset += CATALOG_DETAIL_BATCH_SIZE) {
+      onProgress?.(offset + 1, mbids.length);
       const batch = mbids.slice(offset, offset + CATALOG_DETAIL_BATCH_SIZE);
       if (typeof provider.getReleaseGroupDetails === "function") {
         const details = await provider.getReleaseGroupDetails(batch);

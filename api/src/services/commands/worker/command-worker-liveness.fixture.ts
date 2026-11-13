@@ -74,6 +74,20 @@ port.on("message", async (message: MainToWorkerMessage) => {
     if (behavior === "hang") {
         return;
     }
+    if (behavior === "hang-ipc-heartbeat-no-db") {
+        const interval = setInterval(() => {
+            post({
+                kind: "heartbeat",
+                commandId: message.job.id,
+                workerId: message.job.worker_id!,
+                physicalWorkerId: getCommandWorkerId(),
+                renewed: false,
+                sentAt: new Date().toISOString(),
+            });
+        }, Math.max(5, message.heartbeatMs ?? 20));
+        stopHeartbeat = async () => clearInterval(interval);
+        return;
+    }
 
     startHeartbeats(message);
     if (behavior === "hang-heartbeat") {

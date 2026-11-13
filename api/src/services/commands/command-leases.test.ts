@@ -838,3 +838,266 @@ test("executor still starts after startup recovery fails", async (t) => {
         CommandExecutor.stop();
     }
 });
+
+test("watchdog keeps RefreshArtist alive when per-batch progress advances last_progress_at", async () => {
+    const started = new Date("2026-01-01T00:00:00.000Z");
+    const id = queueNamedCommand(
+        queueModule.CommandNames.RefreshArtist,
+        {
+            artistName: "Artist",
+            providerId: "artist-batch-progress",
+        },
+        "artist-batch-progress",
+    );
+    claim(id, "attempt-refresh-progress", started, 60_000);
+
+    // Command started at 00:00:00. At 00:25:00, batch metadata hydration updates progress,
+    // advancing last_progress_at to 00:25:00 while renewing the lease.
+    dbModule.db.prepare(`
+        UPDATE commands
+        SET lease_expires_at = '2026-01-01 01:00:00.000',
+            last_progress_at = '2026-01-01 00:25:00.000'
+        WHERE id = ?
+    `).run(id);
+
+    // At 00:35:00 (> 30 min after command start, but only 10 min since the last batch progress):
+    const nowDuringWork = new Date("2026-01-01T00:35:00.000Z");
+    const executorModule = await import("./command-executor.js");
+    const duringWork = await executorModule.recoverStaleNonDownloadCommands({
+        now: nowDuringWork,
+        noProgressMs: 0,
+        maxAttempts: 3,
+        retryBaseMs: 0,
+        retryMaxMs: 0,
+    });
+    assert.deepEqual(duringWork, { requeued: 0, failed: 0, stale: 0 });
+    assert.equal(queueModule.CommandQueueManager.get(id)?.status, "started");
+
+    // At 00:56:00 (> 30 min after the last batch progress update at 00:25:00):
+    const nowAfterHalt = new Date("2026-01-01T00:56:00.000Z");
+    const afterHalt = await executorModule.recoverStaleNonDownloadCommands({
+        now: nowAfterHalt,
+        noProgressMs: 0,
+        maxAttempts: 3,
+        retryBaseMs: 0,
+        retryMaxMs: 0,
+    });
+    assert.deepEqual(afterHalt, { requeued: 1, failed: 0, stale: 1 });
+    assert.match(
+        queueModule.CommandQueueManager.get(id)?.last_retry_reason ?? "",
+        /^progress stopped;/,
+    );
+});
+
+test("TIDAL download is recovered while Apple Music is in rate-limit backoff", async () => {
+    const started = new Date("2026-01-01T00:00:00.000Z");
+    const now = new Date("2026-01-01T00:30:00.001Z");
+    const retryUntil = new Date("2026-01-01T00:35:00.000Z");
+
+    const tidalId = queueNamedCommand(
+        queueModule.CommandNames.DownloadAlbum,
+        { provider: "tidal", providerId: "album-tidal" },
+        "album-tidal",
+    );
+    claim(tidalId, "attempt-tidal", started, 60_000);
+    dbModule.db.prepare(`
+        UPDATE commands
+        SET lease_expires_at = '2026-01-01 00:01:00.000',
+            last_progress_at = '2026-01-01 00:00:00.000'
+        WHERE id = ?
+    `).run(tidalId);
+
+    const appleId = queueNamedCommand(
+        queueModule.CommandNames.DownloadAlbum,
+        { provider: "apple-music", providerId: "album-apple" },
+        "album-apple",
+    );
+    claim(appleId, "attempt-apple", started, 60_000);
+    dbModule.db.prepare(`
+        UPDATE commands
+        SET lease_expires_at = '2026-01-01 00:01:00.000',
+            last_progress_at = '2026-01-01 00:00:00.000'
+        WHERE id = ?
+    `).run(appleId);
+
+    const { providerRequestState } = await import("../providers/provider-request-state.js");
+    const requestState = providerRequestState();
+    requestState.defer("apple-music", retryUntil.getTime());
+
+    try {
+        const stale = queueModule.CommandQueueManager.findStaleExecutionLeases({
+            types: [queueModule.CommandNames.DownloadAlbum],
+            now,
+            noProgressMs: 0,
+        });
+        const staleIds = stale.map((entry) => entry.id);
+        assert.ok(staleIds.includes(tidalId), "TIDAL download must be recovered even when Apple Music is in backoff");
+        assert.ok(!staleIds.includes(appleId), "Apple Music download must be shielded during Apple Music backoff");
+    } finally {
+        requestState.resetForTests();
+    }
+});
+
+test("watchdog does not recover non-download commands while SQLite write gate is contended", async () => {
+    const started = new Date("2026-01-01T00:00:00.000Z");
+    const now = new Date("2026-01-01T00:30:00.001Z");
+    const id = queueNamedCommand(
+        queueModule.CommandNames.RefreshArtist,
+        {
+            artistId: "artist-write-gate-contended",
+            artistName: "Artist",
+            workflow: "metadata-refresh",
+        },
+        "artist-write-gate-contended",
+    );
+    claim(id, "attempt-write-gate", started, 1_000);
+    dbModule.db.prepare(`
+        UPDATE commands
+        SET lease_expires_at = '2026-01-01 00:01:00.000',
+            last_progress_at = '2026-01-01 00:00:00.000'
+        WHERE id = ?
+    `).run(id);
+
+    let release!: () => void;
+    let acquired!: () => void;
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const blocker = dbModule.withSqliteWriteGate(() => {
+        acquired();
+        return new Promise<void>((resolve) => { release = resolve; });
+    }, "servarr:relationship-credits");
+    await ready;
+
+    const executorModule = await import("./command-executor.js");
+    try {
+        let timer: NodeJS.Timeout | undefined;
+        const result = await Promise.race([
+            executorModule.recoverStaleNonDownloadCommands({
+                now,
+                noProgressMs: 0,
+                maxAttempts: 3,
+                retryBaseMs: 0,
+                retryMaxMs: 0,
+            }),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("watchdog recovery blocked on held write gate instead of returning")), 1000);
+            }),
+        ]).finally(() => clearTimeout(timer));
+        assert.deepEqual(result, { requeued: 0, failed: 0, stale: 0 });
+        assert.equal(queueModule.CommandQueueManager.get(id)?.status, "started");
+    } finally {
+        release();
+        await blocker;
+    }
+});
+
+test("watchdog recovers commands once SQLite write gate hold exceeds shield cap", async () => {
+    const started = new Date("2026-01-01T00:00:00.000Z");
+    const id = queueNamedCommand(
+        queueModule.CommandNames.RefreshArtist,
+        {
+            artistId: "artist-write-gate-cap",
+            artistName: "Artist",
+            workflow: "metadata-refresh",
+        },
+        "artist-write-gate-cap",
+    );
+    claim(id, "attempt-write-gate-cap", started, 1_000);
+    dbModule.db.prepare(`
+        UPDATE commands
+        SET lease_expires_at = '2026-01-01 00:01:00.000',
+            last_progress_at = '2026-01-01 00:00:00.000'
+        WHERE id = ?
+    `).run(id);
+
+    let release!: () => void;
+    let acquired!: () => void;
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const blocker = dbModule.withSqliteWriteGate(() => {
+        acquired();
+        return new Promise<void>((resolve) => { release = resolve; });
+    }, "servarr:relationship-credits");
+    await ready;
+
+    try {
+        const diagnostics = (await import("../../database/sqlite-write-mutex.js")).sqliteWriteMutexDiagnostics();
+        assert.equal(diagnostics.held, true);
+
+        // When the hold is young, write gate shields recovery
+        const youngNow = new Date();
+        const youngStale = queueModule.CommandQueueManager.findStaleExecutionLeases({
+            types: [queueModule.CommandNames.RefreshArtist],
+            now: youngNow,
+            noProgressMs: 0,
+        });
+        assert.deepEqual(youngStale, [], "young write gate hold must shield stale lease recovery");
+
+        // When the hold exceeds the shield cap (DEFAULT_WRITE_GATE_SHIELD_CAP_MS), shield expires
+        const { DEFAULT_WRITE_GATE_SHIELD_CAP_MS } = await import("../../database/sqlite-write-mutex.js");
+        const oldNow = new Date(Date.now() + DEFAULT_WRITE_GATE_SHIELD_CAP_MS + 5_000);
+        const oldStale = queueModule.CommandQueueManager.findStaleExecutionLeases({
+            types: [queueModule.CommandNames.RefreshArtist],
+            now: oldNow,
+            noProgressMs: 0,
+        });
+        assert.equal(oldStale.length, 1, "stale lease must be reported once write gate hold exceeds shield cap");
+        assert.equal(oldStale[0].id, id);
+    } finally {
+        release();
+        await blocker;
+    }
+});
+
+test("command whose DB lease expired is protected while worker IPC heartbeat is recent, but expires once heartbeat goes stale", async () => {
+    const fixtureExt = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
+    const fixtureUrl = new URL(`./worker/command-worker-liveness.fixture${fixtureExt}`, import.meta.url);
+    poolModule.CommandWorkerPool.configureTestWorkerEntry(fixtureUrl.href);
+    poolModule.CommandWorkerPool.start();
+
+    const id = queueCommand("hang-ipc-heartbeat-no-db");
+    const claimed = claim(id, "attempt-ipc-heartbeat", new Date(), 100);
+    const running = poolModule.CommandWorkerPool.run(claimed, {
+        leaseMs: 100,
+        heartbeatMs: 25,
+    });
+
+    try {
+        await waitFor(
+            () => poolModule.CommandWorkerPool.hasLiveWorkerHeartbeat(id),
+            "worker never established live IPC heartbeat",
+        );
+
+        // Wait past the DB lease expiry (100ms)
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        const commandRow = queueModule.CommandQueueManager.get(id);
+        assert.ok(commandRow?.lease_expires_at, "command must have lease_expires_at");
+        assert.ok(
+            Date.parse(commandRow.lease_expires_at) <= Date.now(),
+            "DB lease must be expired",
+        );
+
+        // At current time, recent IPC heartbeat protects the command from being marked stale
+        const activeLeases = queueModule.CommandQueueManager.findStaleExecutionLeases({
+            types: [queueModule.CommandNames.CheckHealth],
+            now: new Date(),
+        });
+        assert.deepEqual(
+            activeLeases.filter((entry) => entry.id === id),
+            [],
+            "command with live IPC heartbeat must not be marked stale even if DB lease expired",
+        );
+
+        // Advance simulated time past the 60s IPC heartbeat window
+        const staleTime = new Date(Date.now() + 70_000);
+        const staleLeases = queueModule.CommandQueueManager.findStaleExecutionLeases({
+            types: [queueModule.CommandNames.CheckHealth],
+            now: staleTime,
+        });
+        const matched = staleLeases.filter((entry) => entry.id === id);
+        assert.equal(matched.length, 1, "command must be marked stale once IPC heartbeat is older than 60s");
+        assert.equal(matched[0].reason, "lease expired");
+    } finally {
+        poolModule.CommandWorkerPool.abortCommand(id, "attempt-ipc-heartbeat", "test abort");
+        await running.catch(() => {});
+    }
+});

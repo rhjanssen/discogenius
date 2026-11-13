@@ -58,9 +58,16 @@ import { LibraryCurationRepository } from "./services/music/library-curation-rep
 import { ensureDefaultQualityProfiles } from "./services/music/library-settings-sync.js";
 import { clearConfigCache, getConfigSection } from "./services/config/config.js";
 import {
+  isSqliteWriteGateContended,
+  isSqliteWriteMutexHeld,
   withSqliteWriteMutexAsync,
   withSqliteWriteMutexSync,
 } from "./database/sqlite-write-mutex.js";
+
+export {
+  isSqliteWriteGateContended,
+  isSqliteWriteMutexHeld,
+};
 
 let _db: Database.Database | null = null;
 

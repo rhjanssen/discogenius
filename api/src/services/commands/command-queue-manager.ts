@@ -1,7 +1,9 @@
 import { CommandPriority, CommandTrigger } from "./command-trigger.js";
 import { commandDiskScope } from "./command-registry.js";
 import { CommandManager } from "./command.js";
-import { db, withDbWrite } from "../../database.js";
+import { db, isSqliteWriteGateContended, withDbWrite } from "../../database.js";
+import { providerRequestState } from "../providers/provider-request-state.js";
+import { CommandWorkerPool } from "./worker/command-worker-pool.js";
 import { recordRootScanCompletion } from "./root-scan-schedule.js";
 import type {
     CommandBodyCommon,
@@ -1742,10 +1744,18 @@ ${orderBy}
     }): StaleCommandLease[] {
         if (options.types.length === 0) return [];
         const now = options.now ?? new Date();
+
+        // If the SQLite write gate is actively held, or was contended within
+        // the grace window, no worker can renew leases or update progress.
+        // Known waits on SQLite admission count as life, not hung workers.
+        if (isSqliteWriteGateContended(now.getTime())) {
+            return [];
+        }
+
         const rows = db.prepare(`
             SELECT
                 id, name, worker_id, attempt, heartbeat_at, last_progress_at,
-                lease_expires_at, blocked_reason
+                lease_expires_at, blocked_reason, payload
             FROM commands
             WHERE status = 'started'
               AND worker_id IS NOT NULL
@@ -1760,13 +1770,25 @@ ${orderBy}
             last_progress_at: string | null;
             lease_expires_at: string | null;
             blocked_reason: string | null;
+            payload: string | null;
         }>;
+
+        const requestState = providerRequestState();
 
         return rows.flatMap((row): StaleCommandLease[] => {
             // Lidarr TrackedDownload stays Completed while Organize/Rename
             // holds disk. A blocked import slot is parked work, not a hung
             // execution — killing it poisons finished downloads.
             if (row.blocked_reason) return [];
+
+            const parsedPayload = safeParsePayload(row.payload);
+            const provider = typeof parsedPayload?.provider === "string" ? parsedPayload.provider.trim().toLowerCase() : undefined;
+            const inRateLimitBackoff = provider != null && requestState.isRateLimited(provider, now.getTime());
+
+            // A command sitting out a provider rate-limit retry after is in a
+            // known legitimate wait, not hung execution.
+            if (inRateLimitBackoff) return [];
+
             const noProgressMs = Math.max(
                 0,
                 options.noProgressMs
@@ -1777,7 +1799,9 @@ ${orderBy}
                 && row.last_progress_at != null
                 && parseSqliteDate(row.last_progress_at) <= now.getTime() - noProgressMs;
 
-            const leaseExpired = row.lease_expires_at != null
+            const hasLiveHeartbeat = CommandWorkerPool.hasLiveWorkerHeartbeat(row.id, undefined, now.getTime());
+            const leaseExpired = !hasLiveHeartbeat
+                && row.lease_expires_at != null
                 && parseSqliteDate(row.lease_expires_at) <= now.getTime();
 
             // An execution lease is NOT considered expired if the command has made recent progress.

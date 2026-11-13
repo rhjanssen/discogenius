@@ -33,8 +33,11 @@ const MAX_HOLD_MS_INDEX = 8;
 const TICKET_INDEX = 9;
 const HELD_SLOT_INDEX = 10;
 const ACQUIRED_AT_MILLISECOND_INDEX = 11;
+const LAST_RELEASED_AT_SECONDS_INDEX = 12;
+const LAST_RELEASED_AT_MILLISECOND_INDEX = 13;
+const LAST_HOLD_MS_INDEX = 14;
 const LABEL_CELLS = 48;
-const LONGEST_LABEL_INDEX = 12;
+const LONGEST_LABEL_INDEX = 15;
 const QUEUE_START = LONGEST_LABEL_INDEX + LABEL_CELLS;
 const QUEUE_CAPACITY = 256;
 const SLOT_CELLS = 2 + LABEL_CELLS;
@@ -119,6 +122,61 @@ export function holdsSqliteWriteMutex(): boolean {
 /** True when any thread in this process currently holds the writer mutex. */
 export function isSqliteWriteMutexHeld(): boolean {
   return Atomics.load(mutexView(), OWNER_INDEX) !== 0;
+}
+
+export const DEFAULT_WRITE_GATE_SHIELD_CAP_MS = 120_000;
+
+/**
+ * True when the SQLite write gate is actively held (and younger than maxHoldCapMs),
+ * or was released within gracePeriodMs after a non-trivial hold. A job whose heartbeat
+ * expired while blocked on the write gate needs time to acquire and renew after the holder exits.
+ * If a hold exceeds maxHoldCapMs, it is treated as a hung worker and no longer shields recovery.
+ */
+export function isSqliteWriteGateContended(
+  now: number = Date.now(),
+  gracePeriodMs = 15_000,
+  maxHoldCapMs = DEFAULT_WRITE_GATE_SHIELD_CAP_MS,
+): boolean {
+  const view = mutexView();
+  const rawOwner = Atomics.load(view, OWNER_INDEX);
+  if (rawOwner !== 0) {
+    const acquiredSeconds = Atomics.load(view, ACQUIRED_AT_SECONDS_INDEX);
+    const acquiredMs = Atomics.load(view, ACQUIRED_AT_MILLISECOND_INDEX);
+    if (acquiredSeconds > 0) {
+      const heldMs = Math.max(0, now - (acquiredSeconds * 1000 + acquiredMs));
+      if (heldMs >= maxHoldCapMs) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const lastReleasedSeconds = Atomics.load(view, LAST_RELEASED_AT_SECONDS_INDEX);
+  const lastReleasedMs = Atomics.load(view, LAST_RELEASED_AT_MILLISECOND_INDEX);
+  const lastHoldMs = Atomics.load(view, LAST_HOLD_MS_INDEX);
+  if (lastHoldMs >= 1_000 && lastReleasedSeconds > 0) {
+    const releasedAt = lastReleasedSeconds * 1000 + lastReleasedMs;
+    const grace = Math.min(Math.max(lastHoldMs, gracePeriodMs), 60_000);
+    if (now >= releasedAt && now - releasedAt < grace) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function resetSqliteWriteGateContentionForTests(): void {
+  const view = mutexView();
+  Atomics.store(view, LAST_RELEASED_AT_SECONDS_INDEX, 0);
+  Atomics.store(view, LAST_RELEASED_AT_MILLISECOND_INDEX, 0);
+  Atomics.store(view, LAST_HOLD_MS_INDEX, 0);
+}
+
+export function recordSqliteWriteGateHoldForTests(releasedAt: number, holdDurationMs: number): void {
+  const view = mutexView();
+  Atomics.store(view, LAST_RELEASED_AT_SECONDS_INDEX, Math.floor(releasedAt / 1000));
+  Atomics.store(view, LAST_RELEASED_AT_MILLISECOND_INDEX, releasedAt % 1000);
+  Atomics.store(view, LAST_HOLD_MS_INDEX, Math.min(holdDurationMs, 0x7fffffff));
 }
 
 function atomicMax(view: Int32Array, index: number, value: number): void {
@@ -212,7 +270,11 @@ function recordMutexReleased(view: Int32Array): void {
   const acquiredAt = Atomics.exchange(view, ACQUIRED_AT_SECONDS_INDEX, 0);
   const millisecond = Atomics.exchange(view, ACQUIRED_AT_MILLISECOND_INDEX, 0);
   if (acquiredAt > 0) {
-    const heldMs = Math.max(0, Date.now() - (acquiredAt * 1000 + millisecond));
+    const releasedAt = Date.now();
+    const heldMs = Math.max(0, releasedAt - (acquiredAt * 1000 + millisecond));
+    Atomics.store(view, LAST_RELEASED_AT_SECONDS_INDEX, Math.floor(releasedAt / 1000));
+    Atomics.store(view, LAST_RELEASED_AT_MILLISECOND_INDEX, releasedAt % 1000);
+    Atomics.store(view, LAST_HOLD_MS_INDEX, Math.min(heldMs, 0x7fffffff));
     if (heldMs >= Atomics.load(view, MAX_HOLD_MS_INDEX)) {
       const slot = Atomics.load(view, HELD_SLOT_INDEX);
       writeLabel(view, LONGEST_LABEL_INDEX, slot ? readLabel(view, slot + 2) || "" : "");

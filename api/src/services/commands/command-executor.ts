@@ -12,7 +12,7 @@ import {
     resolveInfrastructureMaxAttempts,
 } from "./command-liveness-policy.js";
 import {CommandQueueManager} from "./command-queue-manager.js";
-import { db, withDbWrite, withSqliteWriteGate } from "../../database.js";
+import { db, isSqliteWriteGateContended, withDbWrite, withSqliteWriteGate } from "../../database.js";
 import { CommandManager } from "./command.js";
 import { readIntEnv } from "../../utils/env.js";
 import { executeCommand } from "./command-context.js";
@@ -95,6 +95,9 @@ export async function recoverStaleNonDownloadCommands(options: {
     retryBaseMs: number;
     retryMaxMs: number;
 }): Promise<CommandWatchdogPassResult> {
+    if (isSqliteWriteGateContended(options.now?.getTime())) {
+        return { requeued: 0, failed: 0, stale: 0 };
+    }
     const stale = CommandQueueManager.findStaleExecutionLeases({
         types: NON_DOWNLOAD_COMMAND_NAMES,
         now: options.now,
