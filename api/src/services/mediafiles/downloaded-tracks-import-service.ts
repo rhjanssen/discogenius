@@ -15,6 +15,7 @@ import { VideoTagService } from "./video-tag-service.js";
 import { getDownloadWorkspacePath, validateDownloadWorkspacePath } from "../download/download-routing.js";
 import { getExistingLibraryFiles } from "../download/download-recovery.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
+import { notifyMediaServersForPaths } from "../media-servers/media-server-notifier.js";
 import {type CommandModelOf} from "../commands/command-model.js";
 import type { DownloadTrackOffer } from "../commands/command-bodies.js";
 import {CommandNames} from "../commands/command-names.js";
@@ -1922,6 +1923,13 @@ export class DownloadedTracksImportService {
                 }
                 : {}),
         });
+
+        if (organizeResult.processedTrackIds.length > 0 && historyContext.albumId) {
+            const albumFileRows = db.prepare(`
+                SELECT file_path FROM TrackFiles WHERE release_group_id = ? AND file_path IS NOT NULL
+            `).all(historyContext.albumId) as Array<{ file_path: string }>;
+            void notifyMediaServersForPaths(albumFileRows.map((r) => r.file_path), "import");
+        }
 
         shouldCleanupDownloadPath = true;
     } catch (error) {

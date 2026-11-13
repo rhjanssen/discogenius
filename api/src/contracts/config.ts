@@ -188,6 +188,18 @@ export interface MonitoringConfigUpdateResponseContract {
   config: MonitoringConfigContract;
 }
 
+export interface MediaServersConfigContract {
+  plex_enabled: boolean;
+  plex_url: string;
+  plex_token: string;
+  plex_token_configured: boolean;
+  plex_music_section_id: string;
+  jellyfin_enabled: boolean;
+  jellyfin_url: string;
+  jellyfin_api_key: string;
+  jellyfin_api_key_configured: boolean;
+}
+
 function expectResolutionOrOrigin(value: unknown, label: string): "origin" | number {
   if (value === "origin") {
     return "origin";

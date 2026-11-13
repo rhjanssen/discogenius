@@ -196,6 +196,16 @@ export interface CatalogConfig {
   musicbrainz_host: string;
 }
 
+export interface MediaServersConfig {
+  plex_enabled: boolean;
+  plex_url: string;
+  plex_token: string;
+  plex_music_section_id: string;
+  jellyfin_enabled: boolean;
+  jellyfin_url: string;
+  jellyfin_api_key: string;
+}
+
 export interface DiscoGeniusConfig {
   app: AppConfig;
   monitoring: MonitoringConfig;
@@ -206,6 +216,7 @@ export interface DiscoGeniusConfig {
   quality: QualityConfig;
   streaming: StreamingConfig;
   catalog: CatalogConfig;
+  media_servers?: MediaServersConfig;
   account?: AccountConfig;
 }
 
@@ -332,6 +343,15 @@ export const DEFAULT_CONFIG: DiscoGeniusConfig = {
   catalog: {
     source: "servarr",
     musicbrainz_host: "localhost",
+  },
+  media_servers: {
+    plex_enabled: false,
+    plex_url: "",
+    plex_token: "",
+    plex_music_section_id: "",
+    jellyfin_enabled: false,
+    jellyfin_url: "",
+    jellyfin_api_key: "",
   },
   account: {}
 };
@@ -491,6 +511,19 @@ function normalizeNamingConfig(raw?: Partial<NamingConfig> | null): NamingConfig
   return { ...DEFAULT_CONFIG.naming, ...(raw || {}) };
 }
 
+function normalizeMediaServersConfig(raw?: Partial<MediaServersConfig> | null): MediaServersConfig {
+  const defaults = DEFAULT_CONFIG.media_servers!;
+  return {
+    plex_enabled: typeof raw?.plex_enabled === "boolean" ? raw.plex_enabled : defaults.plex_enabled,
+    plex_url: typeof raw?.plex_url === "string" ? raw.plex_url.trim().replace(/\/+$/, "") : defaults.plex_url,
+    plex_token: typeof raw?.plex_token === "string" ? raw.plex_token.trim() : defaults.plex_token,
+    plex_music_section_id: typeof raw?.plex_music_section_id === "string" ? raw.plex_music_section_id.trim() : defaults.plex_music_section_id,
+    jellyfin_enabled: typeof raw?.jellyfin_enabled === "boolean" ? raw.jellyfin_enabled : defaults.jellyfin_enabled,
+    jellyfin_url: typeof raw?.jellyfin_url === "string" ? raw.jellyfin_url.trim().replace(/\/+$/, "") : defaults.jellyfin_url,
+    jellyfin_api_key: typeof raw?.jellyfin_api_key === "string" ? raw.jellyfin_api_key.trim() : defaults.jellyfin_api_key,
+  };
+}
+
 function normalizeConfig(config: Partial<DiscoGeniusConfig>): DiscoGeniusConfig {
   return {
     app: { ...DEFAULT_CONFIG.app, ...(config.app || {}) },
@@ -502,6 +535,7 @@ function normalizeConfig(config: Partial<DiscoGeniusConfig>): DiscoGeniusConfig 
     quality: normalizeQualityConfig(config.quality),
     streaming: { ...DEFAULT_CONFIG.streaming, ...(config.streaming || {}) },
     catalog: normalizeCatalogConfig(config.catalog),
+    media_servers: normalizeMediaServersConfig(config.media_servers),
     account: { ...DEFAULT_CONFIG.account, ...(config.account || {}) },
   };
 }
@@ -522,6 +556,9 @@ function readConfigFromDb(): DiscoGeniusConfig {
         else if (row.key === "settings.quality") Object.assign(config.quality, parsed);
         else if (row.key === "settings.streaming") Object.assign(config.streaming, parsed);
         else if (row.key === "settings.catalog") Object.assign(config.catalog, parsed);
+        else if (row.key === "settings.media_servers") {
+          config.media_servers = normalizeMediaServersConfig(parsed);
+        }
         else if (row.key === "settings.account") {
           config.account = config.account || {};
           Object.assign(config.account, parsed);
@@ -569,6 +606,7 @@ export function writeConfig(config: DiscoGeniusConfig): void {
       stmt.run("settings.quality", JSON.stringify(normalized.quality));
       stmt.run("settings.streaming", JSON.stringify(normalized.streaming));
       stmt.run("settings.catalog", JSON.stringify(normalized.catalog));
+      stmt.run("settings.media_servers", JSON.stringify(normalized.media_servers));
       stmt.run("settings.account", JSON.stringify(normalized.account));
     });
     run();
@@ -618,6 +656,11 @@ export function updateConfig<K extends keyof DiscoGeniusConfig>(
     config.quality = normalizeQualityConfig({
       ...config.quality,
       ...(updates as Partial<QualityConfig>),
+    });
+  } else if (section === "media_servers") {
+    config.media_servers = normalizeMediaServersConfig({
+      ...config.media_servers,
+      ...(updates as Partial<MediaServersConfig>),
     });
   } else {
     config[section] = {

@@ -22,6 +22,7 @@ import type {
     DownloadTrackCommand,
     DownloadVideoCommand,
     HousekeepingCommand,
+    ReconcileMediaServersCommand,
     ImportDownloadCommand,
     ImportProviderArtistsCommand,
     ImportUnmappedFilesCommand,
@@ -53,6 +54,7 @@ export interface CommandBodyMap {
     [CommandNames.DownloadMissing]: DownloadMissingCommand;
     [CommandNames.CheckUpgrades]: CheckUpgradesCommand;
     [CommandNames.Housekeeping]: HousekeepingCommand;
+    [CommandNames.ReconcileMediaServers]: ReconcileMediaServersCommand;
     [CommandNames.DownloadTrack]: DownloadTrackCommand;
     [CommandNames.DownloadVideo]: DownloadVideoCommand;
     [CommandNames.DownloadAlbum]: DownloadAlbumCommand;

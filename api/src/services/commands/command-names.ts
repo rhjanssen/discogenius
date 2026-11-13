@@ -40,6 +40,7 @@ export const CommandNames = {
     ImportUnmappedFiles: 'ImportUnmappedFiles',
     LibraryBulkAction: 'LibraryBulkAction',
     SeedVideo: 'SeedVideo',
+    ReconcileMediaServers: 'ReconcileMediaServers',
 } as const;
 
 export type CommandName = typeof CommandNames[keyof typeof CommandNames];
@@ -97,6 +98,7 @@ export const NON_DOWNLOAD_COMMAND_NAMES = [
     CommandNames.ImportUnmappedFiles,
     CommandNames.LibraryBulkAction,
     CommandNames.SeedVideo,
+    CommandNames.ReconcileMediaServers,
 ] as const;
 
 export function isDownloadJobType(type: string): type is typeof DOWNLOAD_COMMAND_NAMES[number] {

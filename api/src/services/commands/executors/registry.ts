@@ -22,7 +22,8 @@ import {
     MaintenanceCommand,
     ImportProviderArtistsCommand,
     ImportUnmappedFilesCommand,
-    LibraryBulkActionCommand
+    LibraryBulkActionCommand,
+    ReconcileMediaServersCommand
 } from "./index.js";
 
 /**
@@ -47,6 +48,7 @@ export const commandExecutors: Record<string, IExecuteCommand<any>> = {
     [CommandNames.RetagArtist]: new RetagArtistCommand(),
     [CommandNames.RetagFiles]: new RetagFilesCommand(),
     [CommandNames.Housekeeping]: new HousekeepingCommand(),
+    [CommandNames.ReconcileMediaServers]: new ReconcileMediaServersCommand(),
     [CommandNames.BulkRefreshArtist]: new MaintenanceCommand(),
     [CommandNames.DownloadMissingForce]: new MaintenanceCommand(),
     [CommandNames.RescanAllRoots]: new MaintenanceCommand(),

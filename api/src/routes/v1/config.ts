@@ -30,7 +30,7 @@ import { db, isSqliteBusyError, withDbWrite } from "../../database.js";
 import { applyLibrarySettingsFromConfig } from "../../services/music/library-settings-sync.js";
 
 const { Client: PgClient } = pg;
-import type { PublicAppConfigContract } from "../../contracts/config.js";
+import type { MediaServersConfigContract, PublicAppConfigContract } from "../../contracts/config.js";
 import { previewNamingConfig, validateNamingConfig } from "../../services/config/naming.js";
 
 import {
@@ -427,6 +427,56 @@ router.post("/path", async (req, res) => {
       return null;
     });
     res.json(commandId ? { success: true, commandId } : { success: true });
+  } catch (error: any) {
+    res.status(configMutationHttpStatus(error)).json({ detail: error.message });
+  }
+});
+
+const SECRET_MASK = "••••••••";
+
+router.get("/media-servers", (_, res) => {
+  try {
+    const config = getConfigSection("media_servers");
+    const response: MediaServersConfigContract = {
+      plex_enabled: config?.plex_enabled === true,
+      plex_url: config?.plex_url ?? "",
+      plex_token: config?.plex_token ? SECRET_MASK : "",
+      plex_token_configured: Boolean(config?.plex_token),
+      plex_music_section_id: config?.plex_music_section_id ?? "",
+      jellyfin_enabled: config?.jellyfin_enabled === true,
+      jellyfin_url: config?.jellyfin_url ?? "",
+      jellyfin_api_key: config?.jellyfin_api_key ? SECRET_MASK : "",
+      jellyfin_api_key_configured: Boolean(config?.jellyfin_api_key),
+    };
+    res.json(response);
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.post("/media-servers", async (req, res) => {
+  try {
+    const body = getObjectBody(req.body);
+    const current = getConfigSection("media_servers");
+    const plexToken = typeof body.plex_token === "string"
+      ? (body.plex_token === SECRET_MASK ? (current?.plex_token ?? "") : body.plex_token.trim())
+      : (current?.plex_token ?? "");
+    const jellyfinApiKey = typeof body.jellyfin_api_key === "string"
+      ? (body.jellyfin_api_key === SECRET_MASK ? (current?.jellyfin_api_key ?? "") : body.jellyfin_api_key.trim())
+      : (current?.jellyfin_api_key ?? "");
+
+    await runConfigUserWrite(() => updateConfig("media_servers", {
+      plex_enabled: typeof body.plex_enabled === "boolean" ? body.plex_enabled : (current?.plex_enabled ?? false),
+      plex_url: typeof body.plex_url === "string" ? body.plex_url.trim() : (current?.plex_url ?? ""),
+      plex_token: plexToken,
+      plex_music_section_id: typeof body.plex_music_section_id === "string"
+        ? body.plex_music_section_id.trim()
+        : (current?.plex_music_section_id ?? ""),
+      jellyfin_enabled: typeof body.jellyfin_enabled === "boolean" ? body.jellyfin_enabled : (current?.jellyfin_enabled ?? false),
+      jellyfin_url: typeof body.jellyfin_url === "string" ? body.jellyfin_url.trim() : (current?.jellyfin_url ?? ""),
+      jellyfin_api_key: jellyfinApiKey,
+    }));
+    res.json({ success: true });
   } catch (error: any) {
     res.status(configMutationHttpStatus(error)).json({ detail: error.message });
   }

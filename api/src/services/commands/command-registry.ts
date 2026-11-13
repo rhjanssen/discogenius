@@ -357,6 +357,14 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: false,
     isLongRunning: true,
   },
+  [CommandNames.ReconcileMediaServers]: {
+    type: CommandNames.ReconcileMediaServers,
+    name: "Reconcile Media Servers",
+    requiresDiskAccess: false,
+    isTypeExclusive: true,
+    isExclusive: false,
+    isLongRunning: true,
+  },
   [CommandNames.CurateArtist]: {
     type: CommandNames.CurateArtist,
     name: "Curate Artist",
