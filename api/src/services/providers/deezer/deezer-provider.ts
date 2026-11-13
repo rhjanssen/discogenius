@@ -380,9 +380,9 @@ export class DeezerProvider implements StreamingProvider {
     const account = state?.accountLabel ?? null;
     const message = [
       needsReauth
-        ? "Deezer opnieuw koppelen"
+        ? "Reconnect Deezer"
         : connected
-          ? (account ? `Deezer gekoppeld: ${account}` : "Deezer ARL is configured for downloads.")
+          ? (account ? `Deezer connected: ${account}` : "Deezer ARL is configured for downloads.")
           : "Deezer catalog access is available; add an ARL cookie to download.",
       state?.ageWarning,
     ].filter(Boolean).join(" ");

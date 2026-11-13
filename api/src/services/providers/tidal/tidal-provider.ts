@@ -512,7 +512,7 @@ export class TidalProvider implements StreamingProvider {
         canAccessLocalLibrary: true,
         remoteCatalogAvailable: false,
         canAuthenticate: true,
-        message: needsReauth ? "Tidal opnieuw inloggen" : "Unable to verify TIDAL authentication status.",
+        message: needsReauth ? "Sign in to Tidal again" : "Unable to verify TIDAL authentication status.",
       };
     }
   }

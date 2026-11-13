@@ -38,7 +38,7 @@ export function ProviderAuthNotice() {
       toast({
         title: typeof payload.banner === "string" && payload.banner
           ? payload.banner
-          : `${providerLabel(provider)} opnieuw koppelen`,
+          : `Reconnect ${providerLabel(provider)}`,
         description: providerAuthWaitingText(providerLabel(provider), Number.isFinite(held) ? held : 0),
         variant: "destructive",
       });
@@ -46,8 +46,8 @@ export function ProviderAuthNotice() {
     }
     if (payload.status === "ok") {
       toast({
-        title: `${providerLabel(provider)} is weer gekoppeld`,
-        description: "Wachtende albums gaan verder.",
+        title: `${providerLabel(provider)} reconnected`,
+        description: "Waiting albums will resume.",
         variant: "warning",
       });
     }
@@ -70,16 +70,16 @@ export function ProviderAuthNotice() {
       .then((result) => {
         toast({
           title: result.requeued === 1
-            ? "1 album terug in de wachtrij"
-            : `${result.requeued} albums terug in de wachtrij`,
+            ? "1 album returned to queue"
+            : `${result.requeued} albums returned to queue`,
           variant: "warning",
         });
         void queryClient.invalidateQueries({ queryKey: QUERY_KEY });
       })
       .catch((error: unknown) => {
         toast({
-          title: "Opnieuw proberen mislukt",
-          description: error instanceof Error ? error.message : "De wachtrij is niet bijgewerkt.",
+          title: "Retry failed",
+          description: error instanceof Error ? error.message : "The queue was not updated.",
           variant: "destructive",
         });
       })

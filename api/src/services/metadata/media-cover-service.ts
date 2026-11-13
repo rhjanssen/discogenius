@@ -6,7 +6,7 @@ import { findLibraryCoverMaster, rememberLibraryCoverSidecar, linkLibraryCoverSi
 import { readArtworkSource, storeArtworkSource, type ArtworkSource } from "./media-cover-state.js";
 import { CONFIG_DIR, getConfigSection } from "../config/config.js";
 import { getDiscogeniusUserAgent } from "../config/user-agent.js";
-import { db, withSqliteWriteGate } from "../../database.js";
+import { db, SQLITE_BUSY_TIMEOUT_MS, withSqliteWriteGate } from "../../database.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -905,7 +905,7 @@ function runBestEffortMediaCoverWrite(action: () => void): void {
     // command-worker writes, never let cache maintenance block library reads.
   } finally {
     try {
-      db.pragma("busy_timeout = 1000");
+      db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     } catch {
       // Ignore restore failures; the next connection initialization will set it.
     }

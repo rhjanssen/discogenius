@@ -113,7 +113,7 @@ test("a valid ARL save returns the account and marks the provider ok", async () 
   const status = await provider.getAuthStatus();
   assert.equal(status.connected, true);
   assert.equal(status.user?.username, "Robert · HiFi · NL");
-  assert.match(status.message || "", /Deezer gekoppeld: Robert · HiFi · NL/);
+  assert.match(status.message || "", /Deezer connected: Robert · HiFi · NL/);
   assert.equal(loadDeezerCredentials()?.arl, OTHER_ARL);
   const rendered = renderStreamripConfig(OTHER_ARL);
   assert.match(rendered, /concurrency = false/);

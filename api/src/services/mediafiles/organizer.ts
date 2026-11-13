@@ -1842,18 +1842,18 @@ export class OrganizerService {
       return explicit;
     }
 
-    const entityType = type === "album" ? "album" : type === "video" ? "video" : "track";
-    const row = db.prepare(`
-      SELECT provider
+    const entityType = type === "album" ? "release" : type === "video" ? "video" : "track";
+    const rows = db.prepare(`
+      SELECT DISTINCT provider
       FROM ProviderItems
       WHERE entity_type = ?
         AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-      ORDER BY updated_at DESC
-      LIMIT 1
-    `).get(entityType, providerId) as { provider?: string } | undefined;
-    const fromOffer = String(row?.provider || "").trim();
-    if (fromOffer) {
-      return fromOffer;
+    `).all(entityType, providerId) as Array<{ provider?: string }>;
+    const providers = rows
+      .map((row) => String(row.provider || "").trim())
+      .filter(Boolean);
+    if (providers.length === 1) {
+      return providers[0];
     }
 
     throw new Error(
@@ -1871,7 +1871,7 @@ export class OrganizerService {
 
     const providerId = raw.providerId;
     if (!providerId) {
-      throw new Error("Missing tidal id for organizer");
+      throw new Error("Missing provider id for organizer");
     }
 
     const streamingProviderId = OrganizerService.resolveOrganizeStreamingProvider(raw, providerId, type as OrganizeType);

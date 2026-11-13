@@ -1089,6 +1089,8 @@ class ApiClient {
     const queryParams = new URLSearchParams();
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.albumId) queryParams.set('albumId', params.albumId);
+    if (params?.editionId != null && params.editionId !== '') queryParams.set('editionId', String(params.editionId));
+    if (params?.releaseMbid) queryParams.set('releaseMbid', params.releaseMbid);
     if (params?.libraryRoot) queryParams.set('libraryRoot', params.libraryRoot);
     if (params?.fileTypes?.length) queryParams.set('fileTypes', params.fileTypes.join(','));
     if (params?.limit) queryParams.set('limit', params.limit.toString());
@@ -1311,7 +1313,7 @@ class ApiClient {
     }, parseLibraryReleaseGroupAvailabilityContract);
   }
 
-  /** Stop monitoring one edition. Never deletes files. */
+  /** Stop monitoring one edition (prunes files if remove_unmonitored_files is enabled). */
   async removeAlbumLibraryEdition(
     albumId: string,
     libraryId: number,
