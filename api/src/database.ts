@@ -901,6 +901,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
       filename TEXT NOT NULL,
       extension TEXT NOT NULL,
       file_size INT,
+      file_mtime_ms REAL,
       duration INT,
       bitrate INT,
       sample_rate INT,

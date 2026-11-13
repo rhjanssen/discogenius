@@ -18,16 +18,17 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
 
     const upsertUnmappedFile = db.prepare(`
         INSERT INTO UnmappedFiles (
-            file_path, relative_path, library_root, filename, extension, file_size, duration,
+            file_path, relative_path, library_root, filename, extension, file_size, file_mtime_ms, duration,
             bitrate, sample_rate, bit_depth, channels, codec,
             detected_artist, detected_album, detected_track, audio_quality, reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             relative_path = excluded.relative_path,
             library_root = excluded.library_root,
             filename = excluded.filename,
             extension = excluded.extension,
             file_size = excluded.file_size,
+            file_mtime_ms = excluded.file_mtime_ms,
             duration = COALESCE(excluded.duration, duration),
             bitrate = COALESCE(excluded.bitrate, bitrate),
             sample_rate = COALESCE(excluded.sample_rate, sample_rate),
@@ -95,6 +96,7 @@ export async function persistRootReviewCandidates(candidates: ImportCandidate[])
                 file.name,
                 file.extension.replace(".", ""),
                 stats.size,
+                stats.mtimeMs,
                 metrics.duration,
                 metrics.bitrate,
                 metrics.sampleRate,

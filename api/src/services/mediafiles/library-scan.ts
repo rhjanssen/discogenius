@@ -6,6 +6,7 @@ import { Config, getConfigSection } from "../config/config.js";
 import { resolveArtistFolderFromRecord } from "../config/naming.js";
 import { ensureEmptyArtistFoldersIfEnabled } from "../music/artist-paths.js";
 import { ImportService } from "./import-service.js";
+import { isUnmappedFileCheckCurrent } from "./unmapped-files.js";
 import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import { persistRootReviewCandidates } from "./library-scan-root-review.js";
 import { relinkUnresolvedLibraryFiles } from "./library-scan-relink.js";
@@ -1343,6 +1344,35 @@ export class DiskScanService {
                     if (MEDIA_EXTENSIONS.has(ext)) {
                         try {
                             const stats = fs.statSync(resolved);
+                            const isInsensitive = isCaseInsensitivePath(resolved);
+                            const existingUnmapped = db.prepare(`
+                                SELECT file_size, file_mtime_ms, ignored, updated_at
+                                FROM UnmappedFiles
+                                WHERE file_path = ?
+                                   OR (LOWER(file_path) = LOWER(?) AND ? = 1)
+                                LIMIT 1
+                            `).get(resolved, resolved, isInsensitive ? 1 : 0) as {
+                                file_size: number | null;
+                                file_mtime_ms: number | null;
+                                ignored: number;
+                                updated_at: string | null;
+                            } | undefined;
+                            if (existingUnmapped) {
+                                if (existingUnmapped.ignored) {
+                                    continue;
+                                }
+                                if (isUnmappedFileCheckCurrent({
+                                    fileSize: existingUnmapped.file_size,
+                                    fileMtimeMs: existingUnmapped.file_mtime_ms,
+                                    updatedAt: existingUnmapped.updated_at,
+                                    statsSize: stats.size,
+                                    statsMtimeMs: stats.mtimeMs,
+                                    artistId,
+                                    artistName: artist.name,
+                                })) {
+                                    continue;
+                                }
+                            }
                             const relative = path.relative(rootPath, resolved);
                             const segments = relative.split(path.sep);
                             let detectedArtist = segments.length >= 1 ? segments[0] : artist.name;
@@ -1671,14 +1701,15 @@ export class DiskScanService {
                         } = parsedForUnmapped;
                         await withSqliteWriteGate(() => db.prepare(`
                             INSERT INTO UnmappedFiles (
-                                file_path, relative_path, library_root, filename, extension, file_size, duration,
+                                file_path, relative_path, library_root, filename, extension, file_size, file_mtime_ms, duration,
                                 bitrate, sample_rate, bit_depth, channels, codec,
                                 detected_artist, detected_album, detected_track, audio_quality, reason
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT(file_path) DO UPDATE SET
                                 relative_path = excluded.relative_path,
                                 library_root = excluded.library_root,
                                 file_size = excluded.file_size,
+                                file_mtime_ms = excluded.file_mtime_ms,
                                 duration = COALESCE(excluded.duration, duration),
                                 bitrate = COALESCE(excluded.bitrate, bitrate),
                                 sample_rate = COALESCE(excluded.sample_rate, sample_rate),
@@ -1698,6 +1729,7 @@ export class DiskScanService {
                             path.basename(resolved),
                             ext,
                             stats.size,
+                            stats.mtimeMs,
                             metrics.duration,
                             metrics.bitrate,
                             metrics.sampleRate,
