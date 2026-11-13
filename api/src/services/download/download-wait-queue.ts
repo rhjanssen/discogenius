@@ -8,6 +8,7 @@ import { CommandQueueManager } from "../commands/command-queue-manager.js";
 import { appEvents, AppEvent } from "../commands/app-events.js";
 import {
   evaluateAcquisitionDownload,
+  resolveEnabledAudioLibraryTarget,
   type AcquisitionWaitReason,
 } from "../music/acquisition-download-command.js";
 import { evaluateWaitingAcquisitionPlan } from "./waiting-acquisition-plan.js";
@@ -182,6 +183,65 @@ function allocateFractionalQueueRanks(
 function notifyQueueChanged(): void {
   if (!CUTOVER_NOTIFY) return;
   appEvents.emit(AppEvent.QUEUE_CLEARED);
+}
+
+const SPATIAL_QUALITY_PATTERN = /\b(atmos|dolby_atmos|spatial|360ra|sony_360ra)\b/i;
+
+export function isSpatialQualityOrOffer(quality: unknown): boolean {
+  if (!quality || typeof quality !== "string") return false;
+  return SPATIAL_QUALITY_PATTERN.test(quality.trim());
+}
+
+function isSpatialAudioVariant(variantId: unknown): boolean {
+  const id = Number(variantId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  const variant = db.prepare(`
+    SELECT quality_class, spatial_format FROM ProviderItemAudioVariants WHERE id = ?
+  `).get(id) as { quality_class?: string | null; spatial_format?: string | null } | undefined;
+  return Boolean(variant && (variant.quality_class === "spatial" || variant.spatial_format));
+}
+
+function resolveWantSlot(input: DownloadWaitEnqueueInput): "stereo" | "spatial" | null {
+  const payload = input.payload ?? {};
+  const explicit = String(input.slot || payload.slot || "").trim().toLowerCase();
+  if (explicit === "stereo" || explicit === "spatial") return explicit;
+
+  let libraryId = Number(payload.libraryId);
+  if (!(Number.isInteger(libraryId) && libraryId > 0) && input.planId != null) {
+    const planRow = db.prepare(`
+      SELECT library_release.library_id
+      FROM AcquisitionPlans plan
+      JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
+      WHERE plan.id = ?
+    `).get(input.planId) as { library_id?: number } | undefined;
+    libraryId = Number(planRow?.library_id);
+  }
+  if (Number.isInteger(libraryId) && libraryId > 0) {
+    return resolveEnabledAudioLibraryTarget(db, libraryId)?.slot ?? null;
+  }
+  return null;
+}
+
+/**
+ * A stereo want is never filled by a spatial offer (AGENTS.md: Atmos vs
+ * stereo). Enforced at enqueue so no caller can slip a spatial source into a
+ * stereo slot. An unknown want slot is not assumed to be stereo.
+ */
+export function assertStereoWantNotFilledBySpatialOffer(input: DownloadWaitEnqueueInput): void {
+  if (input.mediaKind === "video") return;
+  if (resolveWantSlot(input) !== "stereo") return;
+
+  const payload = input.payload ?? {};
+  const fail = () => {
+    throw new Error("Stereo want cannot be filled by a spatial offer");
+  };
+  if (isSpatialQualityOrOffer(input.quality) || isSpatialQualityOrOffer(payload.quality)) fail();
+  if (isSpatialAudioVariant(payload.provider_audio_variant_id ?? payload.providerAudioVariantId)) fail();
+  if (Array.isArray(payload.trackOffers)) {
+    for (const offer of payload.trackOffers as Array<Record<string, unknown> | null>) {
+      if (isSpatialQualityOrOffer(offer?.quality) || isSpatialAudioVariant(offer?.providerAudioVariantId)) fail();
+    }
+  }
 }
 
 export class DownloadWaitQueue {
@@ -416,6 +476,8 @@ export class DownloadWaitQueue {
     if (!refKey) {
       throw new Error("Download wait queue requires a refKey.");
     }
+
+    assertStereoWantNotFilledBySpatialOffer(input);
 
     const existing = this.findExistingTypedJob(input, refKey)
       ?? this.findExistingVideoJob(input)

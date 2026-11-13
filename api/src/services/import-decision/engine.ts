@@ -63,30 +63,6 @@ const unmatchedTracksSpecification: ImportDecisionSpecification = {
     },
 };
 
-const missingTracksSpecification: ImportDecisionSpecification = {
-    evaluate(context) {
-        if (context.match.itemType !== "album") {
-            return null;
-        }
-
-        if (context.mode !== "NewDownload") {
-            return null;
-        }
-
-        const remoteTrackCount = Number(
-            context.match.item?.numberOfTracks
-            ?? context.match.item?.num_tracks
-            ?? context.match.item?.number_of_tracks
-            ?? 0
-        );
-        const matchedCount = context.match.matchedCount ?? 0;
-        if (remoteTrackCount > 0 && matchedCount < remoteTrackCount) {
-            return "Has missing tracks";
-        }
-
-        return null;
-    },
-};
 
 const confidenceSpecification: ImportDecisionSpecification = {
     evaluate(context) {
@@ -160,9 +136,11 @@ const existingImportSpecification: ImportDecisionSpecification = {
     },
 };
 
+// missingTracksSpecification was removed per #76: partial album downloads (e.g. 162/163 Bowie,
+// 16/17 Keane) must be imported rather than rejected all-or-nothing. Matched tracks land,
+// while missing ones stay wanted and get re-planned.
 const albumSpecifications: ImportDecisionSpecification[] = [
     unmatchedTracksSpecification,
-    missingTracksSpecification,
     confidenceSpecification,
     matchScoreSpecification,
     ambiguousMatchSpecification,
