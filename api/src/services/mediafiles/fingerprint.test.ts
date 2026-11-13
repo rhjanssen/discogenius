@@ -104,3 +104,66 @@ test("AcoustID lookup distinguishes missing configuration, invalid input, and se
   assert.equal(failed.status, "service_error");
   assert.match(failed.error || "", /network unavailable/);
 });
+
+test("AcoustID lookup serializes concurrent requests and retries HTTP 429 with backoff", async () => {
+  clearAcoustIdLookupCacheForTest();
+  let calls = 0;
+  const timestamps: number[] = [];
+
+  const retried = await lookupAcoustIdDetailed(
+    { fingerprint: "fp-429", duration: 180 },
+    {
+      clientId: "test-client",
+      minIntervalMs: 10,
+      retryDelaysMs: [15, 30],
+      post: async () => {
+        calls += 1;
+        timestamps.push(Date.now());
+        if (calls < 2) {
+          return {
+            status: 429,
+            headers: {},
+            data: { status: "error", error: { code: 5, message: "rate limit exceeded" } },
+          };
+        }
+        return {
+          status: 200,
+          data: { status: "ok", results: [{ id: "aid-1", score: 0.95, recordings: [{ id: "rec-1" }] }] },
+        };
+      },
+    },
+  );
+  assert.equal(retried.status, "matched");
+  assert.equal(calls, 2);
+  assert.equal(retried.matches[0]?.recordingIds[0], "rec-1");
+  assert.ok(timestamps[1] - timestamps[0] >= 10);
+
+  // Concurrent uncached lookups are serialized by at least minIntervalMs
+  const order: number[] = [];
+  await Promise.all([
+    lookupAcoustIdDetailed(
+      { fingerprint: "fp-a", duration: 180 },
+      {
+        clientId: "test-client",
+        minIntervalMs: 25,
+        post: async () => {
+          order.push(Date.now());
+          return { status: 200, data: { status: "ok", results: [] } };
+        },
+      },
+    ),
+    lookupAcoustIdDetailed(
+      { fingerprint: "fp-b", duration: 181 },
+      {
+        clientId: "test-client",
+        minIntervalMs: 25,
+        post: async () => {
+          order.push(Date.now());
+          return { status: 200, data: { status: "ok", results: [] } };
+        },
+      },
+    ),
+  ]);
+  assert.equal(order.length, 2);
+  assert.ok(order[1] - order[0] >= 20);
+});

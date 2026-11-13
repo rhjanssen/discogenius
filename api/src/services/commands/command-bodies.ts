@@ -428,6 +428,7 @@ export interface ImportUnmappedFilesCommand extends CommandBodyCommon {
   canonical?: {
     libraryId: number;
     editionId: number;
+    force?: boolean;
     mappings: Array<{
       unmappedFileId: number;
       trackId: number;

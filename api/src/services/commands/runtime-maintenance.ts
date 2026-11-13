@@ -13,6 +13,7 @@ import {
   reconcileDiskAndDatabase,
   type DiskReconciliationSnapshot,
 } from "../mediafiles/disk-reconciliation-service.js";
+import { runHousekeepingStrayAndPlacement } from "../mediafiles/housekeeping-stray-files.js";
 
 export interface RuntimeMaintenanceSummary {
   duplicateLibraryFilesRemoved: number;
@@ -32,6 +33,18 @@ export interface RuntimeMaintenanceSummary {
   unmonitoredFilesRemoved: number;
   /** Two-way disk vs DB reconciliation snapshot */
   reconciliation?: DiskReconciliationSnapshot;
+  /** Orphan lyric/sidecar files removed */
+  orphanLyricsRemoved: number;
+  /** Aged temp/partial files removed from library roots */
+  strayTempFilesRemoved: number;
+  /** Empty subdirectories removed from library roots */
+  emptyFoldersRemoved: number;
+  /** Unowned non-importable audio files removed */
+  unownedAudioRemoved: number;
+  /** Misplaced stereo/Atmos track files deleted because a copy already existed */
+  misplacedDeleted: number;
+  /** Misplaced stereo/Atmos track files moved to the right library */
+  misplacedMoved: number;
   /** True when the run stopped early due to reaching the hard time limit */
   timedOut?: boolean;
 }
@@ -177,6 +190,12 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
     staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
     unmonitoredFilesRemoved: 0,
+    orphanLyricsRemoved: 0,
+    strayTempFilesRemoved: 0,
+    emptyFoldersRemoved: 0,
+    unownedAudioRemoved: 0,
+    misplacedDeleted: 0,
+    misplacedMoved: 0,
     timedOut: false,
   };
 
@@ -274,6 +293,22 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
   await yieldFn();
   reportProgress(60, "Pruning unmonitored files");
   summary.unmonitoredFilesRemoved = (await LibraryFilesService.pruneUnmonitoredFilesForMonitoredArtists(loopOptions)).deleted;
+
+  // Step 6b: Stray files (orphan lyrics, aged temp covers, empty folders, unowned audio) and stereo/Atmos placement
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(68, "Cleaning stray files and enforcing library placement");
+  const straySummary = await runHousekeepingStrayAndPlacement({
+    isCancelled: options?.isCancelled,
+    yieldToEventLoop: yieldFn,
+  });
+  summary.orphanLyricsRemoved = straySummary.orphanLyricsRemoved;
+  summary.strayTempFilesRemoved = straySummary.tempFilesRemoved;
+  summary.emptyFoldersRemoved = straySummary.emptyFoldersRemoved;
+  summary.unownedAudioRemoved = straySummary.unownedAudioRemoved;
+  summary.misplacedDeleted = straySummary.misplacedDeleted;
+  summary.misplacedMoved = straySummary.misplacedMoved;
 
   // Distinct physical paths remain distinct TrackFiles. Deleting only their
   // rows makes the next scan mint new IDs for the same files and breaks linked

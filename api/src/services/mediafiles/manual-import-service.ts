@@ -35,6 +35,10 @@ export interface ManualImportSummary {
     imported: number;
     duplicates: number;
     skipped: number;
+    /** Number of imported files whose AcoustID fingerprint could not be verified (e.g. no result, missing key, rate limit). */
+    unverified?: number;
+    /** Unmapped file IDs rejected for manual review due to confident AcoustID mismatch. */
+    reviewReasons?: Record<string, string>;
     /**
      * Authoritative operation result: requested item id -> the TrackFiles row it
      * created. Callers attach canonical/provider authority to exactly this row

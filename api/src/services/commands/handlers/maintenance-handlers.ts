@@ -42,6 +42,11 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `${summary.orphanDownloadFoldersRemoved} orphan download folder(s)`,
         `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
         `removed ${summary.unmonitoredFilesRemoved} unmonitored file(s)`,
+        `${summary.orphanLyricsRemoved} orphan lyric(s)`,
+        `${summary.strayTempFilesRemoved} temp file(s)`,
+        `${summary.emptyFoldersRemoved} empty folder(s)`,
+        `${summary.unownedAudioRemoved} unowned audio file(s)`,
+        `moved ${summary.misplacedMoved} / deleted ${summary.misplacedDeleted} misplaced file(s)`,
     ];
     const prefix = summary.timedOut ? "Housekeeping stopped at time limit; " : "";
     ctx.updateCommandDescription(job, {

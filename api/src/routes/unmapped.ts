@@ -45,6 +45,7 @@ function queueCanonicalVideoImport(canonicalVideo: {
 function queueCanonicalUnmappedImport(canonical: {
     libraryId: number;
     editionId: number;
+    force?: boolean;
     mappings: Array<{ unmappedFileId: number; trackId: number }>;
 }): Promise<number> {
     const sortedIds = canonical.mappings
@@ -120,9 +121,13 @@ router.post("/canonical-import", async (req, res) => {
                 trackId: getRequiredInteger(mapping, "trackId"),
             };
         });
+        if (body.force !== undefined && typeof body.force !== "boolean") {
+            return res.status(400).json({ error: "force must be a boolean" });
+        }
         const canonical = {
             libraryId: getRequiredInteger(body, "libraryId"),
             editionId: getRequiredInteger(body, "editionId"),
+            ...(body.force === true ? { force: true } : {}),
             mappings,
         };
         const commandId = await queueCanonicalUnmappedImport(canonical);

@@ -52,8 +52,10 @@ import { CatalogCandidateService } from "./candidate-service.js";
 import { normalizeComparableText, stringSimilarity } from "./import-matching-utils.js";
 import {
     identifyAudioFileByAcoustId,
+    verifyAudioFileRecording,
     type AcoustIdIdentificationResult,
 } from "./acoustid-identification-service.js";
+import { isAcoustIdConfigured } from "./fingerprint.js";
 
 import { albumCoverLocalUrl, videoCoverLocalUrl } from "../metadata/media-cover-service.js";
 
@@ -1035,11 +1037,76 @@ export class UnmappedFilesService {
             }
         }
         // Lidarr ShouldFingerprint (distance > 0.15, extra or missing tracks, worst track > 0.40) decides inside the planner.
+        const fingerprintResultsByPath = new Map<string, AcoustIdIdentificationResult>();
         const needsFingerprint = plan.decision === "review" && plan.needsEvidence === "fingerprint";
         if (needsFingerprint) {
-            const fingerprints = await this.fingerprintFiles(files);
+            const fingerprints: FingerprintEvidence = new Map();
+            for (const file of files) {
+                if (file.library_root === "videos" || !fs.existsSync(file.file_path)) continue;
+                try {
+                    const result = await this.identifyByAcoustId(file.file_path, {});
+                    fingerprintResultsByPath.set(file.file_path, result);
+                    if (result.recordingIds.length > 0) fingerprints.set(file.id, result.recordingIds);
+                } catch (error) {
+                    console.warn(`[AutoImport] Fingerprint failed for ${file.file_path}:`, error);
+                }
+            }
             plan = decide(fingerprints);
         }
+
+        if (plan.decision === "import") {
+            const filesById = new Map(files.map((file) => [file.id, file]));
+            const getTrack = db.prepare(`
+                SELECT track.title, recording.mbid AS recording_mbid
+                FROM Tracks track
+                JOIN Recordings recording ON recording.id = track.recording_id
+                WHERE track.id = ?
+            `);
+            const hasInjectedIdentifier = this.identifyByAcoustId !== identifyAudioFileByAcoustId;
+            let unverified = false;
+            for (const mapping of plan.mappings) {
+                const file = filesById.get(mapping.unmappedFileId);
+                if (!file || file.library_root === "videos") continue;
+                if (!fs.existsSync(file.file_path)) {
+                    unverified = true;
+                    continue;
+                }
+                const track = getTrack.get(mapping.trackId) as { title: string; recording_mbid: string | null } | undefined;
+                if (!track?.recording_mbid) {
+                    unverified = true;
+                    continue;
+                }
+                const verification = await verifyAudioFileRecording({
+                    filePath: file.file_path,
+                    expectedRecordingMbid: track.recording_mbid,
+                    expectedTitle: track.title,
+                    isConfigured: () => hasInjectedIdentifier || isAcoustIdConfigured(),
+                    identify: async (filePath, opts) => {
+                        const cached = fingerprintResultsByPath.get(filePath);
+                        if (cached) return cached;
+                        const result = await this.identifyByAcoustId(filePath, opts);
+                        fingerprintResultsByPath.set(filePath, result);
+                        return result;
+                    },
+                });
+                if (verification.status === "mismatch") {
+                    return {
+                        files,
+                        plan: {
+                            decision: "review",
+                            reason: verification.reason ?? `Fingerprint mismatch for ${track.recording_mbid}`,
+                        },
+                    };
+                }
+                if (verification.status === "unverified") {
+                    unverified = true;
+                }
+            }
+            if (unverified) {
+                plan = { ...plan, unverified: true };
+            }
+        }
+
         return { files, plan };
     }
 

@@ -82,6 +82,8 @@ export type FolderAutoImportPlan =
         mappings: Array<{ unmappedFileId: number; trackId: number }>;
         /** "distance": chosen by ADR-2 step 2; callers verify it by fingerprint. */
         via?: "tags" | "distance";
+        /** True when AcoustID verification was unavailable/inconclusive and tag/length fallback was used. */
+        unverified?: boolean;
     }
     | {
         decision: "review";

@@ -183,3 +183,109 @@ test("a folder with no album tag stays in review and a dry-run does not record t
         /no album tag/,
     );
 });
+
+test("folder auto-import verifies AcoustID recording even when tags match, holding mismatches in review", async () => {
+    seed();
+    const folder = path.join(tempDir, "acoustid-check");
+    fs.mkdirSync(folder, { recursive: true });
+    const filePath = path.join(folder, "01 Blank Space.flac");
+    fs.writeFileSync(filePath, "audio-bytes");
+    db.prepare(`
+        INSERT INTO UnmappedFiles (id, file_path, relative_path, library_root, filename, extension, duration)
+        VALUES (3, ?, 'acoustid-check/01 Blank Space.flac', 'music', '01 Blank Space.flac', 'flac', 232)
+    `).run(filePath);
+
+    const makeService = (identify: (p: string, o?: any) => Promise<AcoustIdIdentificationResult>) =>
+        new UnmappedFilesService(
+            new UnmappedFileRepository(db),
+            new ImportService(),
+            identify,
+            async () => null,
+            async () => ({
+                durationSeconds: 232,
+                tags: {
+                    MUSICBRAINZ_ALBUMID: DELUXE,
+                    TRACK: "1",
+                    DISC: "1",
+                    TITLE: "Blank Space",
+                },
+            }),
+        );
+
+    // 1. Confident mismatch -> review, nothing queued
+    const mismatchService = makeService(async () => ({
+        status: "matched",
+        fingerprint: "fp",
+        duration: 232,
+        cached: false,
+        recordingIds: ["rec-other"],
+        candidates: [{
+            acoustId: "aid-other",
+            score: 0.99,
+            recording: {
+                id: "rec-other",
+                title: "Different Song",
+                artists: ["Taylor Swift"],
+                isrcs: [],
+                releaseTitles: [],
+                firstReleaseDate: null,
+                durationSeconds: 232,
+            },
+            durationDeltaSeconds: 0,
+        }],
+        rejected: [],
+    }));
+    const mismatchReport = await mismatchService.autoImportByIds([3], { dryRun: false });
+    assert.equal(mismatchReport.folders[0]?.decision, "review");
+    assert.match(mismatchReport.folders[0]?.reason ?? "", /Fingerprint matches rec-other \("Different Song"\) not rec-blank \("Blank Space"\)/);
+    assert.equal(mismatchReport.folders[0]?.queued, 0);
+    assert.equal((db.prepare("SELECT COUNT(*) AS n FROM commands WHERE name = 'ImportUnmappedFiles'").get() as { n: number }).n, 0);
+
+    // 2. AcoustID match -> import allowed
+    const matchService = makeService(async () => ({
+        status: "matched",
+        fingerprint: "fp",
+        duration: 232,
+        cached: false,
+        recordingIds: ["rec-blank"],
+        candidates: [{
+            acoustId: "aid-1",
+            score: 0.99,
+            recording: {
+                id: "rec-blank",
+                title: "Blank Space",
+                artists: ["Taylor Swift"],
+                isrcs: [],
+                releaseTitles: [],
+                firstReleaseDate: null,
+                durationSeconds: 232,
+            },
+            durationDeltaSeconds: 0,
+        }],
+        rejected: [],
+    }));
+    const matchReport = await matchService.autoImportByIds([3], { dryRun: true });
+    assert.equal(matchReport.folders[0]?.decision, "import");
+
+    // 3. AcoustID no_match -> falls back to tag/length import without failing
+    const noMatchService = makeService(async () => ({
+        status: "no_match",
+        fingerprint: "fp",
+        duration: 232,
+        cached: false,
+        recordingIds: [],
+        candidates: [],
+        rejected: [],
+    }));
+    const fallbackReport = await noMatchService.autoImportByIds([3], { dryRun: true });
+    assert.equal(fallbackReport.folders[0]?.decision, "import");
+
+    // 4. Streaming download import path never calls the fingerprint/AcoustID path
+    const candidateFromRoot = path.resolve("api/src/services/mediafiles/import-service.ts");
+    const candidateFromApi = path.resolve("src/services/mediafiles/import-service.ts");
+    const importServiceSource = fs.readFileSync(
+        fs.existsSync(candidateFromRoot) ? candidateFromRoot : candidateFromApi,
+        "utf8",
+    );
+    assert.equal(/verifyAudioFileRecording|identifyAudioFileByAcoustId|lookupAcoustId/.test(importServiceSource), false);
+});
