@@ -107,8 +107,11 @@ import {
   type RetagPreviewItem,
 } from "@/components/mediafiles/FileMaintenanceDialogs";
 import {
-  ReleaseSwitcher,
-} from "@/pages/album/ReleaseSwitcher";
+  EditionsSummaryBar,
+} from "@/pages/album/EditionsSummaryBar";
+import {
+  ManageEditionsDialog,
+} from "@/pages/album/ManageEditionsDialog";
 import {
   defaultTrackListEditionId,
   resolveTrackListTabPresentation,
@@ -662,6 +665,7 @@ const AlbumPage = () => {
   const [stripTagsOpen, setStripTagsOpen] = useState(false);
   const [stripTagsApplying, setStripTagsApplying] = useState(false);
   const [pendingSelectionKey, setPendingSelectionKey] = useState<string | null>(null);
+  const [editionsDialogOpen, setEditionsDialogOpen] = useState(false);
   const handledTrackScrollKeyRef = useRef<string | null>(null);
   const associatedVideoCarouselRef = useHorizontalScrollRestore(
     `album:${albumId || "unknown"}:associated-videos`,
@@ -1319,6 +1323,43 @@ const AlbumPage = () => {
     libraryPlanMutation.mutate({ libraryId, editionId, planKey: null });
   }, [albumId, libraryPlanMutation]);
 
+  const representativeMutation = useMutation({
+    mutationFn: async ({
+      libraryId,
+      editionId,
+    }: {
+      libraryId: number;
+      editionId: number;
+    }) => api.setAlbumLibraryRepresentative(albumId!, libraryId, editionId),
+    onSuccess: async (releaseAvailability) => {
+      queryClient.setQueryData(
+        albumReleaseAvailabilityQueryKey(albumId),
+        releaseAvailability,
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: albumPageQueryKey(albumId) }),
+        queryClient.invalidateQueries({ queryKey: albumReleaseAvailabilityQueryKey(albumId) }),
+      ]);
+      dispatchLibraryUpdated();
+      toast({
+        title: "Primary edition updated",
+        description: "This edition is now the Primary edition for the library.",
+      });
+    },
+    onError: (mutationError) => {
+      toast({
+        title: "Failed to set Primary edition",
+        description: mutationError instanceof Error ? mutationError.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSetRepresentativeForLibrary = useCallback((libraryId: number, editionId: number) => {
+    if (!albumId) return;
+    representativeMutation.mutate({ libraryId, editionId });
+  }, [albumId, representativeMutation]);
+
   const handleDownloadAlbum = async (slot?: 'stereo' | 'spatial') => {
     if (!album || !hasAnyProviderOffer) return;
     setDownloadingAlbum(true);
@@ -1893,6 +1934,16 @@ const AlbumPage = () => {
           </div>
         </div>
 
+        {/* Editions Summary Bar */}
+        <EditionsSummaryBar
+          availability={releaseAvailability}
+          isLoading={isAvailabilityLoading}
+          decisionLabel={album.decision_label}
+          decisionAction={album.decision_action}
+          onBackToAutomatic={() => void handleBackToAutomatic()}
+          onOpenDialog={() => setEditionsDialogOpen(true)}
+        />
+
         {/* Track List Section */}
         {/* One tab per monitored edition, and only when the API says one list
             cannot show them all. The strip reuses the Dashboard's Queue/Activity
@@ -2039,32 +2090,22 @@ const AlbumPage = () => {
           );
         })()}
 
-        {/* Release Group Releases Section */}
-        {isAvailabilityLoading ? (
-          <div className={styles.sectionSpacing}>
-            <div className={styles.sectionHeader}>
-              <Title2 as="h2">Editions</Title2>
-            </div>
-            <div style={{ padding: "1rem 0", display: "flex", alignItems: "center", gap: "0.5rem", opacity: 0.7 }}>
-              <Spinner size="small" label="Loading available editions..." />
-            </div>
-          </div>
-        ) : releaseAvailability && releaseAvailability.releases.length > 0 ? (
-          <div className={styles.sectionSpacing}>
-            <div className={styles.sectionHeader}>
-              <Title2 as="h2">Editions</Title2>
-            </div>
-            <ReleaseSwitcher
-              availability={releaseAvailability}
-              currentReleaseMbid={album.selected_release_mbid || album.stereo_release_mbid || album.spatial_release_mbid}
-              pendingSelectionKey={pendingSelectionKey}
-              onSelect={handleSelectReleaseForLibrary}
-              onSelectPlan={handleSelectPlanForLibrary}
-              onRevertPlan={handleRevertPlanForLibrary}
-              onRemoveEdition={handleRemoveEditionForLibrary}
-            />
-          </div>
-        ) : null}
+        {/* Manage Editions & Sources Modal */}
+        <ManageEditionsDialog
+          open={editionsDialogOpen}
+          onClose={() => setEditionsDialogOpen(false)}
+          availability={releaseAvailability}
+          currentReleaseMbid={album.selected_release_mbid || album.stereo_release_mbid || album.spatial_release_mbid}
+          pendingSelectionKey={pendingSelectionKey}
+          decisionLabel={album.decision_label}
+          decisionAction={album.decision_action}
+          onBackToAutomatic={() => void handleBackToAutomatic()}
+          onSelect={handleSelectReleaseForLibrary}
+          onSelectPlan={handleSelectPlanForLibrary}
+          onRevertPlan={handleRevertPlanForLibrary}
+          onRemoveEdition={handleRemoveEditionForLibrary}
+          onSetRepresentative={handleSetRepresentativeForLibrary}
+        />
     </div >
   );
 };
