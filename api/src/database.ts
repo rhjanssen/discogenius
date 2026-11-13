@@ -44,6 +44,7 @@ import { migrateRelationshipCredits } from "./database/schema/relationship-credi
 import { migrateLibraryUserDecisions } from "./database/schema/library-user-decisions.js";
 import { migrateDownloadQueueEditionIdentity } from "./database/schema/download-queue-edition-identity.js";
 import { migrateDropDownconvertSetting } from "./database/schema/drop-downconvert-setting.js";
+import { migrateTrackFileSource } from "./database/schema/track-file-source.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createArtistLocaleAliasesSchema, migrateArtistLocaleAliases } from "./database/schema/artist-locale-aliases.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
@@ -576,6 +577,7 @@ export function initDatabase() {
   migrateRetagAlbumScheduling(db);
   migrateDeliveredQuality(db);
   migrateDropDownconvertSetting(db);
+  migrateTrackFileSource(db);
   // New table + config marker only. user_version stays 46 so a running
   // RetagArtist is not reset.
   migrateProviderAuthState(db);
@@ -789,6 +791,7 @@ export function createBaselineSchemaV41(schemaDb: Database.Database = db): void 
       -- THIS is the resolvable link. Nullable: a manually imported file need not
       -- have any provider resource at all.
       provider_item_id INTEGER,
+      source_provider TEXT,
       library_slot TEXT NOT NULL DEFAULT 'stereo',                 -- stereo, spatial, video
       library_id INTEGER,
       source_audio_variant_id INTEGER,

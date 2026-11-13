@@ -597,6 +597,7 @@ export function createCurrentDomainSchema(db: Database.Database): void {
       track_id INTEGER,
       recording_id INTEGER NOT NULL,
       provider_item_id INTEGER,
+      source_provider TEXT,
       source_audio_variant_id INTEGER,
       file_path TEXT NOT NULL UNIQUE,
       relative_path TEXT NOT NULL,
