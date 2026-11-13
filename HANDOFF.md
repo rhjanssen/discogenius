@@ -1,25 +1,17 @@
 # Session Handoff
 
-- **Last updated by:** Google Antigravity / Gemini
-- **Active branch:** `agent/issue-112`
-- **Related issue / PR:** Issue #112 (`fix(apple-music): hold Apple downloads and report non-ok health on wrapper/decrypt failures (#112)`)
-
-## Done
-- **Wired Apple Music wrapper reachability & repeated decrypt failures into provider auth state:**
-  1. **Wrapper reachability & health probes:**
-     - Added `probeAppleWrapperHealth` in `apple-music-auth.ts` to probe decryption ports (10020/20020). When ports are down, records provider auth failure (`needs_reauth`) with clear diagnostics and holds Apple downloads without burning retries.
-     - When wrapper recovers, records auth OK, updates `lastOkAt`, and resumes held Apple jobs in queue order.
-     - Updated `ensureAppleWrapperReadyForDownload` preflight to record auth failure when ports remain unreachable even after restart requests.
-     - Updated `/api/health` diagnostics snapshot (`providerAuthCheckFrom`) to surface specific provider error messages under `issues`.
-  2. **Decrypt failure handling & sliding window tracker:**
-     - Added `APPLE_DECRYPT_FAILURE_PATTERN` and updated `isAppleSessionFailure` / `isAppleDecryptFailure` to catch decrypt failures like `apple-music-downloader exited with code null: Decrypting... Failed to run v2: decrypt…`.
-     - Added `handleAppleDecryptFailure` with a sliding window (2 failures in 10 minutes) or immediate port check failure to transition Apple to `needs_reauth`.
-     - When a decrypt failure occurs, throws `ProviderAuthError`, bypassing `executeWithSameOfferRetries` so retries are not burned and the track is not marked unavailable. The started job is released back to the wait queue with `authHold` via `DownloadWaitQueue.releaseForAuthHold`.
-     - On successful decrypt, clears failure timestamps and calls `recordProviderAuthOk("apple-music")` with updated `lastOkAt`.
-     - Ensured real per-track `Unavailable` errors remain categorized as unavailable and do not hold the provider.
-  3. **Verification:**
-     - Added comprehensive unit and integration tests in `api/src/services/providers/apple-music/apple-music-hold.test.ts` covering unreachable wrapper holding jobs, recovery resuming jobs with updated `lastOkAt`, repeated decrypt failure window tracking, and real per-track unavailable handling.
-     - Verified `yarn lint`, `yarn typecheck`, `yarn build`, `yarn test:app`, and `yarn test:api` all pass cleanly with 0 errors.
-
-## Open Questions / Follow-ups for PO
-- None. Ready for PR review.
+- **Branch**: `main` (clean; all feature branches merged and deleted)
+- **What is done**:
+  - **PR #126 (`#77`)**: Queue API performance (keyset cursor pagination, persistent read-only `worker_threads` worker, O(1) `queuePosition`, 10s remote hydration timeout on album reads).
+  - **PR #127 (`#79`)**: Servarr/MusicBrainz locale alias lookup, `{Artist Original Name}` / `{Artist Locale Name}` / `{Artist Alias}` naming tokens, `TitleTokenRegex` fix.
+  - **PR #128 (`#116`)**: AcoustID rate-limited verification (`<= 3 req/s` + 429 retry) on manual & folder auto-imports, merged recording redirect lookup, `force` override on `POST /api/unmapped/canonical-import`.
+  - **PR #129 (`#114`)**: Housekeeping stray-file cleanup (`.lrc/.srt/.vtt`, aged temp/part files, empty folders, unowned audio) and stereo/Atmos placement enforcement (`runHousekeepingStrayAndPlacement`).
+  - **PR #130 (`#115`)**: Two-way disk vs DB reconciliation (`reconcileDiskAndDatabase`), case-insensitive root comparison, stereo/Atmos placement validation (`isTrackFilePlacementValid`), and `/api/health` / `/api/v1/system/status` `reconciliation` diagnostics.
+  - **PR #131 (`#78`)**: Plex & Jellyfin integration (`media_servers` config with redacted secrets, targeted folder scans after import/rename/retag, `POST /api/v1/media-servers/reconcile` dry-run & apply with MBID merge/fix-match/refresh).
+  - **PR #132**: Audit Round 2 cleanup (`command-queue-manager.ts` empty/whitespace provider string guard in rate-limit backoff check).
+- **Open issues / PRs**: None (`0` open issues, `0` open PRs on `rhjanssen/discogenius`).
+- **What was NOT verified on LAN**:
+  - Cloud VM cannot reach the LAN (`192.168.1.50` / `192.168.1.100` / running container). Live-server smoke testing with real provider tokens, Plex/Jellyfin instances, and Bastille/Bakermat remains for the LAN session / user.
+- **Open design items for PO**:
+  - Edition selection UX improvement (Lidarr-style modal supporting multi-edition selection and source selection on album page).
+  - Audit Round 2 follow-up notes: `artist-statistics-service.ts:448` (`Libraries ORDER BY id LIMIT 1` fallback when `LibraryArtists` has no row) and `album-query-service.ts:589` (`LIKE` search inside `listAlbumsFromMembership`).
