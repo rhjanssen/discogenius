@@ -126,3 +126,35 @@ test("malformed rename selections never expand into a library-wide command", asy
     await assert.rejects(handleRenameFiles({ name: "RenameFiles", payload } as any, {} as any), /identifiers|scope/);
   }
 });
+
+function getGetHandler(pathName: string, router = retagRouter): (req: any, res: any) => Promise<void> | void {
+  const layer = (router as any).stack.find((entry: any) => entry.route?.path === pathName && entry.route?.methods?.get);
+  assert.ok(layer, `Expected GET handler for path ${pathName}`);
+  return layer.route.stack[0].handle;
+}
+
+test("GET /derivative-sources returns read-only derivative source report (#75)", async () => {
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems (id, provider, entity_type, provider_id, title)
+    VALUES (9101, 'tidal', 'track', 't-karaoke-9101', 'Track (Karaoke Version)')
+  `).run();
+  dbModule.db.prepare(`
+    INSERT INTO TrackFiles (
+      id, file_path, relative_path, library_root, filename, extension, file_type, provider_item_id
+    ) VALUES (
+      9101, '/tmp/nonexistent-karaoke-9101.flac', 'nonexistent-karaoke-9101.flac', '/tmp', 'nonexistent-karaoke-9101.flac', '.flac', 'track', 9101
+    )
+  `).run();
+
+  try {
+    const res = createMockResponse();
+    await getGetHandler("/derivative-sources")({}, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.total, 1);
+    assert.equal(res.body.items[0].filePath, "/tmp/nonexistent-karaoke-9101.flac");
+    assert.equal(res.body.items[0].marker, "karaoke");
+  } finally {
+    dbModule.db.prepare("DELETE FROM TrackFiles WHERE id = 9101").run();
+    dbModule.db.prepare("DELETE FROM ProviderItems WHERE id = 9101").run();
+  }
+});
