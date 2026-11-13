@@ -294,6 +294,7 @@ export interface RecordProviderAuthOkOptions {
   accountLabel?: string | null;
   credentialSavedAt?: string | null;
   probedAt?: string | null;
+  force?: boolean;
 }
 
 export async function recordProviderAuthOk(provider: string, options: RecordProviderAuthOkOptions = {}): Promise<ProviderAuthTransition> {
@@ -312,7 +313,7 @@ export async function recordProviderAuthOk(provider: string, options: RecordProv
   const alreadyOk = current?.status === "ok";
   // Steady state: a healthy provider refreshes often. Touch the row at most
   // every 6h unless the account label, saved credential, or probe time changed.
-  if (alreadyOk && !labelChanged && !credentialChanged && !probeChanged && recentOk(current)) {
+  if (!options.force && alreadyOk && !labelChanged && !credentialChanged && !probeChanged && recentOk(current)) {
     return { provider: id, status: "ok", transitioned: false, persisted: false };
   }
   const transitioned = !alreadyOk;

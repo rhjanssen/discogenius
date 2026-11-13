@@ -941,10 +941,16 @@ function providerAuthCheckFrom(rows: ProviderAuthPublic[]): HealthCheckResult {
     };
   }
   const held = blocked.reduce((sum, row) => sum + row.held, 0);
+  const summaries = blocked.map((row) => {
+    if (row.lastError) {
+      return `${row.provider}: ${row.lastError}${row.held > 0 ? ` (${row.held} held)` : ""}`;
+    }
+    return `${row.provider}: ${row.held} held`;
+  });
   return {
     scope: "providers.auth",
     status: "warning",
-    message: `Provider login required (${blocked.map((row) => `${row.provider}: ${row.held} held`).join("; ")})`,
+    message: `Provider action required (${summaries.join("; ")})`,
     details: {
       held,
       providers: blocked.map((row) => row.provider),
