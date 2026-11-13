@@ -128,7 +128,7 @@ export interface SystemStatusContract {
     catalog: HealthCheckResultContract;
     providerAuth: HealthCheckResultContract;
   };
-  /** Login state per download provider. Empty before the table exists. */
+  /** Current rows. Empty when the table is not there yet. Never contains secrets. */
   providerAuth: Array<{
     provider: string;
     status: "ok" | "needs_reauth" | "unknown";
@@ -145,6 +145,15 @@ export interface SystemStatusContract {
     href: string | null;
     settingsLabel: string | null;
   }>;
+  reconciliation: {
+    checkedAt: string;
+    diskAudioFiles: number;
+    trackFiles: number;
+    unmapped: number;
+    missing: number;
+    misplaced: number;
+    untrackedAdded: number;
+  } | null;
   issues: HealthCheckResultContract[];
   /** Added by the /system/status route (not part of the /health probe snapshot). */
   imports: {

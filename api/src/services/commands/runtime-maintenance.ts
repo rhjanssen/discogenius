@@ -9,6 +9,10 @@ import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-f
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { buildLibraryArtistMonitoredExistsSql } from "../music/managed-artists.js";
+import {
+  reconcileDiskAndDatabase,
+  type DiskReconciliationSnapshot,
+} from "../mediafiles/disk-reconciliation-service.js";
 
 export interface RuntimeMaintenanceSummary {
   duplicateLibraryFilesRemoved: number;
@@ -26,6 +30,8 @@ export interface RuntimeMaintenanceSummary {
   videoQualitiesCorrected: number;
   /** Files deleted because they belong to unmonitored albums/editions */
   unmonitoredFilesRemoved: number;
+  /** Two-way disk vs DB reconciliation snapshot */
+  reconciliation?: DiskReconciliationSnapshot;
   /** True when the run stopped early due to reaching the hard time limit */
   timedOut?: boolean;
 }
@@ -272,6 +278,16 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
   // Distinct physical paths remain distinct TrackFiles. Deleting only their
   // rows makes the next scan mint new IDs for the same files and breaks linked
   // extras and durable file plans. Acquisition/import owns quality replacement.
+
+  // Step 6.5: Two-way disk vs DB reconciliation (#115)
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(68, "Reconciling disk and database");
+  summary.reconciliation = await reconcileDiskAndDatabase({
+    yieldToEventLoop: yieldFn,
+    isCancelled: options?.isCancelled,
+  });
 
   // Step 7: Refresh download state
   if (isTimedOut()) { summary.timedOut = true; return summary; }
