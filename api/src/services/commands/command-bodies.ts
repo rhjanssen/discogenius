@@ -282,6 +282,9 @@ export interface CheckUpgradesCommand extends CommandBodyCommon {
 }
 
 export type HousekeepingCommand = CommandBodyCommon;
+export interface ReconcileMediaServersCommand extends CommandBodyCommon {
+    dryRun?: boolean;
+}
 
 export interface DownloadTrackCommand extends CommandBodyCommon {
   type?: "track";

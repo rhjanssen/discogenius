@@ -61,3 +61,18 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         queueUpdateLibraryMetadata({ trigger: CommandTrigger.Scheduled });
     }
 };
+
+export const handleReconcileMediaServers: CommandHandler<"ReconcileMediaServers"> = async (job, ctx) => {
+    ctx.updateCommandDescription(job, {
+        progress: 10,
+        description: "Reconciling Plex and Jellyfin against MusicBrainz IDs",
+    });
+    const { reconcileMediaServers } = await import("../../media-servers/media-server-reconcile.js");
+    const report = await reconcileMediaServers({
+        dryRun: job.payload.dryRun === true,
+    });
+    ctx.updateCommandDescription(job, {
+        progress: 100,
+        description: `Media servers reconciled (Plex: ${report.plex.mergesApplied} merged, ${report.plex.matchesFixed} fixed; Jellyfin: ${report.jellyfin.itemsRefreshed} refreshed)`,
+    });
+};

@@ -19,3 +19,4 @@ export { MaintenanceCommand } from './maintenance-command.js';
 export { ImportProviderArtistsCommand } from './import-provider-artists-command.js';
 export { ImportUnmappedFilesCommand } from './import-unmapped-files-command.js';
 export { LibraryBulkActionCommand } from './library-bulk-action-command.js';
+export { ReconcileMediaServersCommand } from './reconcile-media-servers-command.js';

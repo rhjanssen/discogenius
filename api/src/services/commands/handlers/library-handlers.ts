@@ -19,6 +19,8 @@ import { runRenameWorkUnit } from "../rename-work.js";
 import { fileCheckpointResumePrefix } from "../command-file-checkpoint.js";
 import { runScanWorkUnit } from "../scan-work.js";
 import { runRootInventoryWorkUnit } from "../root-inventory-work.js";
+import { notifyMediaServersForPaths } from "../../media-servers/media-server-notifier.js";
+import { jsonList, SQL_JSON_LIST } from "../../../utils/sql-id-list.js";
 
 /**
  * Report what the scan actually reconciled in the file table, so "Completed"
@@ -207,6 +209,9 @@ export const handleRenameArtist: CommandHandler<"RenameArtist"> = async (job, ct
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.errors.length} error(s), ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
+    if (result.renamed > 0) {
+        notifyMediaServersForArtists(artistIds, "rename");
+    }
     throwOnFileErrors("Rename", result.errors, result.renamed + result.skipped + result.missing);
 };
 
@@ -223,7 +228,7 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
         description: renameResume ? `Rename Files - ${renameResume}applying rename plan` : "Rename Files - applying rename plan",
     });
     const explicitIds = Boolean(ids);
-    const result = await runRenameWorkUnit(job, ctx, () => explicitIds
+    const resolvedIds = explicitIds
         ? ids!
         : RenameTrackFileService.getRenameWorkIds({
             artistId: job.payload.artistId,
@@ -232,12 +237,16 @@ export const handleRenameFiles: CommandHandler<"RenameFiles"> = async (job, ctx)
             releaseMbid: job.payload.releaseMbid,
             libraryRoot: job.payload.libraryRoot,
             fileTypes: job.payload.fileTypes,
-        }), !explicitIds);
+        });
+    const result = await runRenameWorkUnit(job, ctx, () => resolvedIds, !explicitIds);
     // Renaming changes paths, not library counts or file sizes.
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Renamed ${result.renamed} file(s), ${result.conflicts} conflict(s), ${result.missing} missing, ${result.errors.length} error(s), ${result.cleanedDirectories} empty folder(s) cleaned`,
     });
+    if (result.renamed > 0) {
+        notifyMediaServersForFileIds(resolvedIds, "rename");
+    }
     throwOnFileErrors("Rename", result.errors, result.renamed + result.skipped + result.missing);
 };
 
@@ -279,7 +288,10 @@ export const handleRetagArtist: CommandHandler<"RetagArtist"> = async (job, ctx)
         options: { artistIds },
         includeVideo: true,
     });
-    if (result.retagged > 0) await ArtistStatisticsService.refreshAsync(artistIds);
+    if (result.retagged > 0) {
+        await ArtistStatisticsService.refreshAsync(artistIds);
+        notifyMediaServersForArtists(artistIds, "retag");
+    }
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)${warningSuffix(result.warnings)}`,
@@ -312,7 +324,11 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
                     releaseMbid: job.payload.releaseMbid,
                 },
             }, true);
-        if (result.retagged > 0 && affectedArtists.length > 0) await ArtistStatisticsService.refreshAsync(affectedArtists);
+        if (result.retagged > 0 && affectedArtists.length > 0) {
+            await ArtistStatisticsService.refreshAsync(affectedArtists);
+            if (ids) notifyMediaServersForFileIds(ids, "retag");
+            else notifyMediaServersForArtists(affectedArtists, "retag");
+        }
         ctx.updateCommandDescription(job, {
             progress: 100,
             description: `Stripped tags on ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)`,
@@ -341,10 +357,35 @@ export const handleRetagFiles: CommandHandler<"RetagFiles"> = async (job, ctx) =
             includeVideo: true,
         },
     );
-    if (result.retagged > 0 && affectedArtists.length > 0) await ArtistStatisticsService.refreshAsync(affectedArtists);
+    if (result.retagged > 0 && affectedArtists.length > 0) {
+        await ArtistStatisticsService.refreshAsync(affectedArtists);
+        if (ids) notifyMediaServersForFileIds(ids, "retag");
+        else notifyMediaServersForArtists(affectedArtists, "retag");
+    }
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: `Retagged ${result.retagged} file(s), ${result.missing} missing, ${result.errors.length} error(s)${warningSuffix(result.warnings)}`,
     });
     throwOnFileErrors("Retag", result.errors, result.retagged + result.skipped + result.missing);
 };
+
+function notifyMediaServersForArtists(artistIds: string[], reason: "rename" | "retag"): void {
+    const numericIds = artistIds.map(Number).filter((n) => Number.isFinite(n));
+    if (numericIds.length === 0) return;
+    const rows = db.prepare(`
+        SELECT file_path FROM TrackFiles
+        WHERE artist_metadata_id IN ${SQL_JSON_LIST}
+          AND file_path IS NOT NULL
+    `).all(jsonList(numericIds)) as Array<{ file_path: string }>;
+    void notifyMediaServersForPaths(rows.map((r) => r.file_path), reason);
+}
+
+function notifyMediaServersForFileIds(fileIds: number[], reason: "rename" | "retag"): void {
+    if (fileIds.length === 0) return;
+    const rows = db.prepare(`
+        SELECT file_path FROM TrackFiles
+        WHERE id IN ${SQL_JSON_LIST}
+          AND file_path IS NOT NULL
+    `).all(jsonList(fileIds)) as Array<{ file_path: string }>;
+    void notifyMediaServersForPaths(rows.map((r) => r.file_path), reason);
+}
