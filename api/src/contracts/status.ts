@@ -25,11 +25,17 @@ export type DownloadStateContract =
 export type DownloadOutcomeContract = "ok" | "completedWithWarning";
 export type DownloadContentTypeContract = "track" | "video" | "album";
 
+export type DownloadTrackImportStatusContract = "imported" | "missing" | "failed";
+
 export interface DownloadTrackProgressContract {
   title: string;
   trackNum?: number;
   volumeNum?: number;
   status: DownloadTrackStatusContract;
+  /** Per-track import outcome (`imported`, `missing`, `failed`) when an import has completed. */
+  importStatus?: DownloadTrackImportStatusContract;
+  /** Failure or missing reason for this track when applicable. */
+  reason?: string;
   /**
    * Provider track id (tiddl stages files as `{providerTrackId}.ext`). The
    * hard link for per-track state. The tiddl wrapper emits this for native
@@ -231,12 +237,18 @@ function parseDownloadTrackProgressContract(value: unknown, index: number, label
   if (!["queued", "downloading", "completed", "error", "skipped"].includes(status)) {
     throw new Error(`${label}[${index}].status must be a known download track status`);
   }
+  const importStatus = expectOptionalString(record.importStatus, `${label}[${index}].importStatus`);
+  if (importStatus !== undefined && !["imported", "missing", "failed"].includes(importStatus)) {
+    throw new Error(`${label}[${index}].importStatus must be imported, missing, or failed`);
+  }
 
   return {
     title: expectString(record.title, `${label}[${index}].title`),
     trackNum: expectOptionalNumber(record.trackNum, `${label}[${index}].trackNum`),
     volumeNum: expectOptionalNumber(record.volumeNum, `${label}[${index}].volumeNum`),
     status: status as DownloadTrackStatusContract,
+    importStatus: importStatus as DownloadTrackImportStatusContract | undefined,
+    reason: expectOptionalString(record.reason, `${label}[${index}].reason`),
     providerTrackId: expectOptionalString(record.providerTrackId, `${label}[${index}].providerTrackId`),
   };
 }

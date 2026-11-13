@@ -30,6 +30,8 @@ export interface DownloadTrackStateEntry {
   trackNum?: number;
   volumeNum?: number;
   status: DownloadTrackStatus;
+  importStatus?: "imported" | "missing" | "failed";
+  reason?: string;
   /** Provider track id (staged file name); the hard link for per-track state. */
   providerTrackId?: string;
   /** Provider plugin id for this track offer (hybrid albums may mix albums within one provider). */

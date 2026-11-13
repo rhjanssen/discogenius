@@ -480,3 +480,61 @@ test("prune clears only waiting rows and keeps claimed downloads", () => {
   assert.equal(q.count(), 1);
   assert.equal(q.get(q.getIdByCommandId(999)!)!.command_id, 999);
 });
+
+test("stereo want is never filled by a spatial offer at enqueue (#76)", () => {
+  assert.throws(() => {
+    waitQueueModule.DownloadWaitQueue.enqueue({
+      refKey: "stereo-spatial-quality",
+      mediaKind: "track",
+      commandName: "DownloadTrack",
+      provider: "apple-music",
+      providerId: "am-track-1",
+      slot: "stereo",
+      quality: "DOLBY_ATMOS",
+      payload: { provider: "apple-music", providerId: "am-track-1", slot: "stereo", quality: "DOLBY_ATMOS" },
+    });
+  }, /Stereo want cannot be filled by a spatial offer/);
+
+  assert.throws(() => {
+    waitQueueModule.DownloadWaitQueue.enqueue({
+      refKey: "stereo-spatial-offer",
+      mediaKind: "album",
+      commandName: "DownloadAlbum",
+      provider: "apple-music",
+      providerId: "am-album-1",
+      slot: "stereo",
+      quality: "LOSSLESS",
+      payload: {
+        provider: "apple-music",
+        providerId: "am-album-1",
+        slot: "stereo",
+        trackOffers: [{ provider: "apple-music", providerTrackId: "am-t1", quality: "DOLBY_ATMOS" }],
+      },
+    });
+  }, /Stereo want cannot be filled by a spatial offer/);
+
+  const spatialRow = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "spatial-spatial-ok",
+    mediaKind: "track",
+    commandName: "DownloadTrack",
+    provider: "apple-music",
+    providerId: "am-track-atmos",
+    slot: "spatial",
+    quality: "DOLBY_ATMOS",
+    payload: { provider: "apple-music", providerId: "am-track-atmos", slot: "spatial", quality: "DOLBY_ATMOS" },
+  });
+  assert.equal(waitQueueModule.DownloadWaitQueue.get(spatialRow.id)?.slot, "spatial");
+
+  const stereoRow = waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: "stereo-stereo-ok",
+    mediaKind: "track",
+    commandName: "DownloadTrack",
+    provider: "tidal",
+    providerId: "tidal-track-1",
+    slot: "stereo",
+    quality: "LOSSLESS",
+    payload: { provider: "tidal", providerId: "tidal-track-1", slot: "stereo", quality: "LOSSLESS" },
+  });
+  assert.equal(waitQueueModule.DownloadWaitQueue.get(stereoRow.id)?.slot, "stereo");
+});
+
