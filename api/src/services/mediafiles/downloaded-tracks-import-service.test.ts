@@ -9,6 +9,7 @@ import type { ImportDownloadState } from "./downloaded-tracks-import-service.js"
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "discogenius-import-cancellation-"));
 process.env.DB_PATH = path.join(tempDir, "discogenius.test.db");
 process.env.DISCOGENIUS_CONFIG_DIR = tempDir;
+process.env.DOWNLOAD_PATH = path.join(tempDir, "downloads");
 
 const dbModule = await import("../../database.js");
 dbModule.initDatabase();
