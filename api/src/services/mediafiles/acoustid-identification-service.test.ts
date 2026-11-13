@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   identifyAudioFileByAcoustId,
+  verifyAudioFileRecording,
 } from "./acoustid-identification-service.js";
 import type { MusicBrainzRecording } from "./fingerprint.js";
 
@@ -105,4 +106,101 @@ test("AcoustID identification keeps no-match and service failures distinct", asy
   assert.equal(noMatch.status, "no_match");
   assert.equal(failure.status, "service_error");
   assert.equal(failure.error, "rate limited");
+});
+
+test("verifyAudioFileRecording handles match, MusicBrainz merge, confident mismatch, and unverified fallback", async () => {
+  const matched = await verifyAudioFileRecording({
+    filePath: "track.flac",
+    expectedRecordingMbid: "rec-expected",
+    expectedTitle: "Expected Song",
+    isConfigured: () => true,
+    identify: async () => ({
+      status: "matched",
+      fingerprint: "fp",
+      duration: 180,
+      cached: false,
+      recordingIds: ["rec-expected"],
+      candidates: [{
+        acoustId: "aid-1",
+        score: 0.99,
+        recording: recording("rec-expected", 180),
+        durationDeltaSeconds: 0,
+      }],
+      rejected: [],
+    }),
+  });
+  assert.equal(matched.status, "verified");
+  assert.equal(matched.verified, true);
+
+  // Merged recording: expected MBID redirects to the surviving MBID returned by AcoustID
+  const oldMergedUuid = "11111111-1111-4111-8111-111111111111";
+  const merged = await verifyAudioFileRecording({
+    filePath: "track.flac",
+    expectedRecordingMbid: oldMergedUuid,
+    expectedTitle: "Expected Song",
+    isConfigured: () => true,
+    identify: async () => ({
+      status: "matched",
+      fingerprint: "fp",
+      duration: 180,
+      cached: false,
+      recordingIds: ["rec-surviving"],
+      candidates: [{
+        acoustId: "aid-1",
+        score: 0.99,
+        recording: recording("rec-surviving", 180),
+        durationDeltaSeconds: 0,
+      }],
+      rejected: [],
+    }),
+    lookupRecording: async (id) => (id === oldMergedUuid ? recording("rec-surviving", 180) : null),
+  });
+  assert.equal(merged.status, "verified");
+  assert.equal(merged.matchedRecordingId, "rec-surviving");
+
+  // Confident mismatch
+  const mismatch = await verifyAudioFileRecording({
+    filePath: "track.flac",
+    expectedRecordingMbid: "rec-expected",
+    expectedTitle: "Expected Song",
+    isConfigured: () => true,
+    identify: async () => ({
+      status: "matched",
+      fingerprint: "fp",
+      duration: 180,
+      cached: false,
+      recordingIds: ["rec-other"],
+      candidates: [{
+        acoustId: "aid-2",
+        score: 0.98,
+        recording: { ...recording("rec-other", 180), title: "Wrong Song" },
+        durationDeltaSeconds: 0,
+      }],
+      rejected: [],
+    }),
+    lookupRecording: async () => null,
+  });
+  assert.equal(mismatch.status, "mismatch");
+  assert.equal(mismatch.verified, false);
+  assert.match(mismatch.reason || "", /^Fingerprint matches rec-other \("Wrong Song"\) not rec-expected \("Expected Song"\)$/);
+
+  // No match / API error -> unverified fallback
+  const unverified = await verifyAudioFileRecording({
+    filePath: "track.flac",
+    expectedRecordingMbid: "rec-expected",
+    expectedTitle: "Expected Song",
+    isConfigured: () => true,
+    identify: async () => ({
+      status: "service_error",
+      fingerprint: "fp",
+      duration: 180,
+      cached: false,
+      recordingIds: [],
+      candidates: [],
+      rejected: [],
+      error: "AcoustID returned HTTP 429",
+    }),
+  });
+  assert.equal(unverified.status, "unverified");
+  assert.equal(unverified.verified, false);
 });

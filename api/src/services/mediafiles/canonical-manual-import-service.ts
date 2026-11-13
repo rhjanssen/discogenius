@@ -4,6 +4,11 @@ import type { ManualImportSummary } from "./manual-import-service.js";
 import fs from "fs";
 import { moveTrackFileToUnmapped } from "./track-file-unmap.js";
 import { normalizeResolvedPath } from "./path-utils.js";
+import {
+  verifyAudioFileRecording,
+  type RecordingVerificationResult,
+  type VerifyAudioFileRecordingParams,
+} from "./acoustid-identification-service.js";
 
 export interface CanonicalManualImportMapping {
   unmappedFileId: number;
@@ -20,6 +25,8 @@ export interface CanonicalManualImportRequest {
    * and follows the policy.
    */
   applyStandardTags?: boolean;
+  /** Explicitly override a confident AcoustID recording mismatch on manual import. */
+  force?: boolean;
 }
 
 type Replaced = { id: number; filePath: string; recordingId: number; libraryId: number; releaseGroupId: number };
@@ -27,6 +34,7 @@ type Replaced = { id: number; filePath: string; recordingId: number; libraryId: 
 interface CanonicalTrackRow {
   id: number;
   mbid: string;
+  title: string;
   recording_id: number;
   recording_mbid: string;
 }
@@ -81,10 +89,15 @@ function isUnderLibraryRoot(filePath: string, rootPath: string): boolean {
   return file === root || file.startsWith(`${root}/`);
 }
 
+export type CanonicalManualRecordingVerifier = (
+  params: VerifyAudioFileRecordingParams,
+) => Promise<RecordingVerificationResult>;
+
 export class CanonicalManualImportService {
   constructor(
     private readonly db: Database.Database,
     private readonly importFiles: LegacyManualImporter,
+    private readonly verifyRecording: CanonicalManualRecordingVerifier = verifyAudioFileRecording,
   ) {}
 
   async import(request: CanonicalManualImportRequest): Promise<ManualImportSummary> {
@@ -133,11 +146,12 @@ export class CanonicalManualImportService {
       trackIds.add(mapping.trackId);
     }
 
-    const getUnmapped = this.db.prepare("SELECT id FROM UnmappedFiles WHERE id = ?");
+    const getUnmapped = this.db.prepare("SELECT id, file_path FROM UnmappedFiles WHERE id = ?");
     const getTrack = this.db.prepare(`
       SELECT
         track.id,
         track.mbid,
+        track.title,
         track.recording_id,
         recording.mbid AS recording_mbid
       FROM Tracks track
@@ -147,6 +161,7 @@ export class CanonicalManualImportService {
         AND recording.is_video = 0
     `);
     const trackById = new Map<number, CanonicalTrackRow>();
+    const unmappedPathById = new Map<number, string>();
     // An import is a sequence of file moves, not one atomic act, and the command
     // queue retries. A mapping whose UnmappedFiles row is gone is one this run
     // (or an interrupted earlier attempt) already consumed — the file was moved
@@ -157,7 +172,8 @@ export class CanonicalManualImportService {
     const pending: CanonicalManualImportMapping[] = [];
     let alreadyImported = 0;
     for (const mapping of request.mappings) {
-      if (!getUnmapped.get(mapping.unmappedFileId)) {
+      const unmappedRow = getUnmapped.get(mapping.unmappedFileId) as { id: number; file_path: string } | undefined;
+      if (!unmappedRow) {
         alreadyImported += 1;
         continue;
       }
@@ -167,6 +183,7 @@ export class CanonicalManualImportService {
           `Canonical track ${mapping.trackId} is not an audio track on release ${request.editionId}`,
         );
       }
+      unmappedPathById.set(mapping.unmappedFileId, unmappedRow.file_path);
       trackById.set(mapping.trackId, track);
       pending.push(mapping);
     }
@@ -299,15 +316,59 @@ export class CanonicalManualImportService {
 
     };
 
+    const verifiedPending: CanonicalManualImportMapping[] = [];
+    const reviewReasons: Record<string, string> = {};
+    let unverifiedCount = 0;
+
+    if (request.force) {
+      verifiedPending.push(...pending);
+    } else {
+      for (const mapping of pending) {
+        const track = trackById.get(mapping.trackId)!;
+        const filePath = unmappedPathById.get(mapping.unmappedFileId)!;
+        const verification = await this.verifyRecording({
+          filePath,
+          expectedRecordingMbid: track.recording_mbid,
+          expectedTitle: track.title,
+        });
+        if (verification.status === "mismatch") {
+          const reason = verification.reason ?? `Fingerprint mismatch for ${track.recording_mbid}`;
+          reviewReasons[String(mapping.unmappedFileId)] = reason;
+          await withSqliteWriteGate(() => {
+            this.db.prepare("UPDATE UnmappedFiles SET reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+              .run(reason, mapping.unmappedFileId);
+          }, "manual-import:fingerprint-mismatch");
+          continue;
+        }
+        if (verification.status === "unverified") {
+          unverifiedCount += 1;
+        }
+        verifiedPending.push(mapping);
+      }
+    }
+
+    const mismatchCount = Object.keys(reviewReasons).length;
+    if (verifiedPending.length === 0) {
+      return {
+        requested: request.mappings.length,
+        imported: 0,
+        duplicates: 0,
+        skipped: alreadyImported + mismatchCount,
+        ...(unverifiedCount > 0 ? { unverified: unverifiedCount } : {}),
+        ...(mismatchCount > 0 ? { reviewReasons } : {}),
+        importedFileIds: {},
+      };
+    }
+
     // Manual import replaces what the library already has for these tracks
     // (Lidarr ManualImport: existing files of the imported tracks are deleted
     // and logged). The old files step aside to Unmapped first so the importer
     // does not skip the new ones as duplicates; only once their track got a new
     // file are they deleted. A failed import leaves them in Unmapped, intact.
-    const replaced = await withSqliteWriteGate(() => this.stepAsideExistingFiles(request.libraryId, release.release_group_id, pending.map((mapping) => trackById.get(mapping.trackId)!)), "manual-import:replace-step-aside");
+    const replaced = await withSqliteWriteGate(() => this.stepAsideExistingFiles(request.libraryId, release.release_group_id, verifiedPending.map((mapping) => trackById.get(mapping.trackId)!)), "manual-import:replace-step-aside");
 
     const summary = await this.importFiles(
-      pending.map((mapping) => ({
+      verifiedPending.map((mapping) => ({
         id: mapping.unmappedFileId,
         providerId: trackById.get(mapping.trackId)!.mbid,
       })),
@@ -338,7 +399,7 @@ export class CanonicalManualImportService {
     // import it cannot identify would otherwise fall through the per-mapping
     // "nothing imported for this mapping" branch below and silently leave the
     // file without canonical authority.
-    const submittedUnmappedIds = new Set(pending.map((mapping) => mapping.unmappedFileId));
+    const submittedUnmappedIds = new Set(verifiedPending.map((mapping) => mapping.unmappedFileId));
     for (const unmappedId of importedFileIdByUnmappedId.keys()) {
       if (!submittedUnmappedIds.has(unmappedId)) {
         throw new Error(
@@ -362,7 +423,13 @@ export class CanonicalManualImportService {
     ), "manual-import:canonical-final");
 
     await withSqliteWriteGate(() => this.finishReplacement(replaced), "manual-import:replace-finish");
-    return summary;
+    return {
+      ...summary,
+      requested: request.mappings.length,
+      skipped: summary.skipped + alreadyImported + mismatchCount,
+      ...(unverifiedCount > 0 ? { unverified: unverifiedCount } : {}),
+      ...(mismatchCount > 0 ? { reviewReasons } : {}),
+    };
   }
 
   /** Move existing audio files of the same recordings (same library and album) to Unmapped. */
