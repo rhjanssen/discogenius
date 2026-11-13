@@ -192,11 +192,18 @@ function parseDownloadStateTracks(value: unknown): QueueItemContract["tracks"] |
       const trackNum = getOptionalNumber(record.trackNum);
       const volumeNum = getOptionalNumber(record.volumeNum);
       const providerTrackId = getOptionalString(record.providerTrackId);
+      const rawImportStatus = getOptionalString(record.importStatus);
+      const importStatus = rawImportStatus === "imported" || rawImportStatus === "missing" || rawImportStatus === "failed"
+        ? rawImportStatus
+        : undefined;
+      const reason = getOptionalString(record.reason);
       return {
         title,
         trackNum: trackNum ?? undefined,
         volumeNum: volumeNum ?? undefined,
         status: normalizeTrackStatus(record.status),
+        ...(importStatus ? { importStatus } : {}),
+        ...(reason ? { reason } : {}),
         ...(providerTrackId ? { providerTrackId } : {}),
       };
     })

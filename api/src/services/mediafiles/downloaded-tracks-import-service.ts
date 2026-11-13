@@ -166,6 +166,159 @@ export function listUnorganizedTrackGaps(
   return gaps;
 }
 
+export type ImportTrackResult = {
+  title: string;
+  trackNum?: number;
+  volumeNum?: number;
+  status: "queued" | "downloading" | "completed" | "error" | "skipped";
+  importStatus: "imported" | "missing" | "failed";
+  reason?: string;
+  providerTrackId?: string;
+};
+
+/**
+ * Build per-track import results (`imported` / `missing` / `failed` + reason)
+ * for history events and queue API responses.
+ */
+export function buildImportTrackResults(params: {
+  processedTrackIds: readonly string[];
+  trackGaps?: readonly UnorganizedTrackGap[];
+  trackOffers?: readonly {
+    provider?: string;
+    providerTrackId: string;
+    title?: string | null;
+    trackNum?: number | null;
+    volumeNum?: number | null;
+  }[];
+  existingTracks?: readonly {
+    title?: string;
+    trackNum?: number;
+    volumeNum?: number;
+    status?: string;
+    reason?: string;
+    providerTrackId?: string;
+  }[];
+}): ImportTrackResult[] {
+  const processed = new Set(params.processedTrackIds.map(String));
+  const gapById = new Map<string, UnorganizedTrackGap>();
+  for (const gap of params.trackGaps || []) {
+    const raw = String(gap.providerId || "").trim();
+    if (!raw) continue;
+    gapById.set(raw, gap);
+    const colonIdx = raw.indexOf(":");
+    if (colonIdx >= 0 && colonIdx + 1 < raw.length) {
+      gapById.set(raw.slice(colonIdx + 1), gap);
+    }
+  }
+
+  const existingReasonById = new Map<string, string>();
+  for (const track of params.existingTracks || []) {
+    const id = track.providerTrackId ? String(track.providerTrackId).trim() : "";
+    if (id && track.reason) {
+      existingReasonById.set(id, track.reason);
+    }
+  }
+
+  const results: ImportTrackResult[] = [];
+  const seenIds = new Set<string>();
+
+  const offers = params.trackOffers || [];
+  if (offers.length > 0) {
+    for (const offer of offers) {
+      const trackId = String(offer.providerTrackId);
+      const compositeId = offer.provider ? `${offer.provider}:${trackId}` : trackId;
+      if (seenIds.has(trackId)) continue;
+      seenIds.add(trackId);
+      const title = offer.title ? String(offer.title) : `Track ${offer.trackNum ?? trackId}`;
+      const base = {
+        title,
+        ...(offer.trackNum != null ? { trackNum: offer.trackNum } : {}),
+        ...(offer.volumeNum != null ? { volumeNum: offer.volumeNum } : {}),
+        providerTrackId: trackId,
+      };
+      if (processed.has(trackId)) {
+        results.push({ ...base, status: "completed", importStatus: "imported" });
+      } else {
+        const gap = gapById.get(compositeId) ?? gapById.get(trackId);
+        if (gap) {
+          results.push({ ...base, status: "error", importStatus: "failed", reason: gap.cause });
+        } else {
+          results.push({
+            ...base,
+            status: "skipped",
+            importStatus: "missing",
+            reason: existingReasonById.get(trackId) ?? "Not downloaded / missing from staging",
+          });
+        }
+      }
+    }
+  } else if ((params.existingTracks || []).length > 0) {
+    for (const track of params.existingTracks || []) {
+      const trackId = track.providerTrackId ? String(track.providerTrackId).trim() : undefined;
+      if (trackId) {
+        if (seenIds.has(trackId)) continue;
+        seenIds.add(trackId);
+      }
+      const title = track.title || (track.trackNum != null ? `Track ${track.trackNum}` : "Unknown Track");
+      const base = {
+        title,
+        ...(track.trackNum != null ? { trackNum: track.trackNum } : {}),
+        ...(track.volumeNum != null ? { volumeNum: track.volumeNum } : {}),
+        ...(trackId ? { providerTrackId: trackId } : {}),
+      };
+      if (trackId && processed.has(trackId)) {
+        results.push({ ...base, status: "completed", importStatus: "imported" });
+      } else if (trackId && gapById.has(trackId)) {
+        const gap = gapById.get(trackId)!;
+        results.push({ ...base, status: "error", importStatus: "failed", reason: gap.cause });
+      } else if (track.status === "completed") {
+        results.push({ ...base, status: "completed", importStatus: "imported" });
+      } else if (track.status === "error") {
+        results.push({
+          ...base,
+          status: "error",
+          importStatus: "failed",
+          reason: track.reason ?? "Download or import failed",
+        });
+      } else {
+        results.push({
+          ...base,
+          status: "skipped",
+          importStatus: "missing",
+          reason: track.reason ?? "Not downloaded / missing from staging",
+        });
+      }
+    }
+  } else {
+    for (const trackId of params.processedTrackIds) {
+      if (seenIds.has(trackId)) continue;
+      seenIds.add(trackId);
+      results.push({
+        title: `Track ${trackId}`,
+        providerTrackId: trackId,
+        status: "completed",
+        importStatus: "imported",
+      });
+    }
+    for (const gap of params.trackGaps || []) {
+      const raw = String(gap.providerId || "").trim();
+      const colonIdx = raw.indexOf(":");
+      const trackId = colonIdx >= 0 ? raw.slice(colonIdx + 1) : raw;
+      if (seenIds.has(trackId)) continue;
+      seenIds.add(trackId);
+      results.push({
+        title: gap.title || `Track ${trackId}`,
+        providerTrackId: trackId,
+        status: "error",
+        importStatus: "failed",
+        reason: gap.cause,
+      });
+    }
+  }
+
+  return results;
+}
+
 /** Offered tracks the organizer did not place, labelled for logs and history. */
 export function describeUnorganizedTrackOffers(
     offers: readonly { provider: string; providerTrackId: string; title?: string; trackNum?: number | null; volumeNum?: number | null }[],
@@ -437,6 +590,7 @@ export type ImportDownloadState = {
     warningMessage?: string;
     primaryProvider?: string;
     fallbackProvider?: string;
+    tracks?: ImportTrackResult[];
 };
 
 type ImportHistoryContext = {
@@ -1614,6 +1768,28 @@ export class DownloadedTracksImportService {
         }
 
         cancellationCheckpoint("before recording import history");
+        const liveCommand = CommandQueueManager.get(job.id);
+        const liveDownloadState = (liveCommand?.payload?.downloadState || {}) as Record<string, unknown>;
+        const payloadDownloadState = (job.payload?.downloadState || {}) as Record<string, unknown>;
+        const existingDownloadState = {
+            ...payloadDownloadState,
+            ...liveDownloadState,
+        };
+        const trackResults = buildImportTrackResults({
+            processedTrackIds: organizeResult.processedTrackIds,
+            trackGaps: organizeResult.trackGaps,
+            trackOffers: Array.isArray(job.payload.trackOffers) ? job.payload.trackOffers : undefined,
+            existingTracks: Array.isArray(existingDownloadState.tracks)
+                ? (existingDownloadState.tracks as Array<{
+                    title?: string;
+                    trackNum?: number;
+                    volumeNum?: number;
+                    status?: string;
+                    reason?: string;
+                    providerTrackId?: string;
+                }>)
+                : undefined,
+        });
         const historyContext = resolveImportHistoryContext(type, providerId, provider);
         try {
             await withSqliteWriteGate(() => recordHistoryEvent({
@@ -1631,6 +1807,7 @@ export class DownloadedTracksImportService {
                         count: organizeResult.processedTrackIds.length,
                         expected: organizeResult.expectedTracks ?? organizeResult.totalTracksInStaging ?? null,
                     },
+                    ...(trackResults.length > 0 ? { trackResults } : {}),
                 },
             }), "import:history");
         } catch (historyError) {
@@ -1662,7 +1839,7 @@ export class DownloadedTracksImportService {
                     organizeResult.processedTrackIds,
                 ),
             )
-            : [];
+            : (organizeResult.trackGaps || []);
 
         if (softIncomplete || offerShortfall) {
             try {
@@ -1678,6 +1855,7 @@ export class DownloadedTracksImportService {
                         providerId,
                         originalJobId: originalJobId ?? null,
                         importTrackGaps: offerGaps,
+                        ...(trackResults.length > 0 ? { trackResults } : {}),
                         unorganizedTrackOffers: isTrackOffersJob
                             ? describeUnorganizedTrackOffers(job.payload.trackOffers ?? [], organizeResult.processedTrackIds)
                             : undefined,
@@ -1707,25 +1885,20 @@ export class DownloadedTracksImportService {
         }
 
         cancellationCheckpoint("before completing import");
-        const liveCommand = CommandQueueManager.get(job.id);
-        const liveDownloadState = (liveCommand?.payload?.downloadState || {}) as Record<string, unknown>;
-        const payloadDownloadState = (job.payload?.downloadState || {}) as Record<string, unknown>;
-        const existingDownloadState = {
-            ...payloadDownloadState,
-            ...liveDownloadState,
-        };
         const priorWarning = typeof existingDownloadState.warningMessage === "string"
             ? existingDownloadState.warningMessage.trim()
             : "";
         const gapWarning = offerGaps.length > 0
-            ? `Imported ${organizeResult.processedTrackIds.length}/${trackOfferCount}. Still wanted: ${
+            ? `Imported ${organizeResult.processedTrackIds.length}/${isTrackOffersJob ? trackOfferCount : (expectedProcessedTracks || organizeResult.totalTracksInStaging)}. Still wanted: ${
                 offerGaps.slice(0, 5).map((gap) => {
                     const position = gap.position ? `${gap.position} ` : "";
                     const title = gap.title ? `"${gap.title}" ` : "";
                     return `${position}${title}(${gap.providerId}) ${gap.cause}`;
                 }).join("; ")
             }${offerGaps.length > 5 ? ` and ${offerGaps.length - 5} more` : ""}`
-            : "";
+            : (softIncomplete
+                ? `Imported ${organizeResult.processedTrackIds.length}/${expectedProcessedTracks} tracks; missing track(s) remain wanted.`
+                : "");
         const warningMessage = [priorWarning, gapWarning].filter(Boolean).join(" ");
         const completedWithWarning = Boolean(warningMessage);
         options.updateState({
@@ -1735,6 +1908,7 @@ export class DownloadedTracksImportService {
             totalFiles: organizeResult.expectedTracks || organizeResult.totalTracksInStaging,
             statusMessage: completedWithWarning ? warningMessage : "Import completed",
             state: "completed",
+            ...(trackResults.length > 0 ? { tracks: trackResults } : {}),
             ...(completedWithWarning
                 ? {
                     outcome: "completedWithWarning" as const,

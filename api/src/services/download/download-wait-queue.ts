@@ -209,10 +209,9 @@ function resolveWantSlot(input: DownloadWaitEnqueueInput): "stereo" | "spatial" 
   let libraryId = Number(payload.libraryId);
   if (!(Number.isInteger(libraryId) && libraryId > 0) && input.planId != null) {
     const planRow = db.prepare(`
-      SELECT library_release.library_id
-      FROM AcquisitionPlans plan
-      JOIN LibraryEditions library_release ON library_release.id = plan.library_edition_id
-      WHERE plan.id = ?
+      SELECT library_id
+      FROM AcquisitionPlans
+      WHERE id = ?
     `).get(input.planId) as { library_id?: number } | undefined;
     libraryId = Number(planRow?.library_id);
   }

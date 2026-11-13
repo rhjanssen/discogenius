@@ -1300,7 +1300,15 @@ export class DownloadProcessor {
         eta?: string;
         size?: number;
         sizeleft?: number;
-        tracks?: { title: string; trackNum?: number; volumeNum?: number; status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped'; providerTrackId?: string }[];
+        tracks?: {
+            title: string;
+            trackNum?: number;
+            volumeNum?: number;
+            status: 'queued' | 'downloading' | 'completed' | 'error' | 'skipped';
+            importStatus?: 'imported' | 'missing' | 'failed';
+            reason?: string;
+            providerTrackId?: string;
+        }[];
         outcome?: 'ok' | 'completedWithWarning';
         warningMessage?: string;
         primaryProvider?: string;
@@ -3127,9 +3135,11 @@ export class DownloadProcessor {
                 }
                 const trackIndex = resolveDownloadTrackOfferIndex(tracks, offers[index]);
                 if (trackIndex < 0) throw new Error(`Download offer ${offer.providerTrackId} has no unique catalogue track occurrence`);
+                const unavailableReason = unavailableOffers.get(offer.providerTrackId);
                 tracks[trackIndex] = {
                     ...tracks[trackIndex],
-                    status: unavailableOffers.has(offer.providerTrackId) ? "error" : "queued",
+                    status: unavailableReason ? "error" : "queued",
+                    ...(unavailableReason ? { reason: unavailableReason } : {}),
                     providerTrackId: offer.providerTrackId,
                     provider: offer.provider || defaultProvider,
                 };
@@ -3310,6 +3320,7 @@ export class DownloadProcessor {
                                     tracks[trackIndex] = {
                                         ...tracks[trackIndex],
                                         status: "error",
+                                        reason,
                                         providerTrackId: offer.providerTrackId,
                                         provider: providerId,
                                     };
@@ -3342,6 +3353,7 @@ export class DownloadProcessor {
                                 tracks[trackIndex] = {
                                     ...tracks[trackIndex],
                                     status: "error",
+                                    reason,
                                     providerTrackId: offer.providerTrackId,
                                     provider: providerId,
                                 };

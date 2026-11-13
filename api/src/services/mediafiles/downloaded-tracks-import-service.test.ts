@@ -330,3 +330,55 @@ test("DownloadedTracksImportService.process without warning completes cleanly wi
     }
   }
 });
+
+test("buildImportTrackResults reports imported, missing, and failed tracks with reasons (#76)", () => {
+  const results = importModule.buildImportTrackResults({
+    processedTrackIds: ["t1"],
+    trackGaps: [
+      {
+        position: "1-2",
+        title: "Track Two",
+        providerId: "apple-music:t2",
+        cause: "Tagging failed: permission denied",
+      },
+    ],
+    trackOffers: [
+      { provider: "apple-music", providerTrackId: "t1", title: "Track One", trackNum: 1, volumeNum: 1 },
+      { provider: "apple-music", providerTrackId: "t2", title: "Track Two", trackNum: 2, volumeNum: 1 },
+      { provider: "apple-music", providerTrackId: "t3", title: "Track Three", trackNum: 3, volumeNum: 1 },
+    ],
+    existingTracks: [
+      { providerTrackId: "t3", title: "Track Three", status: "error", reason: "Failed to dl aac-lc: Unavailable" },
+    ],
+  });
+
+  assert.deepEqual(results, [
+    {
+      title: "Track One",
+      trackNum: 1,
+      volumeNum: 1,
+      providerTrackId: "t1",
+      status: "completed",
+      importStatus: "imported",
+    },
+    {
+      title: "Track Two",
+      trackNum: 2,
+      volumeNum: 1,
+      providerTrackId: "t2",
+      status: "error",
+      importStatus: "failed",
+      reason: "Tagging failed: permission denied",
+    },
+    {
+      title: "Track Three",
+      trackNum: 3,
+      volumeNum: 1,
+      providerTrackId: "t3",
+      status: "skipped",
+      importStatus: "missing",
+      reason: "Failed to dl aac-lc: Unavailable",
+    },
+  ]);
+});
+
