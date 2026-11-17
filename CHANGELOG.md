@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.1] - 2026-11-17
+
+### Fixed
+
+- Existing databases get the `UnmappedFiles.file_mtime_ms` column added by #124. Without it, library scans failed on installs created before that change (#141).
+
+Note: 2.26.0 was tagged but never published. This release contains everything listed under 2.26.0.
+
 ## [2.26.0] - 2026-11-17
 
 ### Fixed
