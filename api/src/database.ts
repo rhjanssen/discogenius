@@ -45,6 +45,7 @@ import { migrateLibraryUserDecisions } from "./database/schema/library-user-deci
 import { migrateDownloadQueueEditionIdentity } from "./database/schema/download-queue-edition-identity.js";
 import { migrateDropDownconvertSetting } from "./database/schema/drop-downconvert-setting.js";
 import { migrateTrackFileSource } from "./database/schema/track-file-source.js";
+import { migrateUnmappedFileMtime } from "./database/schema/unmapped-file-mtime.js";
 import { createProviderAuthStateSchema, migrateProviderAuthState } from "./database/schema/provider-auth-state.js";
 import { createArtistLocaleAliasesSchema, migrateArtistLocaleAliases } from "./database/schema/artist-locale-aliases.js";
 import { createRuntimeControlSchema } from "./database/schema/control-plane.js";
@@ -578,6 +579,7 @@ export function initDatabase() {
   migrateDeliveredQuality(db);
   migrateDropDownconvertSetting(db);
   migrateTrackFileSource(db);
+  migrateUnmappedFileMtime(db);
   // New table + config marker only. user_version stays 46 so a running
   // RetagArtist is not reset.
   migrateProviderAuthState(db);
