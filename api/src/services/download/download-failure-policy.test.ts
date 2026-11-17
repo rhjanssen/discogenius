@@ -238,3 +238,28 @@ test("DOMException TimeoutError ('aborted due to timeout') is transient and not 
   assert.equal(result, "ok");
   assert.equal(attempts, 2);
 });
+
+test("classifyDownloadFailure treats Apple truncated segment errors ('decode mdat', 'does not match expected length', 'unexpected EOF') as transient (#144)", async () => {
+  const { isAppleTruncatedSegmentError, errorIndicatesProviderAuth } = await import("../providers/provider-auth-error.js");
+
+  const msg1 = "Decrypting...  13%  (4.7/36 MB) Failed to run v2: decode mdat pos 4718142: read box body length 3145728 does not match expected length 1421683";
+  const msg2 = "decode mdat pos 17063423: read box body length 2097152 does not match expected length 1048576";
+  const msg3 = "Failed to run v2: decode mdat: unexpected EOF";
+
+  for (const msg of [msg1, msg2, msg3]) {
+    assert.equal(isAppleTruncatedSegmentError(msg), true);
+    assert.equal(errorIndicatesProviderAuth(msg), false);
+    assert.equal(classifyDownloadFailure(new Error(msg)), "transient");
+  }
+
+  let attempts = 0;
+  const result = await executeWithSameOfferRetries({ sleep: async () => undefined }, async () => {
+    attempts += 1;
+    if (attempts < 2) {
+      throw new Error(msg1);
+    }
+    return "retried-ok";
+  });
+  assert.equal(result, "retried-ok");
+  assert.equal(attempts, 2);
+});

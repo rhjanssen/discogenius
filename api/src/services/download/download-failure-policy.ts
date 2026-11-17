@@ -1,5 +1,5 @@
 import { ProviderUnavailableError } from "./provider-unavailable-error.js";
-import { errorIndicatesProviderAuth } from "../providers/provider-auth-error.js";
+import { errorIndicatesProviderAuth, isAppleTruncatedSegmentError } from "../providers/provider-auth-error.js";
 import { readIntEnv } from "../../utils/env.js";
 import { streamingProviderManager } from "../providers/index.js";
 import { isAppleUnavailableTrackError } from "../providers/apple-music/apple-music-backend.js";
@@ -181,6 +181,9 @@ export function classifyDownloadFailure(error: unknown): DownloadFailureKind {
   }
   if (isAppleUnavailableTrackError(text)) {
     return "permanent";
+  }
+  if (isAppleTruncatedSegmentError(text)) {
+    return "transient";
   }
   if (isTimeoutError(error)) {
     return "transient";

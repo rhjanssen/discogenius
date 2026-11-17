@@ -21,12 +21,30 @@ export function normalizeProviderId(provider: string): string {
 }
 
 /**
+ * Corrupt or truncated media segment errors from the downloader/demuxer.
+ * These are transient network / restart / CDN delivery drops, never session
+ * failures, and must not cause an auth hold or re-login banner.
+ */
+export const APPLE_TRUNCATED_SEGMENT_PATTERN =
+  /decode mdat|does not match expected length|unexpected eof/iu;
+
+export function isAppleTruncatedSegmentError(error: unknown): boolean {
+  if (!error) return false;
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : String(error);
+  return APPLE_TRUNCATED_SEGMENT_PATTERN.test(message);
+}
+
+/**
  * One classifier for auth failures that arrive as plain errors (tiddl, older
  * Streamrip output, history rows from before this type existed).
  * Transient network text does not match.
  */
 const AUTH_FAILURE_TEXT =
-  /tidal login expired|TIDAL token refresh failed \(HTTP 401\b|invalid\s+arl|arl\s+(?:expired|invalid)|deezer arl is invalid|needs_reauth|apple music decryption (?:failed|wrapper)|decryption wrapper (?:port|is (?:not answering|unreachable))|failed to run v2(?::\s*decrypt)?|decrypting\.\.\.\s*failed/iu;
+  /tidal login expired|TIDAL token refresh failed \(HTTP 401\b|invalid\s+arl|arl\s+(?:expired|invalid)|deezer arl is invalid|needs_reauth|apple music decryption (?:failed|wrapper)|decryption wrapper (?:port|is (?:not answering|unreachable))|failed to run v2:\s*decrypt|decrypting\.\.\.\s*failed/iu;
 /**
  * An expired ACCESS token ("The token has expired. (Expired on time)" from a
  * TIDAL API call) is not a dead login: the refresh token renews it. Treating
@@ -38,6 +56,7 @@ const AUTH_FAILURE_TEXT =
 const HISTORICAL_AUTH_FAILURE_TEXT = /token has expired/iu;
 
 export function errorIndicatesProviderAuth(error: unknown): boolean {
+  if (isAppleTruncatedSegmentError(error)) return false;
   if (error instanceof ProviderAuthError) return true;
   const message = error instanceof Error
     ? error.message
@@ -48,6 +67,7 @@ export function errorIndicatesProviderAuth(error: unknown): boolean {
 }
 
 export function asProviderAuthError(provider: string, error: unknown): ProviderAuthError | null {
+  if (isAppleTruncatedSegmentError(error)) return null;
   if (!errorIndicatesProviderAuth(error)) return null;
   if (error instanceof ProviderAuthError) return error;
   const message = error instanceof Error ? error.message : String(error);
@@ -55,6 +75,7 @@ export function asProviderAuthError(provider: string, error: unknown): ProviderA
 }
 
 export function isHistoricalAuthFailure(error: string | null | undefined): boolean {
+  if (isAppleTruncatedSegmentError(error)) return false;
   const text = String(error || "");
   return AUTH_FAILURE_TEXT.test(text) || HISTORICAL_AUTH_FAILURE_TEXT.test(text);
 }
