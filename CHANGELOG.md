@@ -2,6 +2,36 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.0] - 2026-11-17
+
+### Fixed
+
+- Lyrics can no longer stall an album. TIDAL lyrics requests get one 10-second attempt. Each track's lyrics lookup is capped at 20 seconds and a whole album at 5 minutes. A slow lyrics service now means a warning and missing lyrics, never a stuck or failed download. Lyrics tiddl already delivered are kept (#135).
+- The download watchdog no longer stops jobs that are waiting on the database write gate or on a provider rate limit (#107).
+- Apple Music: when the decryption wrapper does not answer, Apple downloads are held instead of burning retries, and they resume when the wrapper answers again (#112).
+- Case-insensitive library roots: a rescan no longer lists linked track files as unmapped (#111).
+- Restored the main-thread SQLite busy timeout, an organizer fallback, and the edition id on renames (#118).
+- An empty provider string no longer breaks the rate-limit backoff check (#132).
+
+### Added
+
+- Partial album imports with per-track results, and a guard so a stereo want is never filled by an Atmos offer (#76).
+- AcoustID recording check for manual and unmapped imports (#116).
+- Track files record which provider they came from (#72).
+- Plex and Jellyfin integration with MBID reconciliation (#78).
+- Servarr-style locale alias lookup and explicit original or localized artist naming tokens (#79).
+- Read-only derivative-sources report endpoint for retagging (#75).
+- Album page: an editions summary bar and a Manage editions dialog (#119).
+
+### Changed
+
+- Faster queue: keyset pagination, filters, an off-thread read worker, and an album hydration timeout (#77).
+- Library scans skip unchanged unmapped files and re-check them after catalogue updates (#113).
+
+### Held back
+
+- Automatic stray-file deletion, stereo/Atmos placement enforcement and the disk-vs-database reconciliation (#129, #130) were reverted for this release. They can delete or overwrite linked tracks in some cases, and they come back after the safety fixes.
+
 ## [2.25.6] - 2026-11-12
 
 ### Fixed
