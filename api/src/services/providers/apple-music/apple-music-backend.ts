@@ -19,8 +19,6 @@ import {
   syncTokenToDownloader,
   APPLE_WRAPPER_STUCK_MESSAGE,
   hasAppleWrapperSession,
-  recordWrapperRestartRequested,
-  resetAppleWrapperRestartState,
 } from "./apple-music-auth.js";
 import { ProviderAuthError } from "../provider-auth-error.js";
 import { recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
@@ -347,7 +345,6 @@ export async function ensureAppleWrapperReadyForDownload(
   console.warn(`[APPLE-MUSIC] Decryption wrapper unreachable before download (${missing.join(", ")}); requesting wrapper restart.`);
   const requested = (deps.requestRestart ?? requestWrapperServerRestart)();
   if (requested) {
-    recordWrapperRestartRequested();
     snapshot = await waitForAppleMusicDownloaderReadiness(readSnapshot, {
       signal: deps.signal, timeoutMs: deps.restartTimeoutMs ?? 90_000, pollMs,
     });
@@ -355,7 +352,6 @@ export async function ensureAppleWrapperReadyForDownload(
     if (!onlyWrapperPortsMissing(snapshot, missing)) {
       if (!missing.length) {
         console.log("[APPLE-MUSIC] Decryption wrapper answered again after restart.");
-        resetAppleWrapperRestartState();
         await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() }).catch(() => undefined);
       }
       return snapshot;

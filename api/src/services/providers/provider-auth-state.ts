@@ -54,6 +54,8 @@ interface ProviderAuthRow {
 
 let tableReady: boolean | null = null;
 
+export const APPLE_WRAPPER_STUCK_MESSAGE = "Apple decryption server is stuck; restart the wrapper container";
+
 const COPY: Record<string, Omit<ProviderAuthCopy, "provider">> = {
   tidal: {
     banner: "Sign in to Tidal again",
@@ -78,10 +80,10 @@ const COPY: Record<string, Omit<ProviderAuthCopy, "provider">> = {
 export function providerAuthCopy(provider: string, lastError?: string | null): ProviderAuthCopy {
   const id = normalizeProviderId(provider);
   if (id === "apple-music") {
-    if (lastError && /stuck|restart the wrapper container/i.test(lastError)) {
+    if (lastError === APPLE_WRAPPER_STUCK_MESSAGE) {
       return {
         provider: id,
-        banner: "Apple decryption server is stuck; restart the wrapper container",
+        banner: APPLE_WRAPPER_STUCK_MESSAGE,
         queueMessage: "Waiting for Apple Music wrapper restart",
         href: "/auth?provider=apple-music",
         settingsLabel: "Apple Music",
@@ -272,16 +274,19 @@ function persistRow(row: ProviderAuthRow): void {
 export async function recordProviderAuthFailure(
   provider: string,
   message: string,
-  options: { force?: boolean } = {},
 ): Promise<ProviderAuthTransition> {
   const id = normalizeProviderId(provider);
   if (!id || !authTableReady()) return { provider: id, status: "unknown", transitioned: false, persisted: false };
   const current = readRow(id);
   const truncatedMessage = message.slice(0, 500);
   const messageChanged = current?.last_error !== truncatedMessage;
-  // Already held. A second refresh failure must not write or notify again unless forced or message changed to a stuck message.
-  if (current?.status === "needs_reauth" && !options.force && (!messageChanged || !/stuck/i.test(message))) {
-    return { provider: id, status: "needs_reauth", transitioned: false, persisted: false };
+  // Already held. A second refresh failure must not write or notify again unless
+  // Apple Music message changed specifically to the stuck message.
+  if (current?.status === "needs_reauth") {
+    const isAppleStuckUpdate = id === "apple-music" && messageChanged && truncatedMessage === APPLE_WRAPPER_STUCK_MESSAGE;
+    if (!isAppleStuckUpdate) {
+      return { provider: id, status: "needs_reauth", transitioned: false, persisted: false };
+    }
   }
   const now = isoNow();
   const copy = providerAuthCopy(id, truncatedMessage);
@@ -290,7 +295,7 @@ export async function recordProviderAuthFailure(
     status: "needs_reauth",
     last_ok_at: current?.last_ok_at ?? null,
     last_error: truncatedMessage,
-    since: current?.since ?? now,
+    since: current?.status === "needs_reauth" && current.since ? current.since : now,
     notified_status: "needs_reauth",
     account_label: current?.account_label ?? null,
     credential_saved_at: current?.credential_saved_at ?? null,

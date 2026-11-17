@@ -17,17 +17,21 @@ function isDockerRunning(): boolean {
   }
 }
 
-test("entrypoint script contains v11 marker, setsid, pkill, and readiness check", () => {
+test("entrypoint script contains v11 marker, setsid, pkill, readiness check, and crash-loop guidance", () => {
   assert.equal(WRAPPER_ENTRYPOINT_VERSION, "discogenius-wrapper-entrypoint v11");
   assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /# discogenius-wrapper-entrypoint v11/);
   assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /pkill -9 -f "wrapper\.\*-M 20020"/);
   assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /setsid \.\/wrapper -M 20020 -D 10020 -H 0\.0\.0\.0/);
   assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /stop_server/);
   assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /ports_bound/);
-  assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /timeout 1 bash -c 'exec 3<>\/dev\/tcp\/127\.0\.0\.1\/10020/);
+  // Readiness check: TCP connect with 1s timeout on both ports 10020 and 20020
+  assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /timeout 1 bash -c 'exec 3<>\/dev\/tcp\/127\.0\.0\.1\/10020 && exec 3>&-'/);
+  assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /timeout 1 bash -c 'exec 3<>\/dev\/tcp\/127\.0\.0\.1\/20020 && exec 3>&-'/);
+  assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /answers/);
+  assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /Restart the wrapper container \(docker compose restart apple-music-wrapper\)/);
 });
 
-test("shell-level verification: restart request leaves exactly one wrapper process tree and port 10020 answers", {
+test("shell-level verification: restart request leaves exactly one wrapper process tree and ports 10020/20020 answer", {
   skip: !isDockerRunning() ? "Docker is not available in this environment" : false,
 }, async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dg-wrapper-test-"));
@@ -75,12 +79,12 @@ test("shell-level verification: restart request leaves exactly one wrapper proce
     ).trim();
     assert.equal(psInitial, "2", "Initial startup should have exactly 2 wrapper processes (parent + child)");
 
-    // Verify port 10020 answers connections
+    // Verify ports 10020 and 20020 answer connections
     const portInitial = execSync(
-      `docker exec ${containerName} /bin/bash -c "timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10020 && exec 3>&-' && echo 'ok'"`,
+      `docker exec ${containerName} /bin/bash -c "timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10020 && exec 3>&-' && timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/20020 && exec 3>&-' && echo 'ok'"`,
       { encoding: "utf-8" },
     ).trim();
-    assert.equal(portInitial, "ok", "Port 10020 should answer connections initially");
+    assert.equal(portInitial, "ok", "Ports 10020 and 20020 should answer connections initially");
 
     // Request restart by dropping restart_server.txt
     const restartFile = path.join(dataDir, "restart_server.txt");
@@ -103,7 +107,7 @@ test("shell-level verification: restart request leaves exactly one wrapper proce
       await new Promise((r) => setTimeout(r, 1000));
       try {
         const check = execSync(
-          `docker exec ${containerName} /bin/bash -c "timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10020 && exec 3>&-' && echo 'ok'"`,
+          `docker exec ${containerName} /bin/bash -c "timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10020 && exec 3>&-' && timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/20020 && exec 3>&-' && echo 'ok'"`,
           { encoding: "utf-8" },
         ).trim();
         if (check === "ok") {
@@ -114,7 +118,7 @@ test("shell-level verification: restart request leaves exactly one wrapper proce
         // Retrying
       }
     }
-    assert.equal(readyAfterRestart, true, "Port 10020 should answer connections after restart");
+    assert.equal(readyAfterRestart, true, "Ports 10020 and 20020 should answer connections after restart");
 
     // Verify process count after restart: exactly 2 wrapper processes (1 parent + 1 child), NO ORPHANS!
     const psAfterRestart = execSync(

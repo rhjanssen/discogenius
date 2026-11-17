@@ -172,3 +172,70 @@ test("an auth-ok touch older than 6 hours is written once and does not notify", 
     appEvents.off(AppEvent.PROVIDER_AUTH_CHANGED, onAuth);
   }
 });
+
+test("recordProviderAuthFailure: updates since to now when transitioning from ok, and keeps since when already needs_reauth", async () => {
+  const oldOkSince = "2026-01-01T00:00:00.000Z";
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAuthState (provider, status, since, updated_at)
+    VALUES ('test-prov', 'ok', ?, ?)
+    ON CONFLICT(provider) DO UPDATE SET status = 'ok', since = excluded.since, updated_at = excluded.updated_at
+  `).run(oldOkSince, oldOkSince);
+
+  // Transition from ok to needs_reauth: since MUST be updated to now, not keep old ok since
+  const fail1 = await auth.recordProviderAuthFailure("test-prov", "expired token");
+  assert.equal(fail1.transitioned, true);
+  assert.equal(fail1.persisted, true);
+  const row1 = auth.readProviderAuthPublic("test-prov");
+  assert.notEqual(row1?.since, oldOkSince, "since must not keep old ok since when transitioning to needs_reauth");
+  assert.ok(row1?.since);
+  const failureSince = row1?.since;
+
+  // Now test apple-music: ok -> needs_reauth updates since, then stuck message rewrite keeps since
+  await auth.recordProviderAuthOk("apple-music");
+  const appleOkRow = auth.readProviderAuthPublic("apple-music");
+  const appleOkSince = appleOkRow?.since;
+
+  const appleFail1 = await auth.recordProviderAuthFailure("apple-music", "ports 10020 not answering");
+  assert.equal(appleFail1.transitioned, true);
+  const appleRow1 = auth.readProviderAuthPublic("apple-music");
+  assert.notEqual(appleRow1?.since, appleOkSince, "apple since must update on ok -> needs_reauth transition");
+  const initialAppleFailSince = appleRow1?.since;
+  assert.ok(initialAppleFailSince);
+
+  // Repeat failure on apple-music with stuck message: should rewrite, but retain since from initial failure
+  const appleFail2 = await auth.recordProviderAuthFailure("apple-music", auth.APPLE_WRAPPER_STUCK_MESSAGE);
+  assert.equal(appleFail2.persisted, true, "should rewrite once for stuck message");
+  assert.equal(appleFail2.transitioned, false);
+  const appleRow2 = auth.readProviderAuthPublic("apple-music");
+  assert.equal(appleRow2?.lastError, auth.APPLE_WRAPPER_STUCK_MESSAGE);
+  assert.equal(appleRow2?.since, initialAppleFailSince, "since must be kept when already needs_reauth");
+});
+
+test("recordProviderAuthFailure: rewrites once when already held and message changes to APPLE_WRAPPER_STUCK_MESSAGE, does not rewrite again, and ignores generic /stuck/ on other providers", async () => {
+  // 1. Initial failure for deezer
+  await auth.recordProviderAuthFailure("deezer", "first deezer failure");
+  const deezerBefore = auth.readProviderAuthPublic("deezer");
+  assert.equal(deezerBefore?.lastError, "first deezer failure");
+
+  // Generic /stuck/i message on a non-apple provider must NOT rewrite
+  const deezerRepeat = await auth.recordProviderAuthFailure("deezer", "deezer is stuck; restart the wrapper container");
+  assert.equal(deezerRepeat.persisted, false, "generic stuck message on non-apple provider must not rewrite");
+  const deezerAfter = auth.readProviderAuthPublic("deezer");
+  assert.equal(deezerAfter?.lastError, "first deezer failure");
+
+  // 2. apple-music: transition to needs_reauth with unreachable error
+  await auth.recordProviderAuthOk("apple-music");
+  await auth.recordProviderAuthFailure("apple-music", "ports unreachable");
+  const appleBefore = auth.readProviderAuthPublic("apple-music");
+  assert.equal(appleBefore?.lastError, "ports unreachable");
+
+  // Rewrite once to APPLE_WRAPPER_STUCK_MESSAGE
+  const appleStuck = await auth.recordProviderAuthFailure("apple-music", auth.APPLE_WRAPPER_STUCK_MESSAGE);
+  assert.equal(appleStuck.persisted, true, "must rewrite once when message changes to APPLE_WRAPPER_STUCK_MESSAGE");
+  const appleAfterStuck = auth.readProviderAuthPublic("apple-music");
+  assert.equal(appleAfterStuck?.lastError, auth.APPLE_WRAPPER_STUCK_MESSAGE);
+
+  // Calling again with the same stuck message must NOT rewrite again
+  const appleStuckAgain = await auth.recordProviderAuthFailure("apple-music", auth.APPLE_WRAPPER_STUCK_MESSAGE);
+  assert.equal(appleStuckAgain.persisted, false, "must not rewrite again when stuck message is unchanged");
+});
