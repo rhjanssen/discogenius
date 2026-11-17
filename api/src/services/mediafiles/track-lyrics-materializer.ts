@@ -13,6 +13,7 @@ import {
   isSynchronizedLyricContent,
   lyricSidecarPath,
 } from "../extras/lyrics/lyric-sidecar.js";
+import { isLyricsCircuitOpen } from "../extras/lyrics/lyrics-circuit-breaker.js";
 import { LibraryFilesService } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
@@ -392,37 +393,109 @@ export function trackIdsWithDeliveredSyncedLyrics(downloadPath: string | null | 
   return delivered;
 }
 
+export type PrefetchLyricsOptions = {
+  budgetMs?: number;
+  deadline?: number;
+  onProgressTick?: (completed: number, total: number) => void;
+};
+
+export function calculateLyricsPrefetchBudgetMs(tracksCount: number): number {
+  const minMs = Number(process.env.DISCOGENIUS_LYRICS_PREFETCH_MIN_MS) || 60_000;
+  const perTrackMs = Number(process.env.DISCOGENIUS_LYRICS_PREFETCH_PER_TRACK_MS) || 2_000;
+  const maxMs = Number(process.env.DISCOGENIUS_LYRICS_PREFETCH_MAX_MS) || 300_000;
+  return Math.min(maxMs, Math.max(minMs, perTrackMs * Math.max(1, tracksCount)));
+}
+
 /**
  * Fetch provider lyrics for the given provider track ids without touching the
  * library. Download completion calls this so the disk-exclusive import slot
  * never waits on lyric APIs. Failures resolve to "not prefetched" (absent key),
  * so the import falls back to its normal lookup. Tracks whose downloader
  * already delivered synchronized lyrics are skipped.
+ *
+ * Runs best-effort within a hard time budget. When the budget expires or the
+ * provider lyrics circuit breaker trips, lookups stop and remaining tracks
+ * proceed to import without delaying the command.
  */
 export async function prefetchProviderLyrics(
   provider: string,
   providerTrackIds: string[],
   concurrency = 4,
   downloadPath?: string | null,
+  options?: PrefetchLyricsOptions,
 ): Promise<Record<string, ResolvedLyrics | null>> {
   const metadata = getConfigSection("metadata");
   const quality = getConfigSection("quality");
   const out: Record<string, ResolvedLyrics | null> = {};
   if (!provider || (!metadata.save_lyrics && !quality.embed_lyrics)) return out;
+
+  if (isLyricsCircuitOpen(provider)) {
+    console.log(`[Lyrics] Skipping lyrics prefetch for provider ${provider}: circuit breaker is open`);
+    return out;
+  }
+
   const delivered = trackIdsWithDeliveredSyncedLyrics(downloadPath, providerTrackIds);
   const ids = Array.from(new Set(providerTrackIds.map((id) => String(id).trim()).filter(Boolean)))
     .filter((id) => !delivered.has(id));
+
+  const budgetMs = options?.budgetMs ?? calculateLyricsPrefetchBudgetMs(ids.length);
+  const deadline = options?.deadline ?? (Date.now() + budgetMs);
   let next = 0;
+  let completed = 0;
+  let budgetExhausted = false;
+
   const worker = async () => {
     while (next < ids.length) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0 || isLyricsCircuitOpen(provider)) {
+        budgetExhausted = true;
+        break;
+      }
       const id = ids[next++];
+      const key = providerMediaLyricsKey(provider, id);
+      let timer: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const budgetError = new Error("Prefetch budget exceeded");
+          (budgetError as any).name = "TimeoutError";
+          reject(budgetError);
+        }, remainingMs);
+      });
       try {
-        out[providerMediaLyricsKey(provider, id)] = await getLyricsForProviderMedia(id, provider);
-      } catch {
+        out[key] = await Promise.race([
+          getLyricsForProviderMedia(id, provider),
+          timeoutPromise,
+        ]);
+      } catch (err: any) {
+        if (err?.message === "Prefetch budget exceeded" || Date.now() >= deadline) {
+          out[key] = null;
+          budgetExhausted = true;
+          break;
+        }
         /* leave absent: import retries the lookup itself */
+      } finally {
+        if (timer) clearTimeout(timer);
+        completed++;
+        options?.onProgressTick?.(completed, ids.length);
       }
     }
   };
+
   await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));
+
+  if (budgetExhausted || Date.now() >= deadline || isLyricsCircuitOpen(provider)) {
+    const missing = ids.filter((id) => !Object.hasOwn(out, providerMediaLyricsKey(provider, id)));
+    if (missing.length > 0) {
+      console.warn(
+        `[Lyrics] Prefetch budget of ${budgetMs}ms exhausted (or circuit open); skipping remaining ${missing.length} lookups and proceeding to import`,
+      );
+      for (const id of missing) {
+        out[providerMediaLyricsKey(provider, id)] = null;
+        completed++;
+        options?.onProgressTick?.(completed, ids.length);
+      }
+    }
+  }
+
   return out;
 }

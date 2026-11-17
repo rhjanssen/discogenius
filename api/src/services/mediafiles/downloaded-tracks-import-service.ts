@@ -1987,25 +1987,21 @@ export async function prefetchImportNetworkData(payload: {
     providerId: string;
     trackOffers?: Array<{ providerTrackId?: string | null }> | null;
     downloadPath?: string | null;
+    budgetMs?: number;
+    onProgressTick?: (completed: number, total: number) => void;
 }): Promise<{ prefetchedLyrics?: Record<string, unknown> }> {
     const provider = String(payload.provider || "").trim();
     if (!provider || (payload.type !== "album" && payload.type !== "track")) return {};
-    try {
-        await ProviderTrackTagSupplementService.refresh({
-            providerId: provider,
-            albumProviderIds: payload.type === "album" ? [payload.providerId] : [],
-            trackProviderIds: payload.type === "track" ? [payload.providerId] : [],
-        });
-    } catch (error) {
-        console.warn(`[ImportDownload] Prefetch of provider tag supplements failed for ${payload.type} ${payload.providerId}:`, error);
-    }
-    try {
-        let trackIds: string[];
-        if (payload.type === "track") {
-            trackIds = [payload.providerId];
-        } else if (Array.isArray(payload.trackOffers) && payload.trackOffers.length > 0) {
-            trackIds = payload.trackOffers.map((offer) => String(offer?.providerTrackId || "")).filter(Boolean);
-        } else {
+
+    const { calculateLyricsPrefetchBudgetMs, prefetchProviderLyrics } = await import("./track-lyrics-materializer.js");
+
+    let trackIds: string[] = [];
+    if (payload.type === "track") {
+        trackIds = [payload.providerId];
+    } else if (Array.isArray(payload.trackOffers) && payload.trackOffers.length > 0) {
+        trackIds = payload.trackOffers.map((offer) => String(offer?.providerTrackId || "")).filter(Boolean);
+    } else {
+        try {
             trackIds = (db.prepare(`
                 SELECT track.provider_id AS id
                 FROM ProviderItems release
@@ -2013,9 +2009,52 @@ export async function prefetchImportNetworkData(payload: {
                 JOIN ProviderItems track ON track.id = member.member_item_id
                 WHERE release.provider = ? AND release.entity_type = 'release' AND release.provider_id = ?
             `).all(provider, payload.providerId) as Array<{ id: string }>).map((row) => String(row.id));
+        } catch {
+            trackIds = [];
         }
-        const { prefetchProviderLyrics } = await import("./track-lyrics-materializer.js");
-        return { prefetchedLyrics: await prefetchProviderLyrics(provider, trackIds, 4, payload.downloadPath) };
+    }
+
+    const tracksCount = Math.max(1, trackIds.length || (Array.isArray(payload.trackOffers) ? payload.trackOffers.length : 1));
+    const budgetMs = payload.budgetMs ?? calculateLyricsPrefetchBudgetMs(tracksCount);
+    const deadline = Date.now() + budgetMs;
+
+    try {
+        if (Date.now() < deadline) {
+            const supplementTimeout = Math.max(1000, Math.min(30_000, deadline - Date.now()));
+            let supplementTimer: NodeJS.Timeout | undefined;
+            const supplementTimeoutPromise = new Promise<void>((_, reject) => {
+                supplementTimer = setTimeout(() => reject(new Error("Tag supplements prefetch timed out")), supplementTimeout);
+            });
+            try {
+                await Promise.race([
+                    ProviderTrackTagSupplementService.refresh({
+                        providerId: provider,
+                        albumProviderIds: payload.type === "album" ? [payload.providerId] : [],
+                        trackProviderIds: payload.type === "track" ? [payload.providerId] : [],
+                    }),
+                    supplementTimeoutPromise,
+                ]);
+            } finally {
+                if (supplementTimer) clearTimeout(supplementTimer);
+            }
+        }
+    } catch (error) {
+        console.warn(`[ImportDownload] Prefetch of provider tag supplements failed for ${payload.type} ${payload.providerId}:`, error);
+    }
+
+    if (Date.now() >= deadline) {
+        console.warn(`[ImportDownload] Prefetch budget exhausted before lyrics prefetch for ${payload.type} ${payload.providerId}`);
+        return {};
+    }
+
+    try {
+        const remainingBudgetMs = Math.max(0, deadline - Date.now());
+        const prefetched = await prefetchProviderLyrics(provider, trackIds, 4, payload.downloadPath, {
+            budgetMs: remainingBudgetMs,
+            deadline,
+            onProgressTick: payload.onProgressTick,
+        });
+        return { prefetchedLyrics: prefetched };
     } catch (error) {
         console.warn(`[ImportDownload] Lyrics prefetch failed for ${payload.type} ${payload.providerId}:`, error);
         return {};

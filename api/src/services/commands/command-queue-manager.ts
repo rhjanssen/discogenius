@@ -1001,6 +1001,29 @@ ${orderBy}
         this.updateProgressMessage(id, { progress, workerId });
     }
 
+    /**
+     * Touch progress for a command, updating last_progress_at and heartbeat_at.
+     * Prevents the download watchdog from considering the job stale during long
+     * sub-phase iterations (such as lyrics prefetch).
+     */
+    static touchProgress(id: number, workerId?: string, now = new Date()): boolean {
+        const timestamp = leaseTimestamp(now);
+        const params: unknown[] = [timestamp, timestamp, timestamp, id];
+        let where = "WHERE id = ? AND status = 'started'";
+        if (workerId) {
+            where += " AND worker_id = ?";
+            params.push(workerId);
+        }
+        const result = db.prepare(`
+            UPDATE commands
+            SET last_progress_at = ?,
+                heartbeat_at = ?,
+                updated_at = ?
+            ${where}
+        `).run(...params);
+        return result.changes === 1;
+    }
+
     /** Release resources only after a handler has finished its current work
      * unit. Ownership fencing prevents a retired worker from requeueing work. */
     static continueOwnedCommand(id: number, workerId: string, payloadPatch: Partial<CommandBodyCommon>,

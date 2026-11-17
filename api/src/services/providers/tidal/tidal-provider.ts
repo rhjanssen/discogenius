@@ -378,7 +378,10 @@ export class TidalProvider implements StreamingProvider {
   async getLyrics(trackId: string | number): Promise<ProviderLyrics | null> {
     try {
       const cc = tidal.getCountryCode();
-      const data = await tidal.tidalApiRequest(`/tracks/${trackId}/lyrics?countryCode=${cc}`) as any;
+      const data = await tidal.tidalApiRequest(`/tracks/${trackId}/lyrics?countryCode=${cc}`, {
+        timeoutMs: 10_000,
+        maxRetries: 2,
+      }) as any;
       return {
         text: data?.lyrics || "",
         subtitles: data?.subtitles || "",

@@ -603,6 +603,226 @@ function isParkedImportPending(payload: Record<string, any>): boolean {
     return state === 'importPending' && !handoff?.executionStartedAt;
 }
 
+const MEDIA_EXTENSIONS = new Set([
+    '.flac', '.m4a', '.mp3', '.aac', '.wav', '.ogg', '.opus',
+    '.aif', '.aiff', '.mp4', '.mkv', '.mov', '.m4v', '.webm', '.ts',
+]);
+
+/**
+ * Checks if the download workspace for a command already contains complete media files.
+ * Used during restart/worker-loss recovery to bypass re-downloading and proceed straight to import.
+ */
+export function isDownloadWorkspaceComplete(
+    commandId: number,
+    payload: Record<string, any>,
+    commandName?: string,
+): { complete: boolean; downloadPath?: string } {
+    const type: DownloadJobType = commandName === CommandNames.DownloadVideo
+        ? 'video'
+        : commandName === CommandNames.DownloadAlbum
+            ? 'album'
+            : (payload.type === 'video' ? 'video' : payload.type === 'album' ? 'album' : 'track');
+    const provider = String(payload.provider || payload.streamingSource || getDefaultStreamingSource()).trim();
+    const providerId = String(payload.providerId || payload.id || '').trim();
+
+    const candidatePaths: string[] = [];
+    if (typeof payload.downloadPath === 'string' && payload.downloadPath.trim()) {
+        candidatePaths.push(payload.downloadPath.trim());
+    }
+    if (typeof payload.path === 'string' && payload.path.trim()) {
+        candidatePaths.push(payload.path.trim());
+    }
+    if (typeof payload.downloadState?.downloadPath === 'string' && payload.downloadState.downloadPath.trim()) {
+        candidatePaths.push(payload.downloadState.downloadPath.trim());
+    }
+    try {
+        if (type === 'album') {
+            const workspaceKey = String(payload.releaseGroupMbid || payload.providerId || commandId);
+            const base = getDownloadWorkspacePath("album", workspaceKey, provider);
+            candidatePaths.push(path.join(base, `job_${commandId}`));
+        } else {
+            const base = getDownloadWorkspacePath(type, providerId, provider);
+            candidatePaths.push(path.join(base, `job_${commandId}`));
+        }
+    } catch {
+        // Unknown provider in tests or legacy payloads (e.g. 'synthetic')
+        try {
+            const baseFolder = type === 'video' ? 'videos' : (type === 'album' ? 'albums' : 'tracks');
+            const root = Config.getDownloadPath();
+            const safeId = String(payload.providerId || payload.id || commandId).replace(/[^a-zA-Z0-9_-]/g, '_');
+            candidatePaths.push(path.join(root, baseFolder, provider, safeId, `job_${commandId}`));
+            candidatePaths.push(path.join(root, baseFolder, safeId, `job_${commandId}`));
+        } catch {
+            // ignore
+        }
+    }
+
+    let existingPath: string | undefined;
+    for (const p of candidatePaths) {
+        if (p && fs.existsSync(p)) {
+            existingPath = p;
+            break;
+        }
+    }
+
+    if (!existingPath) return { complete: false };
+
+    const mediaFiles: string[] = [];
+    const walk = (dir: string) => {
+        try {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    walk(full);
+                } else if (entry.isFile()) {
+                    const ext = path.extname(entry.name).toLowerCase();
+                    if (MEDIA_EXTENSIONS.has(ext)) {
+                        try {
+                            const stat = fs.statSync(full);
+                            if (stat.size > 0) mediaFiles.push(full);
+                        } catch {
+                            // ignore stat error
+                        }
+                    }
+                }
+            }
+        } catch {
+            // ignore readdir error
+        }
+    };
+    walk(existingPath);
+
+    if (mediaFiles.length === 0) return { complete: false, downloadPath: existingPath };
+
+    if (payload.downloadComplete === true || payload.downloadState?.downloadComplete === true) {
+        return { complete: true, downloadPath: existingPath };
+    }
+
+    if (type === 'track' || type === 'video') {
+        return { complete: mediaFiles.length >= 1, downloadPath: existingPath };
+    }
+
+    const totalExpected = Number(payload.downloadState?.totalFiles)
+        || (Array.isArray(payload.trackOffers) ? payload.trackOffers.length : 0)
+        || (Array.isArray(payload.downloadState?.tracks) ? payload.downloadState.tracks.length : 0);
+
+    const skippedOrError = Array.isArray(payload.downloadState?.tracks)
+        ? payload.downloadState.tracks.filter((t: any) => t.status === 'skipped' || t.status === 'error').length
+        : 0;
+
+    if (totalExpected > 0 && (mediaFiles.length + skippedOrError >= totalExpected)) {
+        return { complete: true, downloadPath: existingPath };
+    }
+
+    if (payload.downloadState?.progress === 100 && mediaFiles.length > 0) {
+        return { complete: true, downloadPath: existingPath };
+    }
+
+    return { complete: false, downloadPath: existingPath };
+}
+
+/**
+ * Transitions a download command whose workspace is already complete into an
+ * importPending handoff, avoiding re-running the provider downloader or network prefetch.
+ */
+export function transitionCompleteDownloadToImportHandoff(
+    commandId: number,
+    payload: Record<string, any>,
+    commandName: string,
+    downloadPath: string,
+    now: Date = new Date(),
+): boolean {
+    const type: DownloadJobType = commandName === CommandNames.DownloadVideo
+        ? 'video'
+        : commandName === CommandNames.DownloadAlbum
+            ? 'album'
+            : 'track';
+    const provider = String(payload.provider || payload.streamingSource || getDefaultStreamingSource()).trim();
+    const providerId = String(payload.providerId || payload.id || '').trim();
+    const resolved = {
+        title: String(payload.title || 'Unknown'),
+        artist: String(payload.artist || 'Unknown'),
+        cover: (payload.cover as string | null | undefined) ?? null,
+    };
+    const completedDownloadState = (payload.downloadState || {}) as DownloadStatePayload;
+    const warningMsg = completedDownloadState.warningMessage?.trim();
+    const downloadOutcome = completedDownloadState.outcome || (warningMsg ? "completedWithWarning" : undefined);
+    const resolvedTrackOffers = Array.isArray(payload.trackOffers) ? payload.trackOffers : undefined;
+
+    const importPayload: ImportDownloadCommand = {
+        provider,
+        providerId,
+        releaseGroupMbid: payload.releaseGroupMbid,
+        releaseMbid: payload.releaseMbid,
+        canonicalTrackMbid: payload.canonicalTrackMbid,
+        canonicalRecordingMbid: payload.canonicalRecordingMbid,
+        slot: payload.slot,
+        trackNumber: payload.trackNumber ?? null,
+        volumeNumber: payload.volumeNumber ?? null,
+        trackOffers: resolvedTrackOffers,
+        acquisitionMode: payload.acquisitionMode,
+        type,
+        path: downloadPath,
+        quality: payload.quality ?? null,
+        qualityProfile: payload.qualityProfile,
+        libraryId: payload.libraryId,
+        acquisitionPlanId: payload.acquisitionPlanId,
+        title: payload.title,
+        artist: payload.artist,
+        artists: payload.artists,
+        artistId: payload.artistId,
+        artist_id: payload.artist_id,
+        albumId: payload.albumId,
+        album_id: payload.album_id,
+        albumTitle: payload.albumTitle,
+        album_title: payload.album_title,
+        cover: payload.cover,
+        url: payload.url,
+        resolved,
+        prefetchedLyrics: payload.prefetchedLyrics,
+        downloadState: {
+            outcome: downloadOutcome,
+            warningMessage: completedDownloadState.warningMessage,
+            primaryProvider: completedDownloadState.primaryProvider,
+            fallbackProvider: completedDownloadState.fallbackProvider,
+        },
+    } as ImportDownloadCommand;
+
+    const handoff: DurableImportHandoff = {
+        readyAt: now.toISOString(),
+        importPayload,
+        resolved,
+        executionStartedAt: null,
+    };
+
+    const nextPayload = {
+        ...payload,
+        downloadPath,
+        downloadComplete: true,
+        downloadState: {
+            ...(payload.downloadState || {}),
+            state: 'importPending',
+            statusMessage: 'Waiting to import',
+        },
+        downloadImportHandoff: handoff,
+    };
+
+    const result = db.prepare(`
+        UPDATE commands
+        SET payload = ?, worker_id = NULL, lease_expires_at = NULL,
+            progress_phase = 'waiting to import', blocked_reason = 'waiting on import slot',
+            updated_at = ?
+        WHERE id = ? AND status = 'started'
+    `).run(JSON.stringify(nextPayload), now.toISOString(), commandId);
+
+    if (result.changes === 1) {
+        console.warn(`[DOWNLOAD-PROCESSOR] Interrupted download #${commandId} workspace already complete; transitioned straight to importPending handoff`);
+        return true;
+    }
+    return false;
+}
+
 /**
  * Recover attempts owned by a dead dedicated download worker.
  *
@@ -640,6 +860,15 @@ export function recoverInterruptedDownloadAttempts(
             if (reparkUntouchedImport(row.id, payload)) requeued += 1;
             else ignored += 1;
             continue;
+        }
+
+        // A job whose download workspace is already complete goes straight to import.
+        const workspaceStatus = isDownloadWorkspaceComplete(row.id, payload, row.name);
+        if (workspaceStatus.complete && workspaceStatus.downloadPath) {
+            if (transitionCompleteDownloadToImportHandoff(row.id, payload, row.name, workspaceStatus.downloadPath, now)) {
+                requeued += 1;
+                continue;
+            }
         }
 
         const owner = row.worker_id || `download-restart-recovery:${row.id}:${randomUUID()}`;
@@ -2301,7 +2530,22 @@ export class DownloadProcessor {
                 });
             }
 
-            await this.downloadItem(job.id, providerId, type, payload, entry);
+            const initialWorkspaceStatus = isDownloadWorkspaceComplete(job.id, payload, job.name);
+            if (initialWorkspaceStatus.complete && initialWorkspaceStatus.downloadPath) {
+                console.log(`[DOWNLOAD-PROCESSOR] Download workspace for #${job.id} already complete at ${initialWorkspaceStatus.downloadPath}; skipping provider download`);
+                entry.downloadPath = initialWorkspaceStatus.downloadPath;
+            } else {
+                await this.downloadItem(job.id, providerId, type, payload, entry);
+                if (entry.downloadPath) {
+                    await withSqliteWriteGate(() => CommandQueueManager.updateState(job.id, {
+                        workerId,
+                        payloadPatch: {
+                            downloadPath: entry.downloadPath,
+                            downloadComplete: true,
+                        } as any,
+                    }), 'download:record-workspace-complete');
+                }
+            }
 
             // Check if the item-specific download path has any media files before attempting organization.
             // tiddl may skip all items (already downloaded or unavailable) and exit successfully
@@ -2413,13 +2657,22 @@ export class DownloadProcessor {
             // and an import row appearing.
             // Network work (tag supplements, lyrics) happens here, in the download
             // slot, so the disk-exclusive import slot only moves/tags files.
-            const prefetchedNetwork = await prefetchImportNetworkData({
-                type,
-                provider: entry.provider || payload.provider,
-                providerId: entry.providerId || payload.providerId || providerId,
-                trackOffers: resolvedTrackOffers as any,
-                downloadPath: entry.downloadPath,
-            });
+            const prefetchedNetwork = initialWorkspaceStatus.complete
+                ? ((payload as any).prefetchedLyrics ? { prefetchedLyrics: (payload as any).prefetchedLyrics } : {})
+                : await prefetchImportNetworkData({
+                    type,
+                    provider: entry.provider || payload.provider,
+                    providerId: entry.providerId || payload.providerId || providerId,
+                    trackOffers: resolvedTrackOffers as any,
+                    downloadPath: entry.downloadPath,
+                    onProgressTick: (completed, total) => {
+                        this.persistDownloadState(job.id, {
+                            subphaseTick: true,
+                            statusMessage: `Prefetching lyrics (${completed}/${total})`,
+                        });
+                        CommandQueueManager.touchProgress(job.id, workerId);
+                    },
+                });
             const warningMsg = completedDownloadState.warningMessage?.trim();
             const downloadOutcome = completedDownloadState.outcome || (warningMsg ? "completedWithWarning" : undefined);
             const importPayload: ImportDownloadCommand = {

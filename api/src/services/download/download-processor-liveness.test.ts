@@ -1269,3 +1269,149 @@ test('import progress counts organized files rather than previously completed do
     processor.writeDownloadState(id, { state: 'importing', progress: 86, currentFileNum: 25 }, owner);
     assert.equal(CommandQueueManager.get(id)!.progress, 86, 'metadata finalization must not turn into 100% before completion');
 });
+
+test('worker-loss recovery of a job whose download workspace is already complete goes straight to import', async () => {
+    const id = CommandQueueManager.push(
+        CommandNames.DownloadAlbum,
+        {
+            provider: 'synthetic',
+            providerId: 'album-complete-workspace',
+            type: 'album',
+            title: 'Complete Workspace Album',
+            artist: 'Artist',
+            trackOffers: [
+                { provider: 'synthetic', providerTrackId: 't1', trackNum: 1 },
+                { provider: 'synthetic', providerTrackId: 't2', trackNum: 2 },
+            ],
+            downloadState: {
+                totalFiles: 2,
+                tracks: [
+                    { title: 'T1', providerTrackId: 't1', status: 'completed' },
+                    { title: 'T2', providerTrackId: 't2', status: 'completed' },
+                ],
+            },
+        },
+        'album-complete-workspace',
+    );
+    const owner = 'download-attempt:complete-workspace';
+    claim(id, owner);
+
+    // Create a complete workspace with 2 media files
+    const workspaceDir = path.join(tempDir, 'albums', 'synthetic', 'album-complete-workspace', `job_${id}`);
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.writeFileSync(path.join(workspaceDir, '01 - Track 1.flac'), 'audio1');
+    fs.writeFileSync(path.join(workspaceDir, '02 - Track 2.flac'), 'audio2');
+
+    // Update command payload with downloadPath and downloadComplete as written by downloadItem
+    CommandQueueManager.updateState(id, {
+        payloadPatch: { downloadPath: workspaceDir, downloadComplete: true } as any,
+    });
+
+    // Worker died; run worker-loss recovery
+    const recovery = recoverInterruptedDownloadAttempts('watchdog termination');
+    assert.equal(recovery.requeued, 1);
+    assert.equal(recovery.failed, 0);
+
+    const recovered = CommandQueueManager.get(id)!;
+    // Command remains started in importPending state with a durable handoff, not re-queued to download
+    assert.equal(recovered.status, 'started');
+    assert.equal(recovered.worker_id, null);
+    assert.equal(recovered.progress_phase, 'waiting to import');
+    assert.equal((recovered.payload as any).downloadState?.state, 'importPending');
+    assert.ok((recovered.payload as any).downloadImportHandoff);
+    assert.equal((recovered.payload as any).downloadImportHandoff.executionStartedAt, null);
+    assert.equal((recovered.payload as any).downloadImportHandoff.importPayload.path, workspaceDir);
+});
+
+test('lyrics prefetch with a fake provider whose lyrics calls hang produces an import within budget, ticking progress so watchdog does not fire', async () => {
+    const { streamingProviderManager } = await import('../providers/index.js');
+    const { prefetchImportNetworkData } = await import('../mediafiles/downloaded-tracks-import-service.js');
+
+    const id = CommandQueueManager.push(
+        CommandNames.DownloadAlbum,
+        {
+            provider: 'hanging-provider',
+            providerId: 'album-hanging',
+            type: 'album',
+            title: 'Hanging Lyrics Album',
+            artist: 'Artist',
+        },
+        'album-hanging',
+    );
+    const owner = 'download-attempt:lyrics-budget';
+    claim(id, owner);
+
+    // Set initial last_progress_at to past
+    db.prepare(`
+        UPDATE commands
+        SET last_progress_at = '2026-01-01 00:00:00',
+            heartbeat_at = '2026-01-01 00:00:09',
+            lease_expires_at = '2026-01-01 00:01:00'
+        WHERE id = ?
+    `).run(id);
+
+    // Register a fake provider whose getLyrics hangs (exceeds budget)
+    let lyricsCalls = 0;
+    const fakeProvider = {
+        id: 'hanging-provider',
+        name: 'Hanging Provider',
+        capabilities: { lyrics: true, tracks: true, albums: true },
+        getLyrics: async () => {
+            lyricsCalls++;
+            // Hang longer than the budget
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            return null;
+        },
+    };
+    (streamingProviderManager as any).providers.set('hanging-provider', fakeProvider);
+
+    const processor = new DownloadProcessor() as any;
+
+    try {
+        const start = Date.now();
+        const budgetMs = 200; // 200ms hard budget for test
+        await prefetchImportNetworkData({
+            type: 'album',
+            provider: 'hanging-provider',
+            providerId: 'album-hanging',
+            trackOffers: [
+                { providerTrackId: 'h1' },
+                { providerTrackId: 'h2' },
+                { providerTrackId: 'h3' },
+            ],
+            budgetMs,
+            onProgressTick: (completed, total) => {
+                processor.persistDownloadState(id, {
+                    subphaseTick: true,
+                    statusMessage: `Prefetching lyrics (${completed}/${total})`,
+                }, owner);
+                CommandQueueManager.touchProgress(id, owner);
+            },
+        });
+        const elapsed = Date.now() - start;
+
+        // Prefetch must complete within reasonable time of the budget (e.g. < 1500ms instead of 3 * 2000ms = 6000ms)
+        assert.ok(elapsed < 1500, `Prefetch took ${elapsed}ms, should respect budget of ${budgetMs}ms`);
+
+        // Ticked progress moved last_progress_at forward from 2026-01-01 00:00:00
+        const updated = CommandQueueManager.get(id)!;
+        assert.notEqual(updated.last_progress_at, '2026-01-01 00:00:00');
+
+        // Watchdog does not fire on a command whose last_progress_at was ticked
+        let terminations = 0;
+        const proxy = new DownloadProcessorWorkerProxy() as any;
+        proxy.worker = {
+            terminate: async () => {
+                terminations++;
+                return 1;
+            },
+        };
+
+        const now = new Date();
+        const terminated = await proxy.runWatchdogOnce(now);
+        assert.equal(terminated, false);
+        assert.equal(terminations, 0);
+    } finally {
+        (streamingProviderManager as any).providers.delete('hanging-provider');
+    }
+});

@@ -6,6 +6,12 @@ import { streamingProviderManager } from "../../providers/index.js";
 import type { ProviderLyrics } from "../../providers/streaming-provider.js";
 import { LyricFileService, type LyricFileRow } from "./lyric-file-service.js";
 import { classifyLyricsForSidecar } from "./lyric-sidecar.js";
+import {
+  isLyricsCircuitOpen,
+  recordLyricsFailure,
+  recordLyricsSuccess,
+  resetLyricsCircuitBreakerForTests,
+} from "./lyrics-circuit-breaker.js";
 
 export type ResolvedLyrics = {
   text: string;
@@ -579,7 +585,10 @@ function rememberProviderLyricsMiss(key: string, now: number): void {
 
 export function resetProviderLyricsMissesForTests(): void {
   providerLyricsMisses.clear();
+  resetLyricsCircuitBreakerForTests();
 }
+
+export const LYRICS_REQUEST_TIMEOUT_MS = 10_000;
 
 export async function fetchProviderLyrics(providerId: string, providerMediaId: string, now = Date.now()): Promise<ProviderLyrics | null> {
   const key = providerLyricsMissKey(providerId, providerMediaId);
@@ -588,11 +597,34 @@ export async function fetchProviderLyrics(providerId: string, providerMediaId: s
     if (missUntil > now) return null;
     providerLyricsMisses.delete(key);
   }
+  if (isLyricsCircuitOpen(providerId, now)) {
+    return null;
+  }
   let lyrics: ProviderLyrics | null;
   try {
     const provider = streamingProviderManager.getStreamingProvider(providerId);
-    lyrics = await provider.getLyrics?.(providerMediaId) ?? null;
-  } catch {
+    if (!provider || typeof provider.getLyrics !== "function") return null;
+
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        const timeoutError = new Error(`Lyrics request timed out after ${LYRICS_REQUEST_TIMEOUT_MS}ms`);
+        (timeoutError as any).name = "TimeoutError";
+        reject(timeoutError);
+      }, LYRICS_REQUEST_TIMEOUT_MS);
+    });
+
+    try {
+      lyrics = await Promise.race([
+        provider.getLyrics(providerMediaId),
+        timeoutPromise,
+      ]) ?? null;
+      recordLyricsSuccess(providerId);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  } catch (error) {
+    recordLyricsFailure(providerId, error, now);
     // Transient (network, session): not evidence of absence, ask again later.
     return null;
   }
@@ -642,7 +674,8 @@ export async function getLyricsForProviderMedia(
     || streamingProviderManager.getDefaultStreamingProvider().id;
   const media = loadProviderTrack(provider, providerMediaId);
   if (!media) {
-    return null;
+    const directLyrics = await fetchProviderLyrics(provider, String(providerMediaId));
+    return directLyrics ? providerLyricsToResolved(provider, directLyrics, "exact", String(providerMediaId)) : null;
   }
 
   const exactFile = loadLyricFileForMedia(provider, media)

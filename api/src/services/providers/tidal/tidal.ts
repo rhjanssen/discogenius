@@ -382,15 +382,22 @@ function parseRetryAfterMs(response: Response): number | null {
   return null;
 }
 
+export type TidalRequestOptions = RequestInit & {
+  timeoutMs?: number;
+  maxRetries?: number;
+};
+
 async function tidalFetchWithRetry(
   url: string,
-  options: RequestInit,
+  options: TidalRequestOptions,
   context: string,
   maxRetries: number = RETRY_MAX_ATTEMPTS
 ): Promise<Response> {
   let lastResponse: Response | null = null;
+  const timeoutMs = options.timeoutMs ?? 45_000;
+  const effectiveMaxRetries = options.maxRetries ?? maxRetries;
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  for (let attempt = 1; attempt <= effectiveMaxRetries; attempt++) {
     await acquireRequestSlot(context);
     let response: Response;
     try {
@@ -399,7 +406,7 @@ async function tidalFetchWithRetry(
         // hung TIDAL connection can't freeze matching/downloads indefinitely.
         response = await fetch(url, {
           ...options,
-          signal: (options as { signal?: AbortSignal }).signal ?? AbortSignal.timeout(45_000),
+          signal: (options as { signal?: AbortSignal }).signal ?? AbortSignal.timeout(timeoutMs),
         });
       } finally {
         releaseRequestSlot();
@@ -409,11 +416,11 @@ async function tidalFetchWithRetry(
       if (callerSignal?.aborted) {
         throw fetchError;
       }
-      const willRetry = attempt < maxRetries;
+      const willRetry = attempt < effectiveMaxRetries;
       const isTimeout = isTimeoutError(fetchError);
       console.warn(
         `[TidalAPI] Request failed (${isTimeout ? 'timeout' : fetchError?.message || 'error'}) for ${context} - ${
-          willRetry ? `retry ${attempt}/${maxRetries}` : `giving up after ${maxRetries} attempts`
+          willRetry ? `retry ${attempt}/${effectiveMaxRetries}` : `giving up after ${effectiveMaxRetries} attempts`
         }`
       );
       if (willRetry) {
@@ -436,10 +443,10 @@ async function tidalFetchWithRetry(
       const retryAfterMs = parseRetryAfterMs(response);
       const baseDelay = retryAfterMs ?? RATE_LIMIT_MIN_WAIT_MS;
       const waitMs = Math.max(baseDelay, RATE_LIMIT_MIN_WAIT_MS);
-      const willRetry = attempt < maxRetries;
+      const willRetry = attempt < effectiveMaxRetries;
 
       rateLimitUntil = Math.max(rateLimitUntil, Date.now() + waitMs);
-      console.warn(`[TidalAPI] 429 Too Many Requests for ${context} - ${willRetry ? `retry ${attempt}/${maxRetries} in ${Math.ceil(waitMs)}ms` : `giving up after ${maxRetries} attempts`}`);
+      console.warn(`[TidalAPI] 429 Too Many Requests for ${context} - ${willRetry ? `retry ${attempt}/${effectiveMaxRetries} in ${Math.ceil(waitMs)}ms` : `giving up after ${effectiveMaxRetries} attempts`}`);
 
       if (willRetry) {
         await sleep(waitMs);
@@ -448,8 +455,8 @@ async function tidalFetchWithRetry(
     } else if (isServerError) {
       const waitSeconds = Math.pow(RETRY_BACKOFF_FACTOR, attempt);
       const waitMs = Math.min(waitSeconds * 1000, RATE_LIMIT_MAX_DELAY_MS);
-      const willRetry = attempt < maxRetries;
-      console.warn(`[TidalAPI] ${response.status} ${response.statusText} for ${context} - ${willRetry ? `retry ${attempt}/${maxRetries} in ${Math.ceil(waitMs)}ms` : `giving up after ${maxRetries} attempts`}`);
+      const willRetry = attempt < effectiveMaxRetries;
+      console.warn(`[TidalAPI] ${response.status} ${response.statusText} for ${context} - ${willRetry ? `retry ${attempt}/${effectiveMaxRetries} in ${Math.ceil(waitMs)}ms` : `giving up after ${effectiveMaxRetries} attempts`}`);
 
       if (willRetry) {
         await sleep(waitMs);
@@ -725,8 +732,17 @@ export function shouldRefreshToken(token: TidalToken | null): boolean {
 /**
  * Base Tidal API request with auth handling
  */
-export async function tidalApiRequest(endpoint: string): Promise<unknown> {
-  const response = await tidalRawRequest(TIDAL_API_BASE, endpoint, {}, `v1:${endpoint}`);
+export async function tidalApiRequest(
+  endpoint: string,
+  options: TidalRequestOptions = {},
+): Promise<unknown> {
+  const isLyrics = endpoint.includes("/lyrics");
+  const requestOptions: TidalRequestOptions = {
+    ...options,
+    timeoutMs: options.timeoutMs ?? (isLyrics ? 10_000 : 45_000),
+    maxRetries: options.maxRetries ?? (isLyrics ? 2 : RETRY_MAX_ATTEMPTS),
+  };
+  const response = await tidalRawRequest(TIDAL_API_BASE, endpoint, requestOptions, `v1:${endpoint}`);
   return parseTidalJsonResponse(response);
 }
 
@@ -785,7 +801,7 @@ export async function usableTidalAccessToken(): Promise<string> {
 async function tidalRawRequest(
   baseUrl: string,
   endpoint: string,
-  options: RequestInit = {},
+  options: TidalRequestOptions = {},
   context = endpoint,
 ): Promise<Response> {
   const accessToken = await usableTidalAccessToken();
@@ -799,7 +815,7 @@ async function tidalRawRequest(
     return tidalFetchWithRetry(url, {
       ...options,
       headers,
-    }, context);
+    }, context, options.maxRetries ?? RETRY_MAX_ATTEMPTS);
   };
 
   let response = await makeRequest(accessToken);
