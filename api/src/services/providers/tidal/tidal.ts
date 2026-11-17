@@ -725,8 +725,8 @@ export function shouldRefreshToken(token: TidalToken | null): boolean {
 /**
  * Base Tidal API request with auth handling
  */
-export async function tidalApiRequest(endpoint: string): Promise<unknown> {
-  const response = await tidalRawRequest(TIDAL_API_BASE, endpoint, {}, `v1:${endpoint}`);
+export async function tidalApiRequest(endpoint: string, options: RequestInit = {}): Promise<unknown> {
+  const response = await tidalRawRequest(TIDAL_API_BASE, endpoint, options, `v1:${endpoint}`);
   return parseTidalJsonResponse(response);
 }
 
