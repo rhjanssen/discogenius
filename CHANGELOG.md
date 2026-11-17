@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.2] - 2026-11-17
+
+### Fixed
+
+- Apple Music: a wrapper restart now stops the whole decryption-server process tree and waits for its ports to be free before starting again, then checks that the server actually answers. While Apple is held because the wrapper is not answering, Discogenius keeps re-probing with backoff and re-requests a restart, and the message says the decryption server is stuck instead of asking to re-authenticate (#133).
+
 ## [2.26.1] - 2026-11-17
 
 ### Fixed
