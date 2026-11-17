@@ -1,17 +1,21 @@
 # Session Handoff
 
-- **Branch**: `main` (clean; all feature branches merged and deleted)
+- **Branch**: `agent/issue-136` (updating PR #136 / `agent/issue-133`)
 - **What is done**:
-  - **PR #126 (`#77`)**: Queue API performance (keyset cursor pagination, persistent read-only `worker_threads` worker, O(1) `queuePosition`, 10s remote hydration timeout on album reads).
-  - **PR #127 (`#79`)**: Servarr/MusicBrainz locale alias lookup, `{Artist Original Name}` / `{Artist Locale Name}` / `{Artist Alias}` naming tokens, `TitleTokenRegex` fix.
-  - **PR #128 (`#116`)**: AcoustID rate-limited verification (`<= 3 req/s` + 429 retry) on manual & folder auto-imports, merged recording redirect lookup, `force` override on `POST /api/unmapped/canonical-import`.
-  - **PR #129 (`#114`)**: Housekeeping stray-file cleanup (`.lrc/.srt/.vtt`, aged temp/part files, empty folders, unowned audio) and stereo/Atmos placement enforcement (`runHousekeepingStrayAndPlacement`).
-  - **PR #130 (`#115`)**: Two-way disk vs DB reconciliation (`reconcileDiskAndDatabase`), case-insensitive root comparison, stereo/Atmos placement validation (`isTrackFilePlacementValid`), and `/api/health` / `/api/v1/system/status` `reconciliation` diagnostics.
-  - **PR #131 (`#78`)**: Plex & Jellyfin integration (`media_servers` config with redacted secrets, targeted folder scans after import/rename/retag, `POST /api/v1/media-servers/reconcile` dry-run & apply with MBID merge/fix-match/refresh).
-  - **PR #132**: Audit Round 2 cleanup (`command-queue-manager.ts` empty/whitespace provider string guard in rate-limit backoff check).
-- **Open issues / PRs**: None (`0` open issues, `0` open PRs on `rhjanssen/discogenius`).
-- **What was NOT verified on LAN**:
-  - Cloud VM cannot reach the LAN (`192.168.1.50` / `192.168.1.100` / running container). Live-server smoke testing with real provider tokens, Plex/Jellyfin instances, and Bastille/Bakermat remains for the LAN session / user.
-- **Open design items for PO**:
-  - Edition selection UX improvement (Lidarr-style modal supporting multi-edition selection and source selection on album page).
-  - Audit Round 2 follow-up notes: `artist-statistics-service.ts:448` (`Libraries ORDER BY id LIMIT 1` fallback when `LibraryArtists` has no row) and `album-query-service.ts:589` (`LIKE` search inside `listAlbumsFromMembership`).
+  - **Issue #133 / PR #136**: Addressed all PO review feedback and resolved the timing-dependent test flake:
+    1. **Fixed timing-dependent test assertion in `provider-auth-state.test.ts`**: Seeded the `apple-music` auth row as `ok` with a fixed old `since` (matching `test-prov`), eliminating the millisecond collision between `recordProviderAuthOk` and `recordProviderAuthFailure`.
+    2. **Regression in `recordProviderAuthFailure` fixed**: `since` updates to `now` when transitioning from `ok` to `needs_reauth`, retaining `since` only when already `needs_reauth`.
+    3. **Targeted stuck rewrite & cleanup**: Removed unused `force` option from `recordProviderAuthFailure`. Only `apple-music` with `APPLE_WRAPPER_STUCK_MESSAGE` rewrites once when already held and does not rewrite again on duplicate calls. Generic `/stuck/i` messages on other providers are ignored.
+    4. **Thread-safe restart state derivation**: `hasAttemptedWrapperRestart`, `reconcileWrapperLoginStatus`, and `probeAppleWrapperHealth` derive whether a restart was attempted directly from persisted `authRow` in SQLite (`lastError === APPLE_WRAPPER_STUCK_MESSAGE`) rather than module globals across worker threads.
+    5. **Preserved real session failures**: `runAppleWrapperHoldProbe` checks wrapper `login_status.json` before restarting or overwriting with the stuck message, preventing real session errors from being hidden.
+    6. **Dual port readiness check & clean process group termination**: Supervisor probes both ports 10020 and 20020 with 1s timeout to catch accept backlogs. `setsid` and `stop_server()` ensure clean child process termination.
+  - **Verification**:
+    - Full `yarn ci` passed (eslint 0 errors, api & app typecheck, 100% passing api & app unit tests across the entire repository, clean production builds).
+    - `provider-auth-state.test.ts` verified with 5 consecutive successful test runs with zero failures.
+    - In-container Docker shell test verified startup, process tree, clean process termination on restart, and both ports 10020 and 20020 answering.
+- **What is half-done**:
+  - None. All review items and test blocker from PR #136 resolved.
+- **What was verified against running container**:
+  - Docker shell-level test verified container startup with v11 entrypoint, verified parent/child process structure, simulated restart via `restart_server.txt`, verified all previous processes were terminated without orphans, and verified both ports 10020 and 20020 answer immediately after restart.
+- **Open questions for PO**:
+  - None. PR #136 is ready for merge.

@@ -17,6 +17,8 @@ import {
   requestWrapperServerRestart,
   resolveAppleWrapperHost,
   syncTokenToDownloader,
+  APPLE_WRAPPER_STUCK_MESSAGE,
+  hasAppleWrapperSession,
 } from "./apple-music-auth.js";
 import { ProviderAuthError } from "../provider-auth-error.js";
 import { recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
@@ -355,7 +357,10 @@ export async function ensureAppleWrapperReadyForDownload(
       return snapshot;
     }
   }
-  const authMsg = `Apple Music decryption wrapper is not answering (${missing.join(", ")})${requested ? " even after a restart" : ""}; Apple downloads are on hold until it responds.`;
+  const hasSession = hasAppleWrapperSession();
+  const authMsg = hasSession && requested
+    ? APPLE_WRAPPER_STUCK_MESSAGE
+    : `Apple Music decryption wrapper is not answering (${missing.join(", ")})${requested ? " even after a restart" : ""}; Apple downloads are on hold until it responds.`;
   await recordProviderAuthFailure("apple-music", authMsg).catch(() => undefined);
   throw new ProviderAuthError(
     "apple-music",
