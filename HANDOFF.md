@@ -14,4 +14,4 @@
 - **What was NOT verified on LAN**:
   - Live TIDAL connection with actual network timeouts on LAN homelab container. Cloud VM cannot reach the LAN.
 - **Open questions / notes for PO**:
-  - PR opened for Issue #135.
+  - PR opened: https://github.com/rhjanssen/discogenius/pull/137
