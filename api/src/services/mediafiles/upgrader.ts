@@ -1,9 +1,10 @@
+import type Database from "better-sqlite3";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
 import {CommandNames} from "../commands/command-names.js";
 import { updateAlbumDownloadStatus } from "../download/download-state.js";
 import { downloadProcessor } from "../download/download-processor.js";
-import { DownloadWaitQueue } from "../download/download-wait-queue.js";
+import { DownloadWaitQueue, isSpatialQualityOrOffer } from "../download/download-wait-queue.js";
 import { buildStreamingMediaUrl } from "../download/download-routing.js";
 import { normalizeAudioQualityTag } from "../config/quality.js";
 import { UpgradableSpecification } from "../config/upgradable-specification.js";
@@ -11,6 +12,7 @@ import { conformExistingTrackFile } from "./library-quality-conform.js";
 import { readIntEnv } from "../../utils/env.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { providerResolvedAlbumIdSql } from "../providers/provider-item-artist-scope.js";
+import { acquisitionProfileSlot } from "../music/acquisition-download-command.js";
 
 export type UpgradeDetail = {
     mediaId: string;
@@ -19,6 +21,11 @@ export type UpgradeDetail = {
     provider: string;
     albumId: string | null;
     action?: "upgrade" | "downconvert";
+    fileId?: number;
+    slot?: "stereo" | "spatial" | "video";
+    libraryId?: number | null;
+    acquisitionPlanId?: number | null;
+    libraryRoot?: string | null;
 };
 
 export type UpgradeResult = {
@@ -36,6 +43,7 @@ type UpgradeCandidateRow = {
     media_type: string;
     album_id: string | null;
     source_quality: string | null;
+    raw_source_quality: string | null;
     current_quality: string | null;
     current_codec: string | null;
     current_extension: string | null;
@@ -43,18 +51,125 @@ type UpgradeCandidateRow = {
     current_bitrate: number | null;
     current_sample_rate: number | null;
     album_quality: string | null;
+    raw_album_quality: string | null;
     file_path: string | null;
     relative_path: string | null;
     library_root: string | null;
     filename: string | null;
     library_slot: string | null;
+    library_id: number | null;
+    track_id: number | null;
+    album_edition_id: number | null;
     expected_path: string | null;
 };
 
 type AlbumUpgradeTarget = {
     provider: string;
     albumId: string;
+    slot: "stereo" | "spatial";
+    libraryId: number | null;
+    acquisitionPlanId: number | null;
+    libraryRoot: string | null;
 };
+
+type UpgradeDestination = {
+    slot: "stereo" | "spatial" | "video" | null;
+    libraryId: number | null;
+    acquisitionPlanId: number | null;
+    libraryRoot: string | null;
+};
+
+type UpgradeDestinationResolverContext = {
+    selectVideoLibrary: Database.Statement;
+    selectLibraryById: Database.Statement;
+    selectLibraryByRoot: Database.Statement;
+    selectSpatialLibrary: Database.Statement;
+    selectStereoLibrary: Database.Statement;
+    selectPlanByEdition: Database.Statement;
+    selectPlanByTrack: Database.Statement;
+};
+
+function resolveUpgradeDestination(
+    row: UpgradeCandidateRow,
+    context: UpgradeDestinationResolverContext,
+): UpgradeDestination {
+    if (row.media_type === "Music Video" || row.provider_entity_type === "video") {
+        const videoLib = context.selectVideoLibrary.get() as { id: number; root_path: string } | undefined;
+        return {
+            slot: "video",
+            libraryId: row.library_id ?? videoLib?.id ?? null,
+            acquisitionPlanId: null,
+            libraryRoot: row.library_root ?? videoLib?.root_path ?? null,
+        };
+    }
+
+    let slot: "stereo" | "spatial" | null = null;
+    let libraryId: number | null = null;
+    let libraryRoot: string | null = null;
+
+    if (row.library_id != null && Number.isInteger(row.library_id) && row.library_id > 0) {
+        const rowLib = context.selectLibraryById.get(row.library_id) as {
+            library_id: number;
+            root_path: string;
+            allowed_source_formats: string;
+        } | undefined;
+        if (rowLib) {
+            const targetSlot = acquisitionProfileSlot(rowLib.allowed_source_formats);
+            if (targetSlot) {
+                slot = targetSlot;
+                libraryId = rowLib.library_id;
+                libraryRoot = rowLib.root_path;
+            }
+        }
+    }
+
+    if (!slot) {
+        const normalizedSlot = String(row.library_slot || "").trim().toLowerCase();
+        if (normalizedSlot === "stereo" || normalizedSlot === "spatial") {
+            slot = normalizedSlot;
+        } else if (row.library_root) {
+            const rootLib = context.selectLibraryByRoot.get(row.library_root) as {
+                id: number;
+                root_path: string;
+                allowed_source_formats: string;
+            } | undefined;
+            if (rootLib) {
+                slot = acquisitionProfileSlot(rootLib.allowed_source_formats);
+                libraryId = rootLib.id;
+                libraryRoot = rootLib.root_path;
+            }
+        }
+    }
+
+    if (slot && !libraryId) {
+        const libRow = (slot === "spatial"
+            ? context.selectSpatialLibrary.get()
+            : context.selectStereoLibrary.get()) as { id: number; root_path: string } | undefined;
+        if (libRow) {
+            libraryId = libRow.id;
+            libraryRoot = libraryRoot ?? libRow.root_path;
+        }
+    }
+
+    let acquisitionPlanId: number | null = null;
+    if (libraryId != null) {
+        if (row.album_edition_id != null) {
+            const planRow = context.selectPlanByEdition.get(libraryId, row.album_edition_id) as { id: number } | undefined;
+            acquisitionPlanId = planRow?.id ?? null;
+        }
+        if (acquisitionPlanId == null && row.track_id != null) {
+            const planRow = context.selectPlanByTrack.get(row.track_id, libraryId) as { id: number } | undefined;
+            acquisitionPlanId = planRow?.id ?? null;
+        }
+    }
+
+    return {
+        slot,
+        libraryId,
+        acquisitionPlanId,
+        libraryRoot: libraryRoot ?? row.library_root ?? null,
+    };
+}
 
 const UPGRADE_HISTORY_COOLDOWN_HOURS = 24;
 const UPGRADE_SCAN_PAGE_SIZE = 2000;
@@ -84,8 +199,8 @@ function normalizeProviderId(value: string | null | undefined): string | null {
     return normalized || null;
 }
 
-function albumUpgradeKey(provider: string, albumId: string): string {
-    return `${provider}\0${albumId}`;
+function albumUpgradeKey(provider: string, albumId: string, slot?: string | null): string {
+    return `${provider}\0${albumId}\0${slot || ""}`;
 }
 
 /**
@@ -234,6 +349,10 @@ export class UpgraderService {
                     WHERE variant.provider_item_id = media_item.id
                       AND variant.availability NOT IN ('unavailable', 'restricted')
                       AND variant.provider_quality_label IS NOT NULL
+                      AND (
+                        (COALESCE(lf.library_slot, 'stereo') = 'spatial' AND (variant.quality_class = 'spatial' OR variant.spatial_format IS NOT NULL))
+                        OR (COALESCE(lf.library_slot, 'stereo') <> 'spatial' AND variant.quality_class <> 'spatial' AND variant.spatial_format IS NULL)
+                      )
                     ORDER BY
                       CASE COALESCE(variant.delivered_quality_class, variant.quality_class)
                         WHEN 'spatial' THEN 0
@@ -247,6 +366,27 @@ export class UpgraderService {
                     LIMIT 1
                 )
             END AS source_quality,
+            CASE
+                WHEN lf.file_type = 'video' THEN media_item.video_quality
+                ELSE (
+                    SELECT ${EFFECTIVE_SOURCE_TAG_SQL}
+                    FROM ProviderItemAudioVariants variant
+                    WHERE variant.provider_item_id = media_item.id
+                      AND variant.availability NOT IN ('unavailable', 'restricted')
+                      AND variant.provider_quality_label IS NOT NULL
+                    ORDER BY
+                      CASE COALESCE(variant.delivered_quality_class, variant.quality_class)
+                        WHEN 'spatial' THEN 0
+                        WHEN 'hires-lossless' THEN 1
+                        WHEN 'lossless' THEN 2
+                        ELSE 3
+                      END,
+                      COALESCE(variant.bit_depth, 0) DESC,
+                      COALESCE(variant.sample_rate, 0) DESC,
+                      variant.id DESC
+                    LIMIT 1
+                )
+            END AS raw_source_quality,
             lf.quality      AS current_quality,
             lf.codec        AS current_codec,
             lf.extension    AS current_extension,
@@ -258,10 +398,37 @@ export class UpgraderService {
             lf.library_root AS library_root,
             lf.filename     AS filename,
             lf.library_slot AS library_slot,
+            lf.library_id   AS library_id,
+            lf.track_id     AS track_id,
+            lf.album_edition_id AS album_edition_id,
             lf.expected_path AS expected_path,
             -- Album-level source capability, kept as the fallback it always was:
             -- the best available variant across the resolved provider release's
             -- member tracks. Correlates on the release item resolved below.
+            (
+                SELECT ${EFFECTIVE_SOURCE_TAG_SQL}
+                FROM ProviderEditionMembers album_member
+                JOIN ProviderItemAudioVariants variant
+                  ON variant.provider_item_id = album_member.member_item_id
+                WHERE album_member.provider_edition_item_id = album_item.id
+                  AND variant.availability NOT IN ('unavailable', 'restricted')
+                  AND variant.provider_quality_label IS NOT NULL
+                  AND (
+                    (COALESCE(lf.library_slot, 'stereo') = 'spatial' AND (variant.quality_class = 'spatial' OR variant.spatial_format IS NOT NULL))
+                    OR (COALESCE(lf.library_slot, 'stereo') <> 'spatial' AND variant.quality_class <> 'spatial' AND variant.spatial_format IS NULL)
+                  )
+                ORDER BY
+                  CASE COALESCE(variant.delivered_quality_class, variant.quality_class)
+                    WHEN 'spatial' THEN 0
+                    WHEN 'hires-lossless' THEN 1
+                    WHEN 'lossless' THEN 2
+                    ELSE 3
+                  END,
+                  COALESCE(variant.bit_depth, 0) DESC,
+                  COALESCE(variant.sample_rate, 0) DESC,
+                  variant.id DESC
+                LIMIT 1
+            ) AS album_quality,
             (
                 SELECT ${EFFECTIVE_SOURCE_TAG_SQL}
                 FROM ProviderEditionMembers album_member
@@ -281,7 +448,7 @@ export class UpgraderService {
                   COALESCE(variant.sample_rate, 0) DESC,
                   variant.id DESC
                 LIMIT 1
-            ) AS album_quality
+            ) AS raw_album_quality
         FROM TrackFiles lf
         LEFT JOIN ProviderItems media_item
           ON media_item.id = COALESCE(
@@ -367,6 +534,75 @@ export class UpgraderService {
         const standaloneUnits = new Set<string>();
         const unitsUsed = () => albumsNeedingUpgrade.size + standaloneUnits.size + conversions;
 
+        const resolverContext: UpgradeDestinationResolverContext = {
+            selectVideoLibrary: db.prepare(`
+                SELECT library.id, library.root_path
+                FROM Libraries library
+                JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+                WHERE library.enabled = 1
+                  AND EXISTS (
+                    SELECT 1 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                    WHERE allowed.value = 'video'
+                  )
+                ORDER BY library.id
+                LIMIT 1
+            `),
+            selectLibraryById: db.prepare(`
+                SELECT
+                  library.id AS library_id,
+                  library.root_path,
+                  quality_profile.allowed_source_formats
+                FROM Libraries library
+                JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+                WHERE library.id = ? AND library.enabled = 1
+            `),
+            selectLibraryByRoot: db.prepare(`
+                SELECT library.id, library.root_path, quality_profile.allowed_source_formats
+                FROM Libraries library
+                JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+                WHERE library.enabled = 1 AND library.root_path = ?
+            `),
+            selectSpatialLibrary: db.prepare(`
+                SELECT library.id, library.root_path
+                FROM Libraries library
+                JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+                WHERE library.enabled = 1
+                  AND EXISTS (
+                    SELECT 1 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                    WHERE allowed.value = 'spatial'
+                  )
+                ORDER BY library.id
+                LIMIT 1
+            `),
+            selectStereoLibrary: db.prepare(`
+                SELECT library.id, library.root_path
+                FROM Libraries library
+                JOIN quality_profiles quality_profile ON quality_profile.id = library.quality_profile_id
+                WHERE library.enabled = 1
+                  AND NOT EXISTS (
+                    SELECT 1 FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                    WHERE allowed.value IN ('spatial', 'video')
+                  )
+                ORDER BY library.id
+                LIMIT 1
+            `),
+            selectPlanByEdition: db.prepare(`
+                SELECT id FROM SelectedAcquisitionPlans
+                WHERE library_id = ? AND edition_id = ? AND state = 'current'
+                LIMIT 1
+            `),
+            selectPlanByTrack: db.prepare(`
+                SELECT plan.id
+                FROM AcquisitionPlanTracks plan_track
+                JOIN AcquisitionPlans plan ON plan.id = plan_track.plan_id
+                WHERE plan_track.track_id = ?
+                  AND plan.library_id = ?
+                  AND plan.state = 'current'
+                ORDER BY plan.id DESC
+                LIMIT 1
+            `),
+        };
+
         let rowsLoopCounter = 0;
         scan: while (true) {
             const page = (artistId
@@ -383,17 +619,24 @@ export class UpgraderService {
             rowsLoopCounter++;
             await this.maybeYield(rowsLoopCounter);
             if (wrapped && row.file_id > startAfter) break scan;
-            const rowAlbumKey = row.provider && row.album_id
-                ? albumUpgradeKey(normalizeProviderId(row.provider) ?? "", String(row.album_id)) : null;
+
+            const destination = resolveUpgradeDestination(row, resolverContext);
+            const provider = normalizeProviderId(row.provider);
+            const rowAlbumKey = provider && row.album_id && destination.slot
+                ? albumUpgradeKey(provider, String(row.album_id), destination.slot) : null;
             if (unitsUsed() >= budget && !(rowAlbumKey && albumsNeedingUpgrade.has(rowAlbumKey))) {
                 budgetSpent = true;
                 break scan;
             }
             cursor = row.file_id;
 
-            const provider = normalizeProviderId(row.provider);
             if (!provider || !row.media_id) {
                 console.log(`[UPGRADER] Skipping ${row.provider_entity_type} ${row.media_id}: missing provider identity.`);
+                continue;
+            }
+
+            if (!destination.slot) {
+                console.log(`[UPGRADER] Skipping ${row.provider_entity_type} ${row.media_id}: no destination slot could be determined.`);
                 continue;
             }
 
@@ -406,14 +649,39 @@ export class UpgraderService {
                     currentQuality: row.current_quality,
                     extension: row.current_extension,
                 });
+            } else if (destination.slot === "spatial") {
+                if (isSpatialAudioQuality(normalizedCurrentQuality)) {
+                    // Spatial files are managed by curation (include_spatial toggle), not the upgrader.
+                    // When spatial audio is disabled, curation unmonitors the items and
+                    // remove_unmonitored_files handles file deletion.
+                    continue;
+                }
+                if (isSpatialQualityOrOffer(row.source_quality)) {
+                    const targetQual = row.source_quality || "DOLBY_ATMOS";
+                    evaluation = {
+                        needsChange: qualityProfile.allowRedownloads,
+                        direction: "upgrade" as const,
+                        currentQuality: row.current_quality || "UNKNOWN",
+                        targetQuality: targetQual,
+                        qualityCutoffNotMet: true,
+                        reason: `Spatial upgrade: ${row.current_quality || "UNKNOWN"} -> ${targetQual}`,
+                    };
+                } else {
+                    console.log(`[UPGRADER] Skipping ${row.provider_entity_type} ${row.media_id}: spatial file requires a spatial source offer.`);
+                    continue;
+                }
             } else if (isSpatialAudioQuality(normalizedCurrentQuality)) {
-                // Spatial files are managed by curation (include_spatial toggle), not the upgrader.
-                // When spatial audio is disabled, curation unmonitors the items and
-                // remove_unmonitored_files handles file deletion.
-                continue;
-            } else if (row.library_slot === "spatial") {
+                // Spatial files in stereo slot are managed by curation/placement, not upgrader
                 continue;
             } else {
+                if (
+                    isSpatialQualityOrOffer(row.source_quality)
+                    || isSpatialQualityOrOffer(row.album_quality)
+                    || (!row.source_quality && !row.album_quality && (isSpatialQualityOrOffer(row.raw_source_quality) || isSpatialQualityOrOffer(row.raw_album_quality)))
+                ) {
+                    console.log(`[UPGRADER] Skipping ${row.provider_entity_type} ${row.media_id}: stereo file cannot be upgraded with a spatial offer.`);
+                    continue;
+                }
                 evaluation = UpgradableSpecification.evaluateAudioChange({
                     profile: qualityProfile,
                     currentQuality: row.current_quality,
@@ -451,6 +719,10 @@ export class UpgraderService {
                             provider,
                             albumId: row.album_id ? String(row.album_id) : null,
                             action: "downconvert",
+                            slot: destination.slot,
+                            libraryId: destination.libraryId,
+                            acquisitionPlanId: destination.acquisitionPlanId,
+                            libraryRoot: destination.libraryRoot,
                         });
                     } catch (error) {
                         console.error(
@@ -478,6 +750,10 @@ export class UpgraderService {
                     provider,
                     albumId,
                     action: "upgrade",
+                    slot: destination.slot,
+                    libraryId: destination.libraryId,
+                    acquisitionPlanId: destination.acquisitionPlanId,
+                    libraryRoot: destination.libraryRoot,
                 });
 
                 if (row.media_type === 'Music Video') {
@@ -485,8 +761,15 @@ export class UpgraderService {
                     standaloneUnits.add(`${provider}\0${row.media_id}`);
                 } else {
                     result.tracks++;
-                    if (albumId) {
-                        albumsNeedingUpgrade.set(albumUpgradeKey(provider, albumId), { provider, albumId });
+                    if (albumId && (destination.slot === "stereo" || destination.slot === "spatial")) {
+                        albumsNeedingUpgrade.set(albumUpgradeKey(provider, albumId, destination.slot), {
+                            provider,
+                            albumId,
+                            slot: destination.slot,
+                            libraryId: destination.libraryId,
+                            acquisitionPlanId: destination.acquisitionPlanId,
+                            libraryRoot: destination.libraryRoot,
+                        });
                     } else {
                         standaloneUnits.add(`${provider}\0${row.media_id}`);
                     }
@@ -502,43 +785,54 @@ export class UpgraderService {
         const trackMediaIdsQueuedViaAlbum = new Set<string>();
         let albumsLoopCounter = 0;
         let albumTrackTransferLoopCounter = 0;
-        for (const { provider, albumId } of albumsNeedingUpgrade.values()) {
+        for (const target of albumsNeedingUpgrade.values()) {
             albumsLoopCounter++;
             await this.maybeYield(albumsLoopCounter);
+
+            if (!target.slot) {
+                console.log(`[UPGRADER] Skipping album-level upgrade for ${target.provider} album ${target.albumId}: no destination slot could be determined.`);
+                continue;
+            }
 
             const albumTracksToUpgrade = result.details.filter(
                 d => d.type !== 'Music Video'
                     && d.action !== "downconvert"
-                    && d.provider === provider
-                    && d.albumId === albumId
+                    && d.provider === target.provider
+                    && d.albumId === target.albumId
+                    && d.slot === target.slot
             );
 
             // Count tracks for THIS provider only. Never assume TIDAL — a foreign
             // album id with zero TIDAL tracks used to still enqueue DownloadAlbum.
-            const totalAlbumTracks = countProviderAlbumTracks(provider, albumId);
+            const totalAlbumTracks = countProviderAlbumTracks(target.provider, target.albumId);
             if (totalAlbumTracks <= 0) {
-                console.log(`[UPGRADER] Skipping album-level upgrade for ${provider} album ${albumId}: no provider tracks found.`);
+                console.log(`[UPGRADER] Skipping album-level upgrade for ${target.provider} album ${target.albumId}: no provider tracks found.`);
                 continue;
             }
 
             // Only queue as album if a significant portion needs upgrading (≥50% or ≥3 tracks)
             if (albumTracksToUpgrade.length >= 3 || albumTracksToUpgrade.length >= totalAlbumTracks * 0.5) {
-                console.log(`[UPGRADER] Queuing ${provider} album ${albumId} for upgrade (${albumTracksToUpgrade.length}/${totalAlbumTracks} tracks need upgrade)`);
+                console.log(`[UPGRADER] Queuing ${target.provider} album ${target.albumId} (${target.slot}) for upgrade (${albumTracksToUpgrade.length}/${totalAlbumTracks} tracks need upgrade)`);
 
-                updateAlbumDownloadStatus(albumId);
+                updateAlbumDownloadStatus(target.albumId);
 
                 DownloadWaitQueue.enqueue({
-                    refKey: albumId,
+                    refKey: target.albumId,
                     mediaKind: "album",
                     commandName: CommandNames.DownloadAlbum,
-                    provider,
-                    providerId: albumId,
+                    provider: target.provider,
+                    providerId: target.albumId,
+                    slot: target.slot,
                     payload: {
-                        providerId: albumId,
-                        provider,
+                        providerId: target.albumId,
+                        provider: target.provider,
                         type: "album",
                         reason: "upgrade",
-                        url: buildStreamingMediaUrl("album", albumId, provider),
+                        url: buildStreamingMediaUrl("album", target.albumId, target.provider),
+                        slot: target.slot,
+                        ...(target.libraryId ? { libraryId: target.libraryId } : {}),
+                        ...(target.acquisitionPlanId ? { acquisitionPlanId: target.acquisitionPlanId } : {}),
+                        ...(target.libraryRoot ? { libraryRoot: target.libraryRoot } : {}),
                     },
                     priority: -5,
                     position: "back",
@@ -549,7 +843,7 @@ export class UpgraderService {
                 for (const d of albumTracksToUpgrade) {
                     albumTrackTransferLoopCounter++;
                     await this.maybeYield(albumTrackTransferLoopCounter);
-                    trackMediaIdsQueuedViaAlbum.add(`${d.provider}\0${d.mediaId}`);
+                    trackMediaIdsQueuedViaAlbum.add(`${d.provider}\0${d.mediaId}\0${d.slot}`);
                 }
             }
         }
@@ -561,12 +855,18 @@ export class UpgraderService {
             await this.maybeYield(detailsLoopCounter);
 
             if (d.action === "downconvert") continue;
-            if (trackMediaIdsQueuedViaAlbum.has(`${d.provider}\0${d.mediaId}`)) continue;
+            if (trackMediaIdsQueuedViaAlbum.has(`${d.provider}\0${d.mediaId}\0${d.slot}`)) continue;
 
             const isVideo = d.type === 'Music Video';
             const jobType = isVideo ? CommandNames.DownloadVideo : CommandNames.DownloadTrack;
             const mediaType = isVideo ? "video" : "track";
-            console.log(`[UPGRADER] Queuing ${jobType} upgrade for ${d.provider}:${d.mediaId}: ${d.reason}`);
+
+            if (!d.slot) {
+                console.log(`[UPGRADER] Skipping ${jobType} upgrade for ${d.provider}:${d.mediaId}: no destination slot could be determined.`);
+                continue;
+            }
+
+            console.log(`[UPGRADER] Queuing ${jobType} upgrade for ${d.provider}:${d.mediaId} (${d.slot}): ${d.reason}`);
 
             DownloadWaitQueue.enqueue({
                 refKey: d.mediaId,
@@ -574,12 +874,17 @@ export class UpgraderService {
                 commandName: jobType,
                 provider: d.provider,
                 providerId: d.mediaId,
+                slot: d.slot,
                 payload: {
                     providerId: d.mediaId,
                     provider: d.provider,
                     type: mediaType,
                     reason: "upgrade",
                     url: buildStreamingMediaUrl(mediaType, d.mediaId, d.provider),
+                    slot: d.slot,
+                    ...(d.libraryId ? { libraryId: d.libraryId } : {}),
+                    ...(d.acquisitionPlanId ? { acquisitionPlanId: d.acquisitionPlanId } : {}),
+                    ...(d.libraryRoot ? { libraryRoot: d.libraryRoot } : {}),
                 },
                 priority: -5,
                 position: "back",

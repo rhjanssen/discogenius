@@ -274,3 +274,154 @@ test("an import completes while a retag of another album runs", async () => {
   await assertImported(SECOND, "Second Album (Retitled)");
   await assertImported(THIRD);
 });
+
+test("a track upgrade import with explicit slot succeeds end to end and replaces the library file", async () => {
+  const originalFile = dbModule.db.prepare(
+    "SELECT id, file_path, canonical_track_mbid FROM TrackFiles WHERE canonical_track_mbid = 'track-first-1'",
+  ).get() as { id: number; file_path: string; canonical_track_mbid: string };
+  assert.ok(originalFile, "firsttrack1 was not imported during test 1");
+
+  const staging = path.join(downloadRoot, "tracks", "tidal", "firsttrack1");
+  fs.mkdirSync(staging, { recursive: true });
+  const stagedFile = path.join(staging, "firsttrack1.flac");
+  run("ffmpeg", [
+    "-v", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=0.3",
+    "-metadata", "title=First Album Song 1 (Remastered)",
+    "-c:a", "flac",
+    stagedFile,
+  ]);
+
+  const organizerService = (await import("./organizer.js")).OrganizerService;
+  const originalFetch = (organizerService as any).fetchProviderTrack;
+  (organizerService as any).fetchProviderTrack = async () => ({
+    id: "firsttrack1",
+    title: "First Album Song 1",
+    album_id: FIRST.providerId,
+  });
+
+  try {
+    const upgradeJobId = queueModule.CommandQueueManager.push(queueModule.CommandNames.DownloadTrack, {
+      providerId: "firsttrack1",
+      provider: "tidal",
+      type: "track",
+      slot: "stereo",
+      reason: "upgrade",
+    } as any);
+
+    const upgradeJob = {
+      id: upgradeJobId,
+      name: queueModule.CommandNames.ImportDownload,
+      payload: {
+        type: "track",
+        providerId: "firsttrack1",
+        provider: "tidal",
+        path: staging,
+        slot: "stereo",
+        libraryId: stereoLibraryId(),
+        reason: "upgrade",
+      },
+      status: "started",
+      progress: 0,
+      priority: 0,
+      attempts: 0,
+      created_at: new Date().toISOString(),
+    } as any;
+
+    const states: Array<{ state?: string }> = [];
+    await importModule.DownloadedTracksImportService.process(upgradeJob, {
+      updateState: (state) => states.push(state),
+    });
+
+    assert.equal(
+      states.some((state) => state.state === "failed" || state.state === "importFailed"),
+      false,
+      JSON.stringify(states.filter((state) => state.state === "failed" || state.state === "importFailed")),
+    );
+    assert.equal(fs.existsSync(stagedFile), false, "staged track was not moved into the library");
+
+    const updatedFile = dbModule.db.prepare(
+      "SELECT id, file_path, canonical_track_mbid, library_slot FROM TrackFiles WHERE canonical_track_mbid = 'track-first-1'",
+    ).get() as { id: number; file_path: string; canonical_track_mbid: string; library_slot: string };
+    assert.ok(updatedFile, "updated track file missing in database");
+    assert.equal(updatedFile.library_slot, "stereo");
+    assert.equal(fs.existsSync(updatedFile.file_path), true, "updated file missing on disk");
+  } finally {
+    (organizerService as any).fetchProviderTrack = originalFetch;
+  }
+});
+
+test("a track upgrade import falls back to existing TrackFile slot when slot is omitted in payload", async () => {
+  const originalFile = dbModule.db.prepare(
+    "SELECT id, file_path, canonical_track_mbid, library_slot FROM TrackFiles WHERE canonical_track_mbid = 'track-first-2'",
+  ).get() as { id: number; file_path: string; canonical_track_mbid: string; library_slot: string };
+  assert.ok(originalFile, "firsttrack2 was not imported during test 1");
+  assert.equal(originalFile.library_slot, "stereo");
+
+  const staging = path.join(downloadRoot, "tracks", "tidal", "firsttrack2");
+  fs.mkdirSync(staging, { recursive: true });
+  const stagedFile = path.join(staging, "firsttrack2.flac");
+  run("ffmpeg", [
+    "-v", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=960:sample_rate=48000:duration=0.3",
+    "-metadata", "title=First Album Song 2 (Upgraded)",
+    "-c:a", "flac",
+    stagedFile,
+  ]);
+
+  const organizerService = (await import("./organizer.js")).OrganizerService;
+  const originalFetch = (organizerService as any).fetchProviderTrack;
+  (organizerService as any).fetchProviderTrack = async () => ({
+    id: "firsttrack2",
+    title: "First Album Song 2",
+    album_id: FIRST.providerId,
+  });
+
+  try {
+    const fallbackJobId = queueModule.CommandQueueManager.push(queueModule.CommandNames.DownloadTrack, {
+      providerId: "firsttrack2",
+      provider: "tidal",
+      type: "track",
+      reason: "upgrade",
+    } as any);
+
+    // Intentionally omit slot to verify fallback from existing TrackFile row
+    const fallbackJob = {
+      id: fallbackJobId,
+      name: queueModule.CommandNames.ImportDownload,
+      payload: {
+        type: "track",
+        providerId: "firsttrack2",
+        provider: "tidal",
+        path: staging,
+        reason: "upgrade",
+      },
+      status: "started",
+      progress: 0,
+      priority: 0,
+      attempts: 0,
+      created_at: new Date().toISOString(),
+    } as any;
+
+    const states: Array<{ state?: string }> = [];
+    await importModule.DownloadedTracksImportService.process(fallbackJob, {
+      updateState: (state) => states.push(state),
+    });
+
+    assert.equal(
+      states.some((state) => state.state === "failed" || state.state === "importFailed"),
+      false,
+      JSON.stringify(states.filter((state) => state.state === "failed" || state.state === "importFailed")),
+    );
+    assert.equal(fs.existsSync(stagedFile), false, "staged track was not moved into the library");
+
+    const updatedFile = dbModule.db.prepare(
+      "SELECT id, file_path, canonical_track_mbid, library_slot FROM TrackFiles WHERE canonical_track_mbid = 'track-first-2'",
+    ).get() as { id: number; file_path: string; canonical_track_mbid: string; library_slot: string };
+    assert.ok(updatedFile, "updated track file missing in database");
+    assert.equal(updatedFile.library_slot, "stereo");
+    assert.equal(fs.existsSync(updatedFile.file_path), true, "updated file missing on disk");
+  } finally {
+    (organizerService as any).fetchProviderTrack = originalFetch;
+  }
+});
