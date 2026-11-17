@@ -16,6 +16,49 @@ import {
 import { LibraryFilesService } from "./library-files.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
+import { readIntEnv } from "../../utils/env.js";
+
+/**
+ * Lyrics are optional extras. One track's lookup (the provider call plus the
+ * walk over related recordings) gets this long; a whole album gets the
+ * budget. Past either limit the track is filed without fetched lyrics and the
+ * lyrics refresh can fill it in later, so a slow lyrics service can never
+ * hold a download slot until the stalled-progress watchdog fires.
+ */
+export const LYRICS_LOOKUP_TIMEOUT_MS = readIntEnv("DISCOGENIUS_LYRICS_LOOKUP_TIMEOUT_MS", 20_000, 1);
+export const LYRICS_ALBUM_BUDGET_MS = readIntEnv("DISCOGENIUS_LYRICS_ALBUM_BUDGET_MS", 5 * 60_000, 1);
+
+export type LyricsLookupLimits = {
+  /** Upper bound for one track's lookup. */
+  lookupTimeoutMs?: number;
+  /** Upper bound for every lookup of one prefetch or import together. */
+  budgetMs?: number;
+};
+
+const LOOKUP_TIMED_OUT = Symbol("lyrics-lookup-timed-out");
+
+/** Resolve to the lookup, or LOOKUP_TIMED_OUT once `ms` passes (ms <= 0 means "already late"). */
+async function lyricsWithin<T>(lookup: () => Promise<T>, ms: number): Promise<T | typeof LOOKUP_TIMED_OUT> {
+  if (ms <= 0) return LOOKUP_TIMED_OUT;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<typeof LOOKUP_TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(LOOKUP_TIMED_OUT), ms);
+  });
+  try {
+    const pending = lookup();
+    // A lookup that loses the race keeps running; never let it reject unhandled.
+    pending.catch(() => undefined);
+    return await Promise.race([pending, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function lookupLimits(limits?: LyricsLookupLimits): { lookupTimeoutMs: number; deadline: number } {
+  const lookupTimeoutMs = Math.max(1, limits?.lookupTimeoutMs ?? LYRICS_LOOKUP_TIMEOUT_MS);
+  const budgetMs = Math.max(1, limits?.budgetMs ?? LYRICS_ALBUM_BUDGET_MS);
+  return { lookupTimeoutMs, deadline: Date.now() + budgetMs };
+}
 
 type TrackLyricsRow = {
   id: number;
@@ -206,6 +249,7 @@ export class TrackLyricsMaterializer {
     requestedProvider?: string | null,
     prefetched?: Record<string, ResolvedLyrics | null>,
     onFileStart?: (index: number, total: number) => void,
+    limits?: LyricsLookupLimits,
   ): Promise<TrackLyricsMaterializeResult> {
     const metadata = getConfigSection("metadata");
     const quality = getConfigSection("quality");
@@ -217,7 +261,7 @@ export class TrackLyricsMaterializer {
         missing: 0,
       };
     }
-    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider, prefetched, onFileStart);
+    return this.materializeRows(trackRowsForFileIds(fileIds), requestedProvider, prefetched, onFileStart, limits);
   }
 
   private static async materializeRows(
@@ -225,6 +269,7 @@ export class TrackLyricsMaterializer {
     requestedProvider?: string | null,
     prefetched?: Record<string, ResolvedLyrics | null>,
     onFileStart?: (index: number, total: number) => void,
+    limits?: LyricsLookupLimits,
   ): Promise<TrackLyricsMaterializeResult> {
     const result: TrackLyricsMaterializeResult = {
       lyricsByProviderMedia: new Map(),
@@ -236,6 +281,19 @@ export class TrackLyricsMaterializer {
 
     const metadata = getConfigSection("metadata");
     const resolutionPromises = new Map<string, Promise<ResolvedLyrics | null>>();
+    const { lookupTimeoutMs, deadline } = lookupLimits(limits);
+    let timedOutLookups = 0;
+    const boundedLookup = async (providerId: string, provider: string): Promise<ResolvedLyrics | null> => {
+      const found = await lyricsWithin(
+        () => getLyricsForProviderMedia(providerId, provider),
+        Math.min(lookupTimeoutMs, deadline - Date.now()),
+      );
+      if (found === LOOKUP_TIMED_OUT) {
+        timedOutLookups += 1;
+        return null;
+      }
+      return found;
+    };
 
     const resolveRow = async (row: TrackLyricsRow): Promise<void> => {
       const provider = String(row.provider || requestedProvider || "").trim();
@@ -267,7 +325,7 @@ export class TrackLyricsMaterializer {
           ? Promise.resolve(existingSidecar?.lyrics ?? null)
           : (prefetched && Object.hasOwn(prefetched, key)
             ? Promise.resolve(prefetched[key] ?? null)
-            : getLyricsForProviderMedia(providerId, provider))
+            : boundedLookup(providerId, provider))
             .then((apiLyrics) => apiLyrics || existingSidecar?.lyrics || null)
         ).catch((error) => {
           console.warn(`[Lyrics] Failed to resolve ${provider} track ${providerId}:`, error);
@@ -353,6 +411,12 @@ export class TrackLyricsMaterializer {
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, rows.length) }, () => worker()));
+    if (timedOutLookups > 0) {
+      console.warn(
+        `[Lyrics] ${timedOutLookups} lyrics lookup(s) did not answer in time; ` +
+        "those tracks keep any lyrics already on disk and the lyrics refresh can fill them in later",
+      );
+    }
     return result;
   }
 }
@@ -396,14 +460,17 @@ export function trackIdsWithDeliveredSyncedLyrics(downloadPath: string | null | 
  * Fetch provider lyrics for the given provider track ids without touching the
  * library. Download completion calls this so the disk-exclusive import slot
  * never waits on lyric APIs. Failures resolve to "not prefetched" (absent key),
- * so the import falls back to its normal lookup. Tracks whose downloader
- * already delivered synchronized lyrics are skipped.
+ * so the import falls back to its normal (also time-bounded) lookup. Tracks
+ * whose downloader already delivered synchronized lyrics are skipped. Each
+ * lookup and the whole prefetch are time-bounded; a lookup that runs out of
+ * time is recorded as "no lyrics" for this import.
  */
 export async function prefetchProviderLyrics(
   provider: string,
   providerTrackIds: string[],
   concurrency = 4,
   downloadPath?: string | null,
+  limits?: LyricsLookupLimits & { onLookup?: (done: number, total: number) => void },
 ): Promise<Record<string, ResolvedLyrics | null>> {
   const metadata = getConfigSection("metadata");
   const quality = getConfigSection("quality");
@@ -412,17 +479,44 @@ export async function prefetchProviderLyrics(
   const delivered = trackIdsWithDeliveredSyncedLyrics(downloadPath, providerTrackIds);
   const ids = Array.from(new Set(providerTrackIds.map((id) => String(id).trim()).filter(Boolean)))
     .filter((id) => !delivered.has(id));
+  const { lookupTimeoutMs, deadline } = lookupLimits(limits);
   let next = 0;
+  let done = 0;
+  let timedOut = 0;
   const worker = async () => {
     while (next < ids.length) {
       const id = ids[next++];
+      const key = providerMediaLyricsKey(provider, id);
+      let found: ResolvedLyrics | null | typeof LOOKUP_TIMED_OUT;
       try {
-        out[providerMediaLyricsKey(provider, id)] = await getLyricsForProviderMedia(id, provider);
+        found = await lyricsWithin(
+          () => getLyricsForProviderMedia(id, provider),
+          Math.min(lookupTimeoutMs, deadline - Date.now()),
+        );
       } catch {
         /* leave absent: import retries the lookup itself */
+        done += 1;
+        limits?.onLookup?.(done, ids.length);
+        continue;
       }
+      if (found === LOOKUP_TIMED_OUT) {
+        timedOut += 1;
+        // Recorded as "no lyrics" for this import so the import slot does
+        // not repeat a lookup that already ran out of time here.
+        out[key] = null;
+      } else {
+        out[key] = found;
+      }
+      done += 1;
+      limits?.onLookup?.(done, ids.length);
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));
+  if (timedOut > 0) {
+    console.warn(
+      `[Lyrics] Prefetch: ${timedOut}/${ids.length} ${provider} lyrics lookup(s) did not answer in time; ` +
+      "filing the album without them (the lyrics refresh can add them later)",
+    );
+  }
   return out;
 }

@@ -187,3 +187,31 @@ test("a token tiddl refreshed by itself is adopted, a foreign or older one is no
     assert.equal(readToken().refresh_token, "r");
   });
 });
+
+// #135: the lyrics endpoint gets one bounded attempt, not the catalogue's 45 s x 3 retries.
+test("a hanging TIDAL lyrics request is aborted by its own timeout and not retried", async () => {
+  resetTidalRefreshBackoffForTests();
+  writeToken({ access_token: "valid", refresh_token: "r", expires_at: future(), refreshed_at: Date.now() - 2 * 3600_000 });
+  let lyricsCalls = 0;
+  let sawSignal = false;
+  await withFetch((url, init) => {
+    const session = sessionResponse(url);
+    if (session) return session;
+    lyricsCalls += 1;
+    sawSignal = init?.signal instanceof AbortSignal;
+    // Simulate an aborted request immediately instead of waiting the real timeout.
+    const error = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    Object.defineProperty(init!.signal!, "aborted", { value: true });
+    return Promise.reject(error);
+  }, async () => {
+    const warn = console.warn;
+    console.warn = () => undefined;
+    try {
+      await assert.rejects(new TidalProvider().getLyrics("42"));
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(sawSignal, true, "lyrics requests carry their own abort signal");
+    assert.equal(lyricsCalls, 1, "a timed-out lyrics request is not retried");
+  });
+});

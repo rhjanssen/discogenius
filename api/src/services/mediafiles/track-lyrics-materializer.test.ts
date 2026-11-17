@@ -241,3 +241,128 @@ test("an unsynced tiddl sidecar does not hide catalogue timed lyrics", async () 
     tidal.getLyrics = originalGetLyrics;
   }
 });
+
+// #135: a lyrics backend that never answers must not hold an album import.
+test("prefetch gives up on a lyrics service that never answers and records no lyrics", { timeout: 10_000 }, async () => {
+  for (const id of ["hang-track-1", "hang-track-2", "hang-track-3"]) {
+    dbModule.db.prepare(`
+      INSERT INTO ProviderItems(provider, entity_type, provider_id, title, duration_ms)
+      VALUES ('tidal', 'track', ?, ?, 180)
+    `).run(id, `Hanging ${id}`);
+  }
+  const providersModule = await import("../providers/index.js");
+  const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;
+  const originalGetLyrics = tidal.getLyrics;
+  let calls = 0;
+  tidal.getLyrics = () => {
+    calls += 1;
+    return new Promise(() => undefined);
+  };
+  const warn = console.warn;
+  console.warn = () => undefined;
+  try {
+    const startedAt = Date.now();
+    const prefetched = await materializerModule.prefetchProviderLyrics(
+      "tidal",
+      ["hang-track-1", "hang-track-2", "hang-track-3"],
+      2,
+      null,
+      { lookupTimeoutMs: 50, budgetMs: 1_000 },
+    );
+    assert.ok(Date.now() - startedAt < 2_000, "prefetch must finish within its budget");
+    assert.ok(calls >= 1);
+    for (const id of ["hang-track-1", "hang-track-2", "hang-track-3"]) {
+      const key = materializerModule.providerMediaLyricsKey("tidal", id);
+      assert.ok(Object.hasOwn(prefetched, key), `${id} is recorded so the import does not look it up again`);
+      assert.equal(prefetched[key], null);
+    }
+  } finally {
+    tidal.getLyrics = originalGetLyrics;
+    console.warn = warn;
+  }
+});
+
+test("prefetch stops starting lookups once the album budget is spent", { timeout: 10_000 }, async () => {
+  const ids = Array.from({ length: 20 }, (_, index) => `budget-track-${index}`);
+  for (const id of ids) {
+    dbModule.db.prepare(`
+      INSERT INTO ProviderItems(provider, entity_type, provider_id, title, duration_ms)
+      VALUES ('tidal', 'track', ?, ?, 180)
+    `).run(id, `Budget ${id}`);
+  }
+  const providersModule = await import("../providers/index.js");
+  const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;
+  const originalGetLyrics = tidal.getLyrics;
+  let calls = 0;
+  tidal.getLyrics = () => {
+    calls += 1;
+    return new Promise(() => undefined);
+  };
+  const warn = console.warn;
+  console.warn = () => undefined;
+  try {
+    const startedAt = Date.now();
+    const prefetched = await materializerModule.prefetchProviderLyrics("tidal", ids, 1, null, {
+      lookupTimeoutMs: 100,
+      budgetMs: 250,
+    });
+    const elapsed = Date.now() - startedAt;
+    assert.ok(elapsed < 1_000, `20 hanging lookups must be cut off by the 250 ms budget (took ${elapsed} ms)`);
+    assert.ok(calls < ids.length, "lookups after the budget is spent are not started");
+    assert.equal(Object.keys(prefetched).length, ids.length);
+  } finally {
+    tidal.getLyrics = originalGetLyrics;
+    console.warn = warn;
+  }
+});
+
+test("import keeps the sidecar on disk when the lyrics lookup never answers", { timeout: 10_000 }, async () => {
+  const artist = dbModule.db.prepare("INSERT INTO ArtistMetadata(id, mbid, name) VALUES(?, ?, ?) RETURNING id")
+    .get(103, "artist-mbid-103", "Bakermat") as { id: number };
+  const albumDir = path.join(tempDir, "Bakermat", "Vandaag");
+  fs.mkdirSync(albumDir, { recursive: true });
+  const trackPath = path.join(albumDir, "01 - Vandaag.flac");
+  const textPath = path.join(albumDir, "01 - Vandaag.txt");
+  fs.writeFileSync(trackPath, "fixture audio", "utf8");
+  fs.writeFileSync(textPath, "Unsynced lyric already on disk\n", "utf8");
+  const inserted = dbModule.db.prepare(`
+    INSERT INTO TrackFiles(
+      artist_metadata_id, library_id,
+      canonical_artist_mbid, canonical_release_group_mbid, canonical_release_mbid,
+      canonical_track_mbid, canonical_recording_mbid,
+      provider, provider_entity_type, provider_id, library_slot,
+      file_path, relative_path, library_root, filename, extension,
+      file_type, quality
+    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'track', ?, 'stereo', ?, ?, ?, ?, 'flac', 'track', 'LOSSLESS')
+  `).run(
+    artist.id, lyricsLibraryId, "artist-mbid-103", "release-group-mbid-203", "release-mbid-203",
+    "track-mbid-303", "recording-mbid-303", "tidal", "provider-track-303",
+    trackPath, path.relative(tempDir, trackPath), tempDir, path.basename(trackPath),
+  );
+  dbModule.db.prepare(`
+    INSERT INTO ProviderItems(provider, entity_type, provider_id, title, duration_ms)
+    VALUES ('tidal', 'track', ?, ?, 180)
+  `).run("provider-track-303", "Vandaag");
+
+  const providersModule = await import("../providers/index.js");
+  const tidal = providersModule.streamingProviderManager.getStreamingProvider("tidal") as any;
+  const originalGetLyrics = tidal.getLyrics;
+  tidal.getLyrics = () => new Promise(() => undefined);
+  const warn = console.warn;
+  console.warn = () => undefined;
+  try {
+    const result = await materializerModule.TrackLyricsMaterializer.materializeForFileIds(
+      [Number(inserted.lastInsertRowid)],
+      null,
+      undefined,
+      undefined,
+      { lookupTimeoutMs: 50, budgetMs: 1_000 },
+    );
+    const key = materializerModule.providerMediaLyricsKey("tidal", "provider-track-303");
+    assert.equal(result.discovered, 1);
+    assert.equal(result.lyricsByProviderMedia.get(key)?.text, "Unsynced lyric already on disk");
+  } finally {
+    tidal.getLyrics = originalGetLyrics;
+    console.warn = warn;
+  }
+});

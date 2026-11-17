@@ -31,6 +31,9 @@ import { syncStoredTidalTokenToDownloaders } from "./tidal-auth.js";
 import { ProviderAuthError } from "../provider-auth-error.js";
 import { providerNeedsReauth } from "../provider-auth-state.js";
 
+/** Per-request cap for the TIDAL lyrics endpoint (see #135). */
+export const TIDAL_LYRICS_REQUEST_TIMEOUT_MS = 10_000;
+
 export type TidalAlbumDownloadTrackInfo = {
   title: string;
   version?: string | null;
@@ -378,7 +381,11 @@ export class TidalProvider implements StreamingProvider {
   async getLyrics(trackId: string | number): Promise<ProviderLyrics | null> {
     try {
       const cc = tidal.getCountryCode();
-      const data = await tidal.tidalApiRequest(`/tracks/${trackId}/lyrics?countryCode=${cc}`) as any;
+      // Lyrics are optional: one bounded attempt instead of the catalogue's
+      // 45 s x 3 retries, so a slow lyrics backend cannot stall an import.
+      const data = await tidal.tidalApiRequest(`/tracks/${trackId}/lyrics?countryCode=${cc}`, {
+        signal: AbortSignal.timeout(TIDAL_LYRICS_REQUEST_TIMEOUT_MS),
+      }) as any;
       return {
         text: data?.lyrics || "",
         subtitles: data?.subtitles || "",
