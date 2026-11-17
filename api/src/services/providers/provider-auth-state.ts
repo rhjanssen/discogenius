@@ -75,8 +75,20 @@ const COPY: Record<string, Omit<ProviderAuthCopy, "provider">> = {
   },
 };
 
-export function providerAuthCopy(provider: string): ProviderAuthCopy {
+export function providerAuthCopy(provider: string, lastError?: string | null): ProviderAuthCopy {
   const id = normalizeProviderId(provider);
+  if (id === "apple-music") {
+    if (lastError && /stuck|restart the wrapper container/i.test(lastError)) {
+      return {
+        provider: id,
+        banner: "Apple decryption server is stuck; restart the wrapper container",
+        queueMessage: "Waiting for Apple Music wrapper restart",
+        href: "/auth?provider=apple-music",
+        settingsLabel: "Apple Music",
+      };
+    }
+    return { provider: id, ...COPY["apple-music"] };
+  }
   const known = COPY[id];
   if (known) return { provider: id, ...known };
   const label = id || "provider";
@@ -89,12 +101,12 @@ export function providerAuthCopy(provider: string): ProviderAuthCopy {
   };
 }
 
-export function queueHoldMessage(provider: string): string {
-  return providerAuthCopy(provider).queueMessage;
+export function queueHoldMessage(provider: string, lastError?: string | null): string {
+  return providerAuthCopy(provider, lastError).queueMessage;
 }
 
-export function authHoldRecord(provider: string): { provider: string; message: string } {
-  const copy = providerAuthCopy(provider);
+export function authHoldRecord(provider: string, lastError?: string | null): { provider: string; message: string } {
+  const copy = providerAuthCopy(provider, lastError);
   return { provider: copy.provider, message: copy.queueMessage };
 }
 
@@ -215,7 +227,7 @@ function clearHeld(provider: string): void {
 }
 
 function emitTransition(row: ProviderAuthRow): void {
-  const copy = row.status === "needs_reauth" ? providerAuthCopy(row.provider) : null;
+  const copy = row.status === "needs_reauth" ? providerAuthCopy(row.provider, row.last_error) : null;
   appEvents.emit(AppEvent.PROVIDER_AUTH_CHANGED, {
     provider: row.provider,
     status: row.status,
@@ -257,22 +269,28 @@ function persistRow(row: ProviderAuthRow): void {
   );
 }
 
-export async function recordProviderAuthFailure(provider: string, message: string): Promise<ProviderAuthTransition> {
+export async function recordProviderAuthFailure(
+  provider: string,
+  message: string,
+  options: { force?: boolean } = {},
+): Promise<ProviderAuthTransition> {
   const id = normalizeProviderId(provider);
   if (!id || !authTableReady()) return { provider: id, status: "unknown", transitioned: false, persisted: false };
   const current = readRow(id);
-  // Already held. A second refresh failure must not write or notify again.
-  if (current?.status === "needs_reauth") {
+  const truncatedMessage = message.slice(0, 500);
+  const messageChanged = current?.last_error !== truncatedMessage;
+  // Already held. A second refresh failure must not write or notify again unless forced or message changed to a stuck message.
+  if (current?.status === "needs_reauth" && !options.force && (!messageChanged || !/stuck/i.test(message))) {
     return { provider: id, status: "needs_reauth", transitioned: false, persisted: false };
   }
   const now = isoNow();
-  const copy = providerAuthCopy(id);
+  const copy = providerAuthCopy(id, truncatedMessage);
   const row: ProviderAuthRow = {
     provider: id,
     status: "needs_reauth",
     last_ok_at: current?.last_ok_at ?? null,
-    last_error: message.slice(0, 500),
-    since: now,
+    last_error: truncatedMessage,
+    since: current?.since ?? now,
     notified_status: "needs_reauth",
     account_label: current?.account_label ?? null,
     credential_saved_at: current?.credential_saved_at ?? null,
@@ -287,7 +305,7 @@ export async function recordProviderAuthFailure(provider: string, message: strin
     write();
   }, "provider-auth:needs-reauth");
   emitTransition(row);
-  return { provider: id, status: "needs_reauth", transitioned: true, persisted: true };
+  return { provider: id, status: "needs_reauth", transitioned: current?.status !== "needs_reauth", persisted: true };
 }
 
 export interface RecordProviderAuthOkOptions {
@@ -356,7 +374,7 @@ export function toPublicProviderAuth(row: ProviderAuthRow, now = Date.now()): Pr
   const ageWarning = row.provider === "deezer" && days != null && days >= ARL_WARN_AFTER_DAYS
     ? `Deze ARL is ${days} dagen oud. Plak een nieuwe voor hij verloopt.`
     : null;
-  const copy = row.status === "needs_reauth" ? providerAuthCopy(row.provider) : null;
+  const copy = row.status === "needs_reauth" ? providerAuthCopy(row.provider, row.last_error) : null;
   return {
     provider: row.provider,
     status: row.status,

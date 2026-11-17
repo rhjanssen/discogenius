@@ -1,17 +1,29 @@
 # Session Handoff
 
-- **Branch**: `main` (clean; all feature branches merged and deleted)
+- **Branch**: `agent/issue-133`
 - **What is done**:
-  - **PR #126 (`#77`)**: Queue API performance (keyset cursor pagination, persistent read-only `worker_threads` worker, O(1) `queuePosition`, 10s remote hydration timeout on album reads).
-  - **PR #127 (`#79`)**: Servarr/MusicBrainz locale alias lookup, `{Artist Original Name}` / `{Artist Locale Name}` / `{Artist Alias}` naming tokens, `TitleTokenRegex` fix.
-  - **PR #128 (`#116`)**: AcoustID rate-limited verification (`<= 3 req/s` + 429 retry) on manual & folder auto-imports, merged recording redirect lookup, `force` override on `POST /api/unmapped/canonical-import`.
-  - **PR #129 (`#114`)**: Housekeeping stray-file cleanup (`.lrc/.srt/.vtt`, aged temp/part files, empty folders, unowned audio) and stereo/Atmos placement enforcement (`runHousekeepingStrayAndPlacement`).
-  - **PR #130 (`#115`)**: Two-way disk vs DB reconciliation (`reconcileDiskAndDatabase`), case-insensitive root comparison, stereo/Atmos placement validation (`isTrackFilePlacementValid`), and `/api/health` / `/api/v1/system/status` `reconciliation` diagnostics.
-  - **PR #131 (`#78`)**: Plex & Jellyfin integration (`media_servers` config with redacted secrets, targeted folder scans after import/rename/retag, `POST /api/v1/media-servers/reconcile` dry-run & apply with MBID merge/fix-match/refresh).
-  - **PR #132**: Audit Round 2 cleanup (`command-queue-manager.ts` empty/whitespace provider string guard in rate-limit backoff check).
-- **Open issues / PRs**: None (`0` open issues, `0` open PRs on `rhjanssen/discogenius`).
-- **What was NOT verified on LAN**:
-  - Cloud VM cannot reach the LAN (`192.168.1.50` / `192.168.1.100` / running container). Live-server smoke testing with real provider tokens, Plex/Jellyfin instances, and Bastille/Bakermat remains for the LAN session / user.
-- **Open design items for PO**:
-  - Edition selection UX improvement (Lidarr-style modal supporting multi-edition selection and source selection on album page).
-  - Audit Round 2 follow-up notes: `artist-statistics-service.ts:448` (`Libraries ORDER BY id LIMIT 1` fallback when `LibraryArtists` has no row) and `album-query-service.ts:589` (`LIKE` search inside `listAlbumsFromMembership`).
+  - **Issue #133**: Resolved Apple wrapper restart orphaned process issue and download hold hang (`https://github.com/rhjanssen/discogenius/issues/133`).
+    - **Supervisor Entrypoint v11** (`WRAPPER_ENTRYPOINT_SCRIPT`):
+      * Starts `./wrapper` under `setsid` in its own process group (`PGID == PID`).
+      * Added `ports_bound()` check via `/proc/net/tcp` and `/dev/tcp`.
+      * Added `stop_server()` which kills the whole process group (`kill -TERM -$SERVER_PID`, `kill -9 -$SERVER_PID`, `kill -9 $SERVER_PID`, `wait $SERVER_PID`, and `pkill -9 -f "wrapper.*-M 20020"` fallback) and waits up to 10s until ports 10020/20020 are completely unbound.
+      * In `start_server()`, probes port 10020 every 1s for up to 15s to verify it accepts connections before declaring readiness. If verification fails, kills the process group and retries respecting the 120s / 5-restart crash-loop window.
+      * Applied clean stop across startup, restart-file request, died/restart supervisor loop, and login paths.
+      * Bumped `WRAPPER_ENTRYPOINT_VERSION` to `discogenius-wrapper-entrypoint v11` so existing installs receive the updated supervisor script.
+    - **Exponential Backoff Re-probing & Escalation**:
+      * Added `calculateWrapperRestartBackoffMs` (5m -> 10m -> 15m capped) for periodic re-probing while held for an unreachable wrapper with an active session.
+      * Re-requests `restart_server.txt` on re-probe failure and resets state upon wrapper recovery.
+    - **Banner & Health Diagnostics**:
+      * When session marker exists but wrapper ports stay dead after restart attempts, banner and health status report `"Apple decryption server is stuck; restart the wrapper container"` instead of suggesting re-authentication.
+      * Updated `recordProviderAuthFailure` and `providerAuthCopy` to display the stuck message and prevent misleading re-auth guidance.
+    - **Automated Tests**:
+      * Unit tests in `apple-music-hold-probe.test.ts` for backoff calculation, session checks, escalation, stuck message recording, and recovery.
+      * Shell-level / Docker tests in `apple-music-wrapper-restart.test.ts` verifying v11 script contents and in-container verification that restart requests cleanly terminate child processes and leave port 10020 answering with 0 orphaned processes.
+  - **Verification**:
+    - Full `yarn ci` passed (eslint 0 errors, api & app typecheck, 100% passing api & app unit tests, clean production builds).
+- **What is half-done**:
+  - None. All acceptance criteria for Issue #133 are met.
+- **What was verified against running container**:
+  - Live Docker shell-level test verified container startup with v11 entrypoint, verified parent/child process structure, simulated restart via `restart_server.txt`, verified all previous processes were terminated without orphans, and verified port 10020 answers immediately after restart.
+- **Open questions for PO**:
+  - None. PR ready for review and merge.

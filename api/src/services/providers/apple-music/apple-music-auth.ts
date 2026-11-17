@@ -3,7 +3,7 @@ import net from "node:net";
 import path from "path";
 import { CONFIG_DIR, Config } from "../../config/config.js";
 import { configuredVideoMaxHeight } from "../provider-quality.js";
-import { providerNeedsReauth, recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
+import { providerNeedsReauth, recordProviderAuthFailure, recordProviderAuthOk, readProviderAuthPublic, type ProviderAuthPublic } from "../provider-auth-state.js";
 
 /**
  * Apple Music auth (tiddl-style credential handoff).
@@ -300,8 +300,8 @@ let loginStatus: "idle" | "logging_in" | "waiting_for_2fa" | "success" | "failed
 let loginMessage = "";
 
 // Bump the marker when the script changes so existing installs pick up fixes.
-const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v10";
-const WRAPPER_ENTRYPOINT_SCRIPT = `#!/bin/bash
+export const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v11";
+export const WRAPPER_ENTRYPOINT_SCRIPT = `#!/bin/bash
 # ${WRAPPER_ENTRYPOINT_VERSION} — managed by Discogenius, manual edits are overwritten.
 # Supervises the Apple Music decryption wrapper: serves decryption on ports
 # 10020/20020 and performs a login handshake whenever the Discogenius UI drops
@@ -328,15 +328,84 @@ write_status() {
     mv -f "$STATUS_FILE.tmp" "$STATUS_FILE"
 }
 
-start_server() {
-    if [ -n "$SERVER_PID" ]; then
-        kill "$SERVER_PID" 2>/dev/null
-        wait "$SERVER_PID" 2>/dev/null
+ports_bound() {
+    if awk '$2 ~ /:(2724|4E34)$/ { found=1; exit 0 } END { if (!found) exit 1 }' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+        return 0
     fi
+    if timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10020 && exec 3>&-' 2>/dev/null; then
+        return 0
+    fi
+    if timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/20020 && exec 3>&-' 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+stop_server() {
+    if [ -n "$SERVER_PID" ]; then
+        kill -TERM "-$SERVER_PID" 2>/dev/null || true
+        kill -9 "-$SERVER_PID" 2>/dev/null || true
+        kill -9 "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+        SERVER_PID=""
+    fi
+    pkill -9 -f "wrapper.*-M 20020" 2>/dev/null || true
+    local waited=0
+    while ports_bound && [ "$waited" -lt 10 ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if ports_bound; then
+        echo "[wrapper-manager] Warning: ports 10020/20020 still bound after 10s wait."
+    fi
+}
+
+start_server() {
+    stop_server
     echo "[wrapper-manager] Starting decryption server on ports 10020/20020..."
     : > "$SERVER_LOG"
-    ./wrapper -M 20020 -D 10020 -H 0.0.0.0 >> "$SERVER_LOG" 2>&1 &
+    setsid ./wrapper -M 20020 -D 10020 -H 0.0.0.0 >> "$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
+
+    # Verify that port 10020 accepts and answers within ~15s
+    local verified=0
+    for i in $(seq 1 15); do
+        sleep 1
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "[wrapper-manager] Decryption server process exited during startup."
+            break
+        fi
+        if timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10020 && exec 3>&-' 2>/dev/null; then
+            verified=1
+            break
+        fi
+    done
+
+    if [ "$verified" -eq 1 ]; then
+        echo "[wrapper-manager] Decryption server ready (port 10020 accepting connections)."
+        if [ -f "$SESSION_MARKER" ]; then
+            write_status "success" "Decryption server is running with an active session."
+        fi
+        return 0
+    fi
+
+    echo "[wrapper-manager] Decryption server failed readiness check (port 10020 not answering within 15s)."
+    stop_server
+    NOW=$(date +%s)
+    if [ $((NOW - SERVER_RESTART_WINDOW_START)) -gt 120 ]; then
+        SERVER_RESTART_WINDOW_START=$NOW
+        SERVER_RESTARTS=0
+    fi
+    SERVER_RESTARTS=$((SERVER_RESTARTS + 1))
+    if [ "$SERVER_RESTARTS" -gt 5 ]; then
+        echo "[wrapper-manager] Server crash-looping ($SERVER_RESTARTS in 120s). Pausing restarts until the next login."
+        write_status "failed" "Decryption server is crash-looping. Re-authenticate from the Auth page to restart it."
+        SERVER_PID=""
+        return 1
+    else
+        echo "[wrapper-manager] Retrying server start..."
+        start_server
+    fi
 }
 
 login_error_message() {
@@ -351,10 +420,10 @@ login_error_message() {
 }
 
 echo "[wrapper-manager] Discogenius wrapper supervisor starting..."
+stop_server
 if [ -f "$SESSION_MARKER" ]; then
     echo "[wrapper-manager] Active session detected."
     start_server
-    write_status "success" "Decryption server is running with an active session."
 else
     echo "[wrapper-manager] No session yet. Waiting for login from the Discogenius UI..."
     write_status "idle" "No active session. Authenticate from the Discogenius Auth page."
@@ -365,11 +434,6 @@ while true; do
         rm -f "$RESTART_FILE"
         if [ -f "$SESSION_MARKER" ]; then
             echo "[wrapper-manager] Restart requested by Discogenius (decryption ports unreachable). Restarting server..."
-            if [ -n "$SERVER_PID" ]; then
-                kill -9 "$SERVER_PID" 2>/dev/null
-                wait "$SERVER_PID" 2>/dev/null
-                SERVER_PID=""
-            fi
             SERVER_RESTARTS=0
             start_server
         else
@@ -382,12 +446,8 @@ while true; do
         CREDS=$(cat "$CRED_FILE")
         rm -f "$CRED_FILE" "$TFA_FILE" "$TFA_FILE.consumed" "$LOG_FILE" "$DATA_DIR/code.txt" /app/code.txt
 
-        if [ -n "$SERVER_PID" ]; then
-            echo "[wrapper-manager] Stopping decryption server for login..."
-            kill "$SERVER_PID" 2>/dev/null
-            wait "$SERVER_PID" 2>/dev/null
-            SERVER_PID=""
-        fi
+        echo "[wrapper-manager] Stopping decryption server for login..."
+        stop_server
 
         write_status "logging_in" "Starting login handshake..."
         ./wrapper -L "$CREDS" -F > "$LOG_FILE" 2>&1 &
@@ -549,11 +609,57 @@ function cleanupLegacyWrapperEntrypoint(): void {
   }
 }
 
+export const APPLE_WRAPPER_STUCK_MESSAGE = "Apple decryption server is stuck; restart the wrapper container";
+export const APPLE_WRAPPER_SESSION_MARKER = path.join(WRAPPER_ROOTFS_DATA_DIR, "data", "com.apple.android.music", "files", "mpl_db", "cookies.sqlitedb");
+
+export function hasAppleWrapperSession(): boolean {
+  try {
+    return fs.existsSync(APPLE_WRAPPER_SESSION_MARKER);
+  } catch {
+    return false;
+  }
+}
+
+let wrapperRestartCount = 0;
+let lastWrapperRestartAt = 0;
+
+export function recordWrapperRestartRequested(now = Date.now()): void {
+  lastWrapperRestartAt = now;
+  wrapperRestartCount++;
+}
+
+export function hasAttemptedWrapperRestart(): boolean {
+  return wrapperRestartCount > 0;
+}
+
+export function resetAppleWrapperRestartState(): void {
+  wrapperRestartCount = 0;
+  lastWrapperRestartAt = 0;
+}
+
+export function getAppleWrapperRestartState(): { count: number; lastAt: number } {
+  return { count: wrapperRestartCount, lastAt: lastWrapperRestartAt };
+}
+
+export const APPLE_WRAPPER_RESTART_BACKOFF_MIN_MS = 5 * 60 * 1000;
+export const APPLE_WRAPPER_RESTART_BACKOFF_MAX_MS = 15 * 60 * 1000;
+
+export function calculateWrapperRestartBackoffMs(attempt: number): number {
+  if (attempt <= 1) return APPLE_WRAPPER_RESTART_BACKOFF_MIN_MS;
+  return Math.min(APPLE_WRAPPER_RESTART_BACKOFF_MIN_MS * attempt, APPLE_WRAPPER_RESTART_BACKOFF_MAX_MS);
+}
+
 export type AppleWrapperLoginStatus = { status: string; message: string };
 
 export function reconcileWrapperLoginStatus(
   saved: AppleWrapperLoginStatus,
-  readiness: { decryptPortOpen: boolean; m3u8PortOpen: boolean; successAgeMs?: number },
+  readiness: {
+    decryptPortOpen: boolean;
+    m3u8PortOpen: boolean;
+    successAgeMs?: number;
+    hasSession?: boolean;
+    restartAttempted?: boolean;
+  },
 ): AppleWrapperLoginStatus {
   // A successful login is durable state, but it does not prove the sidecar is
   // running now. This file survives Compose stops and app/container restarts.
@@ -567,6 +673,14 @@ export function reconcileWrapperLoginStatus(
       return {
         status: "logging_in",
         message: "The saved Apple Music session is active and the decryption wrapper is starting...",
+      };
+    }
+    const hasSession = readiness.hasSession ?? hasAppleWrapperSession();
+    const restartAttempted = readiness.restartAttempted ?? hasAttemptedWrapperRestart();
+    if (hasSession && restartAttempted) {
+      return {
+        status: "failed",
+        message: APPLE_WRAPPER_STUCK_MESSAGE,
       };
     }
     return {
@@ -621,10 +735,13 @@ export async function getWrapperLoginStatus(): Promise<AppleWrapperLoginStatus> 
     decryptPortOpen,
     m3u8PortOpen,
     successAgeMs: savedAtMs == null ? undefined : Math.max(0, Date.now() - savedAtMs),
+    hasSession: hasAppleWrapperSession(),
+    restartAttempted: hasAttemptedWrapperRestart(),
   });
   // Apple jobs held because the wrapper stopped answering resume as soon as
   // the decryption server answers again (after a re-login or manual restart).
   if (reconciled.status === "success" && decryptPortOpen && m3u8PortOpen) {
+    resetAppleWrapperRestartState();
     if (providerNeedsReauth("apple-music")) {
       await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() }).catch(() => undefined);
     }
@@ -686,6 +803,7 @@ export async function handleAppleDecryptFailure(
 
 export async function handleAppleDecryptSuccess(): Promise<void> {
   decryptFailureTimestamps = [];
+  resetAppleWrapperRestartState();
   if (loadStoredAppleMusicToken()) {
     await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() });
   }
@@ -700,6 +818,8 @@ export async function probeAppleWrapperHealth(
   deps: {
     checkPort?: (host: string, port: number) => Promise<boolean>;
     hasToken?: () => boolean;
+    hasSession?: () => boolean;
+    restartAttempted?: () => boolean;
   } = {},
 ): Promise<{ ok: boolean; status: "ok" | "needs_reauth" | "idle"; message: string }> {
   const hasToken = deps.hasToken ? deps.hasToken() : Boolean(loadStoredAppleMusicToken());
@@ -716,7 +836,11 @@ export async function probeAppleWrapperHealth(
     const missing: string[] = [];
     if (!decryptPortOpen) missing.push("10020");
     if (!m3u8PortOpen) missing.push("20020");
-    const message = `Apple Music decryption wrapper is unreachable (ports ${missing.join(", ")} not answering). Start it with docker compose up -d apple-music-wrapper.`;
+    const hasSession = deps.hasSession ? deps.hasSession() : hasAppleWrapperSession();
+    const restartAttempted = deps.restartAttempted ? deps.restartAttempted() : hasAttemptedWrapperRestart();
+    const message = hasSession && restartAttempted
+      ? APPLE_WRAPPER_STUCK_MESSAGE
+      : `Apple Music decryption wrapper is unreachable (ports ${missing.join(", ")} not answering). Start it with docker compose up -d apple-music-wrapper.`;
     await recordProviderAuthFailure("apple-music", message);
     return { ok: false, status: "needs_reauth", message };
   }
@@ -725,6 +849,7 @@ export async function probeAppleWrapperHealth(
     await recordProviderAuthFailure("apple-music", message);
     return { ok: false, status: "needs_reauth", message };
   }
+  resetAppleWrapperRestartState();
   await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() });
   return { ok: true, status: "ok", message: "Decryption wrapper is reachable." };
 }
@@ -735,17 +860,62 @@ export const APPLE_WRAPPER_HOLD_PROBE_INTERVAL_MS = 2 * 60 * 1000;
 let appleHoldProbeLoop: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Clears the Apple hold once the wrapper answers again. Does nothing (no port
- * check, no file read) while Apple is not marked needs_reauth. Status only,
- * never credentials.
+ * Clears the Apple hold once the wrapper answers again. While Apple is held for
+ * "wrapper not answering" (session exists and no expired-session error), it keeps
+ * re-probing with backoff (5m -> 10m -> 15m) and re-requests a wrapper server restart.
  */
 export async function runAppleWrapperHoldProbe(
-  deps: { needsReauth?: () => boolean; loginStatus?: () => Promise<AppleWrapperLoginStatus> } = {},
+  deps: {
+    needsReauth?: () => boolean;
+    loginStatus?: () => Promise<AppleWrapperLoginStatus>;
+    hasSession?: () => boolean;
+    requestRestart?: () => boolean;
+    now?: () => number;
+    recordRestart?: (time?: number) => void;
+    recordFailure?: (provider: string, message: string) => Promise<unknown>;
+    readAuth?: () => ProviderAuthPublic | null;
+  } = {},
 ): Promise<"idle" | "cleared" | "still_held"> {
   const needsReauth = deps.needsReauth ?? (() => providerNeedsReauth("apple-music"));
   if (!needsReauth()) return "idle";
-  await (deps.loginStatus ?? getWrapperLoginStatus)();
-  return needsReauth() ? "still_held" : "cleared";
+
+  const status = await (deps.loginStatus ?? getWrapperLoginStatus)();
+  if (!needsReauth()) {
+    resetAppleWrapperRestartState();
+    return "cleared";
+  }
+
+  // Apple is still held. Check if held for "wrapper not answering" vs "expired session"
+  const hasSession = deps.hasSession ? deps.hasSession() : hasAppleWrapperSession();
+  const readAuth = deps.readAuth ?? (() => readProviderAuthPublic("apple-music"));
+  const authRow = readAuth();
+  const lastError = authRow?.lastError || status.message || "";
+  const isSessionExpired = /sign in|invalid ckc|session expired|re-authenticate/i.test(lastError)
+    && !lastError.includes(APPLE_WRAPPER_STUCK_MESSAGE);
+
+  if (hasSession && !isSessionExpired) {
+    const now = deps.now ? deps.now() : Date.now();
+    const backoffMs = calculateWrapperRestartBackoffMs(wrapperRestartCount);
+    const shouldRestart = lastWrapperRestartAt === 0 || (now - lastWrapperRestartAt) >= backoffMs;
+
+    if (shouldRestart) {
+      const restartFn = deps.requestRestart ?? requestWrapperServerRestart;
+      const recordRestartFn = deps.recordRestart ?? recordWrapperRestartRequested;
+      const recordFailureFn = deps.recordFailure ?? recordProviderAuthFailure;
+
+      restartFn();
+      recordRestartFn(now);
+      await recordFailureFn("apple-music", APPLE_WRAPPER_STUCK_MESSAGE);
+      console.warn(
+        `[APPLE] Wrapper not answering; requested server restart (attempt ${wrapperRestartCount}, next backoff in ${Math.round(calculateWrapperRestartBackoffMs(wrapperRestartCount) / 60000)}m).`,
+      );
+    } else if (wrapperRestartCount > 0 && lastError !== APPLE_WRAPPER_STUCK_MESSAGE) {
+      const recordFailureFn = deps.recordFailure ?? recordProviderAuthFailure;
+      await recordFailureFn("apple-music", APPLE_WRAPPER_STUCK_MESSAGE);
+    }
+  }
+
+  return "still_held";
 }
 
 export function startAppleWrapperHoldProbeLoop(): void {
