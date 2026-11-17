@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.3] - 2026-11-17
+
+### Fixed
+
+- Quality upgrades no longer download a track and then fail at import with "Audio import requires an explicit stereo or spatial destination". Every upgrade (track, album and video) now carries the destination library of the file it replaces, so a stereo file is upgraded into the stereo library and an Atmos file into the spatial library. Upgrades whose destination cannot be determined are skipped before downloading, and a single-track import without a destination falls back to the library of the existing file (#134).
+
 ## [2.26.2] - 2026-11-17
 
 ### Fixed
