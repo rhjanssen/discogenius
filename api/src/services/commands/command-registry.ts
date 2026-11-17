@@ -491,6 +491,18 @@ const SYSTEM_TASK_DEFINITIONS = [
     run: () => queueHousekeepingPass({ trigger: CommandTrigger.Manual }),
   },
   {
+    id: "housekeeping-dry-run",
+    kind: "manual",
+    commandName: "Housekeeping",
+    name: "Housekeeping (Dry Run)",
+    description: "Preview what housekeeping and reconciliation would delete or move with reasons, without modifying files.",
+    taskName: CommandNames.Housekeeping,
+    category: "maintenance",
+    riskLevel: "low",
+    visibleInSystemTasks: true,
+    run: () => queueHousekeepingPass({ dryRun: true, trigger: CommandTrigger.Manual }),
+  },
+  {
     id: "health-check",
     kind: "scheduled",
     commandName: "CheckHealth",

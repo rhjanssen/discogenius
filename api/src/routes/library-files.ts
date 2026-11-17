@@ -93,6 +93,25 @@ router.post("/cleanup/apply",async(req,res)=>{
   }
 });
 
+router.get("/housekeeping/dry-run", async (_req, res) => {
+  try {
+    const { reconcileDiskAndDatabaseWithReport } = await import("../services/mediafiles/disk-reconciliation-service.js");
+    const { runHousekeepingStrayAndPlacementWithReport } = await import("../services/mediafiles/housekeeping-stray-files.js");
+    const { isDestructiveCleanupEnabled } = await import("../services/mediafiles/destructive-cleanup-setting.js");
+    const reconResult = await reconcileDiskAndDatabaseWithReport({ dryRun: true });
+    const strayResult = await runHousekeepingStrayAndPlacementWithReport({ dryRun: true });
+    res.json({
+      dryRun: true,
+      destructiveMode: isDestructiveCleanupEnabled(),
+      actions: [...reconResult.actions, ...strayResult.actions],
+      reconciliation: reconResult.snapshot,
+      summary: strayResult.summary,
+    });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
 router.get("/rename/preview", (req, res) => {
   try {
     const artistId = req.query.artistId as string | undefined;

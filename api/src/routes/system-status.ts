@@ -10,6 +10,17 @@ import {
   ignoreProviderArtist,
   listManualMatchCandidates,
 } from "../services/metadata/provider-artist-manual-match.js";
+import {
+  readLastDiskReconciliationResult,
+  reconcileDiskAndDatabaseWithReport,
+} from "../services/mediafiles/disk-reconciliation-service.js";
+import {
+  runHousekeepingStrayAndPlacementWithReport,
+} from "../services/mediafiles/housekeeping-stray-files.js";
+import {
+  isDestructiveCleanupEnabled,
+  setDestructiveCleanupEnabled,
+} from "../services/mediafiles/destructive-cleanup-setting.js";
 
 const router = Router();
 
@@ -62,6 +73,48 @@ router.post("/unmatched-artists/:provider/:providerId/ignore", (req, res) => {
     res.json(ignoreProviderArtist(String(req.params.provider), String(req.params.providerId)));
   } catch (error: any) {
     res.status(error?.message?.startsWith("Unknown or already matched") ? 404 : 500).json({ detail: error.message });
+  }
+});
+
+router.get("/reconciliation", (_req, res) => {
+  try {
+    const snapshot = readLastDiskReconciliationResult();
+    res.json({
+      snapshot,
+      destructiveMode: isDestructiveCleanupEnabled(),
+    });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.get("/reconciliation/dry-run", async (_req, res) => {
+  try {
+    const reconResult = await reconcileDiskAndDatabaseWithReport({ dryRun: true });
+    const strayResult = await runHousekeepingStrayAndPlacementWithReport({ dryRun: true });
+    const actions = [...reconResult.actions, ...strayResult.actions];
+    res.json({
+      dryRun: true,
+      destructiveMode: isDestructiveCleanupEnabled(),
+      actions,
+      reconciliation: reconResult.snapshot,
+      summary: strayResult.summary,
+    });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
+  }
+});
+
+router.post("/reconciliation/destructive", async (req, res) => {
+  try {
+    const enabled = Boolean((req.body as Record<string, unknown> | undefined)?.enabled);
+    await setDestructiveCleanupEnabled(enabled);
+    res.json({
+      success: true,
+      destructiveMode: isDestructiveCleanupEnabled(),
+    });
+  } catch (error: any) {
+    res.status(500).json({ detail: error.message });
   }
 });
 

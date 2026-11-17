@@ -281,7 +281,7 @@ export interface CheckUpgradesCommand extends CommandBodyCommon {
   mode?: "manual" | "settings" | "scheduled";
 }
 
-export type HousekeepingCommand = CommandBodyCommon;
+export type HousekeepingCommand = CommandBodyCommon & { dryRun?: boolean };
 export interface ReconcileMediaServersCommand extends CommandBodyCommon {
     dryRun?: boolean;
 }

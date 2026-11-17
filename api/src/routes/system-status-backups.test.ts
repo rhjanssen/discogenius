@@ -99,3 +99,53 @@ test("backup download and delete reject unrelated files", async () => {
   assert.equal(remove.status, 404);
   assert.equal(fs.readFileSync(unrelatedFile, "utf8"), "keep me");
 });
+
+test("reconciliation endpoints support status check, dry-run report, and destructive setting toggle", async () => {
+  // 1. Initial status: snapshot may be null, destructiveMode false by default
+  const statusRes = await fetch(`${baseUrl}/system/status/reconciliation`);
+  assert.equal(statusRes.status, 200);
+  const statusData = await statusRes.json() as { snapshot: unknown; destructiveMode: boolean };
+  assert.equal(statusData.destructiveMode, false);
+
+  // 2. Dry-run endpoint returns dryRun: true, actions list, and summary
+  const dryRunRes = await fetch(`${baseUrl}/system/status/reconciliation/dry-run`);
+  assert.equal(dryRunRes.status, 200);
+  const dryRunData = await dryRunRes.json() as {
+    dryRun: boolean;
+    destructiveMode: boolean;
+    actions: unknown[];
+    reconciliation: { checkedAt: string };
+    summary: { unownedAudioRemoved: number };
+  };
+  assert.equal(dryRunData.dryRun, true);
+  assert.equal(dryRunData.destructiveMode, false);
+  assert.ok(Array.isArray(dryRunData.actions));
+  assert.ok(dryRunData.reconciliation);
+  assert.ok(dryRunData.summary);
+
+  // 3. Toggle destructive mode setting
+  const enableRes = await fetch(`${baseUrl}/system/status/reconciliation/destructive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled: true }),
+  });
+  assert.equal(enableRes.status, 200);
+  const enableData = await enableRes.json() as { success: boolean; destructiveMode: boolean };
+  assert.equal(enableData.success, true);
+  assert.equal(enableData.destructiveMode, true);
+
+  // Verify status reflects update
+  const statusAfter = await fetch(`${baseUrl}/system/status/reconciliation`);
+  const statusAfterData = await statusAfter.json() as { destructiveMode: boolean };
+  assert.equal(statusAfterData.destructiveMode, true);
+
+  // Disable again
+  const disableRes = await fetch(`${baseUrl}/system/status/reconciliation/destructive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled: false }),
+  });
+  assert.equal(disableRes.status, 200);
+  const disableData = await disableRes.json() as { success: boolean; destructiveMode: boolean };
+  assert.equal(disableData.destructiveMode, false);
+});

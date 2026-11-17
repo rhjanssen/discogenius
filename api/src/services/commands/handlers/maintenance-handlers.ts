@@ -23,13 +23,15 @@ export const handleLowCouplingMaintenance: CommandHandler = async (job, ctx) => 
 };
 
 export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ctx) => {
+    const isDryRun = Boolean((job.payload as any)?.dryRun);
     ctx.updateCommandDescription(job, {
         progress: 5,
-        description: 'Running housekeeping',
+        description: isDryRun ? 'Running housekeeping (dry run)' : 'Running housekeeping',
     });
     const isCancelled = () => Boolean(CommandQueueManager.get(job.id)?.payload.cancelRequested);
     const summary = await runRuntimeMaintenance({
         isCancelled,
+        dryRun: isDryRun,
         onProgress: (progress, description) => {
             ctx.updateCommandDescription(job, { progress, description });
         },
@@ -42,8 +44,13 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `${summary.orphanDownloadFoldersRemoved} orphan download folder(s)`,
         `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
         `removed ${summary.unmonitoredFilesRemoved} unmonitored file(s)`,
+        `${summary.orphanLyricsRemoved} orphan lyric(s)`,
+        `${summary.strayTempFilesRemoved} temp file(s)`,
+        `${summary.emptyFoldersRemoved} empty folder(s)`,
+        `${summary.unownedAudioRemoved} unowned audio file(s)`,
+        `moved ${summary.misplacedMoved} / deleted ${summary.misplacedDeleted} misplaced file(s)`,
     ];
-    const prefix = summary.timedOut ? "Housekeeping stopped at time limit; " : "";
+    const prefix = (isDryRun ? "[Dry Run] " : "") + (summary.timedOut ? "Housekeeping stopped at time limit; " : "");
     ctx.updateCommandDescription(job, {
         progress: 100,
         description: prefix + parts.join(', '),

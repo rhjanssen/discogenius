@@ -1,17 +1,16 @@
 # Session Handoff
 
-- **Branch**: `main` (clean; all feature branches merged and deleted)
+- **Branch**: `agent/issue-140`
 - **What is done**:
-  - **PR #126 (`#77`)**: Queue API performance (keyset cursor pagination, persistent read-only `worker_threads` worker, O(1) `queuePosition`, 10s remote hydration timeout on album reads).
-  - **PR #127 (`#79`)**: Servarr/MusicBrainz locale alias lookup, `{Artist Original Name}` / `{Artist Locale Name}` / `{Artist Alias}` naming tokens, `TitleTokenRegex` fix.
-  - **PR #128 (`#116`)**: AcoustID rate-limited verification (`<= 3 req/s` + 429 retry) on manual & folder auto-imports, merged recording redirect lookup, `force` override on `POST /api/unmapped/canonical-import`.
-  - **PR #129 (`#114`)**: Housekeeping stray-file cleanup (`.lrc/.srt/.vtt`, aged temp/part files, empty folders, unowned audio) and stereo/Atmos placement enforcement (`runHousekeepingStrayAndPlacement`).
-  - **PR #130 (`#115`)**: Two-way disk vs DB reconciliation (`reconcileDiskAndDatabase`), case-insensitive root comparison, stereo/Atmos placement validation (`isTrackFilePlacementValid`), and `/api/health` / `/api/v1/system/status` `reconciliation` diagnostics.
-  - **PR #131 (`#78`)**: Plex & Jellyfin integration (`media_servers` config with redacted secrets, targeted folder scans after import/rename/retag, `POST /api/v1/media-servers/reconcile` dry-run & apply with MBID merge/fix-match/refresh).
-  - **PR #132**: Audit Round 2 cleanup (`command-queue-manager.ts` empty/whitespace provider string guard in rate-limit backoff check).
-- **Open issues / PRs**: None (`0` open issues, `0` open PRs on `rhjanssen/discogenius`).
+  - **Issue #140**: Re-landed stray cleanup, stereo/Atmos placement, and two-way disk-DB reconciliation (#129/#130) with comprehensive safety guards and dry-run mechanism:
+    - **Safe path resolution**: Existence checks and tracked-path sets use `resolveStoredLibraryPath` (stored `file_path`, `library_root`, `relative_path`), NFC-normalized comparison, and per-root `isCaseInsensitivePath`. Handles stale stored roots, case-differing linked files, and NFD disk names matching NFC DB paths.
+    - **Marking before deletion**: Reconciliation never deletes a `TrackFiles` row in the same run as stray cleanup. Missing files are first recorded in `ReconciliationMissingFiles`, kept protected in the current pass's tracked set, and deleted only on subsequent runs if confirmed missing and destructive mode is enabled. Restored files clear the mark.
+    - **Dry-run first & destructive mode setting**: Destructive mode defaults to OFF (`housekeeping.destructive_mode` / `enable_destructive_cleanup`). Dry-run mode previews all deletions and moves with reasons without mutating disk or DB. Exposed via `GET /api/v1/system/status/reconciliation/dry-run`, `GET /api/v1/library/files/housekeeping/dry-run`, `POST /api/v1/system/status/reconciliation/destructive`, and `Housekeeping (Dry Run)` manual system task.
+    - **Edition placement protection**: Evaluated per album edition. Misplaced files are moved, never deleting the last copy for an edition. Moves check disk and DB destination occupancy first and abort if occupied (never overwrite existing files).
+    - **Product rules**: Atmos files in stereo allowed only if literally the only copy; stereo tracks in Atmos allowed if album is Atmos; linked tracks are never deleted.
+    - **Validation**: Full `yarn ci` passed (exit code 0; 2734 API tests pass, 201 App tests pass, clean build).
+- **What is half-done**: Nothing. All acceptance criteria and tests for #140 are complete.
 - **What was NOT verified on LAN**:
-  - Cloud VM cannot reach the LAN (`192.168.1.50` / `192.168.1.100` / running container). Live-server smoke testing with real provider tokens, Plex/Jellyfin instances, and Bastille/Bakermat remains for the LAN session / user.
-- **Open design items for PO**:
-  - Edition selection UX improvement (Lidarr-style modal supporting multi-edition selection and source selection on album page).
-  - Audit Round 2 follow-up notes: `artist-statistics-service.ts:448` (`Libraries ORDER BY id LIMIT 1` fallback when `LibraryArtists` has no row) and `album-query-service.ts:589` (`LIKE` search inside `listAlbumsFromMembership`).
+  - Live smoke test against the running container on NAS `192.168.1.50` with real Bastille/Bakermat library paths.
+- **Open questions / design items for PO**:
+  - None for #140. Ready for review and merge.

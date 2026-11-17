@@ -553,13 +553,17 @@ export function queueCheckUpgradesPass(options: { trigger?: number; mode?: "manu
     );
 }
 
-export function queueHousekeepingPass(options: { trigger?: number } = {}) {
+export function queueHousekeepingPass(options: { trigger?: number; dryRun?: boolean } = {}) {
     const trigger = options.trigger ?? CommandTrigger.Scheduled;
+    const isDryRun = Boolean(options.dryRun);
     const commandId = CommandQueueManager.push(
         CommandNames.Housekeeping,
         {
-            title: "Running housekeeping",
-            description: "Cleaning runtime state and stale library records",
+            title: isDryRun ? "Running housekeeping (dry run)" : "Running housekeeping",
+            description: isDryRun
+                ? "Previewing runtime state and stale library file changes (dry run)"
+                : "Cleaning runtime state and stale library records",
+            dryRun: isDryRun,
         },
         "housekeeping",
         // Ahead of the RefreshArtist flood (priority 0/-1) so leftover-file

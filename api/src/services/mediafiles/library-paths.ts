@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
-import { normalizeComparablePath } from "./path-utils.js";
+import { findOnDiskPath, normalizeComparablePath } from "./path-utils.js";
 import type { library_root } from "../config/naming.js";
 
 export type CurrentLibraryRoots = Readonly<Record<library_root, string>>;
@@ -153,7 +153,8 @@ export function resolveStoredLibraryPath(options: {
 }): string {
   const { filePath, libraryRoot, relativePath } = options;
   if (!filePath) return filePath;
-  if (fs.existsSync(filePath)) return filePath;
+  const directFound = findOnDiskPath(filePath);
+  if (directFound) return directFound;
 
   const key = resolveLibraryRootKey(libraryRoot, filePath);
   if (!key) return filePath;
@@ -182,8 +183,9 @@ export function resolveStoredLibraryPath(options: {
       ? path.join(currentRoot, candidateRelative)
       : currentRoot;
 
-    if (fs.existsSync(targetPath)) {
-      return targetPath;
+    const targetFound = findOnDiskPath(targetPath);
+    if (targetFound) {
+      return targetFound;
     }
   }
 

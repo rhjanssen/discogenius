@@ -162,6 +162,7 @@ export function renameToCanonicalCase(source: string, expected: string): void {
 
 export function normalizeComparablePath(inputPath: string | null | undefined, caseInsensitive?: boolean): string {
     const normalized = String(inputPath || "")
+        .normalize("NFC")
         .replace(/[\\/]+/g, "/")
         .replace(/\/+$/, "");
     const insensitive = caseInsensitive ?? (process.platform === "win32");
@@ -169,9 +170,57 @@ export function normalizeComparablePath(inputPath: string | null | undefined, ca
 }
 
 export function normalizeResolvedPath(inputPath: string | null | undefined, caseInsensitive?: boolean): string {
-    const resolved = path.resolve(String(inputPath || ""));
+    const normalized = String(inputPath || "").normalize("NFC");
+    const resolved = path.resolve(normalized);
     const insensitive = caseInsensitive ?? (process.platform === "win32" || isCaseInsensitivePath(resolved));
     return insensitive ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * Locate a file or directory on disk, accounting for Unicode normalization
+ * (NFC vs NFD) and case-insensitivity differences.
+ *
+ * Returns the exact on-disk absolute path if found, or null if it does not exist.
+ */
+export function findOnDiskPath(targetPath: string | null | undefined): string | null {
+    if (!targetPath) return null;
+    const raw = String(targetPath);
+    if (fs.existsSync(raw)) return path.resolve(raw);
+
+    const nfcPath = path.resolve(raw.normalize("NFC"));
+    if (fs.existsSync(nfcPath)) return nfcPath;
+
+    const parsed = path.parse(nfcPath);
+    let current = parsed.root;
+    if (!current || !fs.existsSync(current)) return null;
+
+    const segments = nfcPath.slice(parsed.root.length).split(path.sep).filter(Boolean);
+    for (const segment of segments) {
+        const nextTarget = path.join(current, segment);
+        if (fs.existsSync(nextTarget)) {
+            current = nextTarget;
+            continue;
+        }
+        try {
+            const entries = fs.readdirSync(current);
+            const segmentNfc = segment.normalize("NFC");
+            const isInsensitive = isCaseInsensitivePath(current);
+            const targetCmp = isInsensitive ? segmentNfc.toLowerCase() : segmentNfc;
+            const match = entries.find((e) => {
+                const eNfc = e.normalize("NFC");
+                const eCmp = isInsensitive ? eNfc.toLowerCase() : eNfc;
+                return eCmp === targetCmp;
+            });
+            if (match) {
+                current = path.join(current, match);
+            } else {
+                return null;
+            }
+        } catch {
+            return null;
+        }
+    }
+    return current;
 }
 
 /**

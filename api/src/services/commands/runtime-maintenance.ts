@@ -9,6 +9,14 @@ import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-f
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { buildLibraryArtistMonitoredExistsSql } from "../music/managed-artists.js";
+import {
+  reconcileDiskAndDatabase,
+  type DiskReconciliationSnapshot,
+} from "../mediafiles/disk-reconciliation-service.js";
+import {
+  runHousekeepingStrayAndPlacement,
+  type StrayAndPlacementSummary,
+} from "../mediafiles/housekeeping-stray-files.js";
 
 export interface RuntimeMaintenanceSummary {
   duplicateLibraryFilesRemoved: number;
@@ -26,6 +34,20 @@ export interface RuntimeMaintenanceSummary {
   videoQualitiesCorrected: number;
   /** Files deleted because they belong to unmonitored albums/editions */
   unmonitoredFilesRemoved: number;
+  /** Two-way disk vs DB reconciliation snapshot */
+  reconciliation?: DiskReconciliationSnapshot;
+  /** Orphan lyric/sidecar files removed */
+  orphanLyricsRemoved: number;
+  /** Aged temp/partial files removed from library roots */
+  strayTempFilesRemoved: number;
+  /** Empty subdirectories removed from library roots */
+  emptyFoldersRemoved: number;
+  /** Unowned non-importable audio files removed */
+  unownedAudioRemoved: number;
+  /** Misplaced stereo/Atmos track files deleted because a copy already existed */
+  misplacedDeleted: number;
+  /** Misplaced stereo/Atmos track files moved to the right library */
+  misplacedMoved: number;
   /** True when the run stopped early due to reaching the hard time limit */
   timedOut?: boolean;
 }
@@ -41,6 +63,8 @@ export interface RuntimeMaintenanceOptions {
   onProgress?: (progress: number, description: string) => void;
   /** Cooperative yield to event loop. Default: setImmediate. */
   yieldToEventLoop?: () => Promise<void>;
+  /** Dry-run mode: do not delete or move files or mutate database records. */
+  dryRun?: boolean;
 }
 
 function refreshDownloadState(summary: RuntimeMaintenanceSummary) {
@@ -171,6 +195,12 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
     staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
     unmonitoredFilesRemoved: 0,
+    orphanLyricsRemoved: 0,
+    strayTempFilesRemoved: 0,
+    emptyFoldersRemoved: 0,
+    unownedAudioRemoved: 0,
+    misplacedDeleted: 0,
+    misplacedMoved: 0,
     timedOut: false,
   };
 
@@ -272,6 +302,34 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
   // Distinct physical paths remain distinct TrackFiles. Deleting only their
   // rows makes the next scan mint new IDs for the same files and breaks linked
   // extras and durable file plans. Acquisition/import owns quality replacement.
+
+  // Step 6.5: Two-way disk vs DB reconciliation (#115, #140)
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(65, "Reconciling disk and database");
+  summary.reconciliation = await reconcileDiskAndDatabase({
+    yieldToEventLoop: yieldFn,
+    isCancelled: options?.isCancelled,
+    dryRun: options?.dryRun,
+  });
+
+  // Step 6.6: Stray file cleanup & stereo/Atmos placement (#114, #140)
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(70, "Cleaning stray files and enforcing placement");
+  const straySummary = await runHousekeepingStrayAndPlacement({
+    yieldToEventLoop: yieldFn,
+    isCancelled: options?.isCancelled,
+    dryRun: options?.dryRun,
+  });
+  summary.orphanLyricsRemoved = straySummary.orphanLyricsRemoved;
+  summary.strayTempFilesRemoved = straySummary.tempFilesRemoved;
+  summary.emptyFoldersRemoved = straySummary.emptyFoldersRemoved;
+  summary.unownedAudioRemoved = straySummary.unownedAudioRemoved;
+  summary.misplacedDeleted = straySummary.misplacedDeleted;
+  summary.misplacedMoved = straySummary.misplacedMoved;
 
   // Step 7: Refresh download state
   if (isTimedOut()) { summary.timedOut = true; return summary; }
