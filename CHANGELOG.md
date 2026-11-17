@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.4] - 2026-11-17
+
+### Fixed
+
+- Apple Music downloads that fail on a truncated or corrupt media segment ("decode mdat ... does not match expected length", "unexpected EOF") are now treated as transient download errors and retried on the same offer, instead of holding Apple Music as an authentication failure. An auth hold now only happens when the decryption wrapper is unreachable, the wrapper reports a Sign-In or CKC session error, or real decrypt errors repeat. A wrapper that is restarting or unreachable shows "decryption wrapper is not answering"; the re-authenticate prompt is shown only for an actual session problem (#144).
+
 ## [2.26.3] - 2026-11-17
 
 ### Fixed
