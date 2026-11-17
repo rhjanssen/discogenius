@@ -64,7 +64,7 @@ const COPY: Record<string, Omit<ProviderAuthCopy, "provider">> = {
     settingsLabel: "Go to Tidal login",
   },
   "apple-music": {
-    banner: "Apple Music decryption wrapper is unreachable",
+    banner: "Apple Music decryption wrapper is not answering",
     queueMessage: "Waiting for the Apple Music decryption wrapper",
     href: "/auth?provider=apple-music",
     settingsLabel: "Go to Apple Music",
@@ -87,6 +87,20 @@ export function providerAuthCopy(provider: string, lastError?: string | null): P
         queueMessage: "Waiting for Apple Music wrapper restart",
         href: "/auth?provider=apple-music",
         settingsLabel: "Apple Music",
+      };
+    }
+    const isSessionProblem = Boolean(
+      lastError
+      && /sign[- ]?in|invalid ckc|session expired|re-authenticate/i.test(lastError)
+      && !/unreachable|not answering|crash-loop|stuck/i.test(lastError)
+    );
+    if (isSessionProblem) {
+      return {
+        provider: id,
+        banner: "Re-authenticate Apple Music",
+        queueMessage: "Waiting for Apple Music re-authentication",
+        href: "/auth?provider=apple-music",
+        settingsLabel: "Re-authenticate Apple Music",
       };
     }
     return { provider: id, ...COPY["apple-music"] };

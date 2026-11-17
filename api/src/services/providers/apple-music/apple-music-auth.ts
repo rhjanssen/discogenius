@@ -802,11 +802,75 @@ export function hasRepeatedAppleDecryptFailures(now = Date.now()): boolean {
   return decryptFailureTimestamps.length >= APPLE_DECRYPT_FAILURE_THRESHOLD;
 }
 
+export type AppleDecryptFailureResult = {
+  held: boolean;
+  reason?: string;
+  code?: "wrapper_unreachable" | "session_expired";
+};
+
+export function checkWrapperSessionOrLogErrors(): boolean {
+  try {
+    const statusPath = path.join(WRAPPER_ROOTFS_DATA_DIR, "login_status.json");
+    if (fs.existsSync(statusPath)) {
+      const parsed = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+      if (parsed && typeof parsed === "object" && parsed.status === "failed") {
+        if (isWrapperSessionOrLoginError({ status: String(parsed.status), message: String(parsed.message || "") })) {
+          return true;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const serverLogPath = path.join(WRAPPER_ROOTFS_DATA_DIR, "server.log");
+    if (fs.existsSync(serverLogPath)) {
+      const stat = fs.statSync(serverLogPath);
+      const readSize = Math.min(stat.size, 32_768);
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(serverLogPath, "r");
+      try {
+        fs.readSync(fd, buffer, 0, readSize, Math.max(0, stat.size - readSize));
+      } finally {
+        fs.closeSync(fd);
+      }
+      const text = buffer.toString("utf-8");
+      if (/sign[\s-]?in|invalid ckc|\bckc\b/i.test(text)) {
+        return true;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return false;
+}
+
+export const APPLE_WRAPPER_SESSION_FAILURE_PATTERN =
+  /reading response from device|device:\s*eof|\bckc\b|decrypt failed|sign[\s-]?in|unauthor|invalid.*(?:token|session|user)|forbidden|\b401\b|\b403\b/i;
+
 export async function handleAppleDecryptFailure(
   errorDetail: string,
-  options: { checkPorts?: boolean; portsOpen?: boolean; now?: number } = {},
-): Promise<void> {
+  options: {
+    checkPorts?: boolean;
+    portsOpen?: boolean;
+    now?: number;
+    hasSessionError?: boolean;
+  } = {},
+): Promise<AppleDecryptFailureResult> {
   const count = recordAppleDecryptFailureTimestamp(options.now);
+
+  const sessionError = options.hasSessionError !== undefined
+    ? options.hasSessionError
+    : (APPLE_WRAPPER_SESSION_FAILURE_PATTERN.test(errorDetail || "") || checkWrapperSessionOrLogErrors());
+
+  if (sessionError) {
+    const message = `Apple Music decryption failed because the wrapper session expired or Apple rejected it. Re-authenticate Apple Music from the Auth page. [detail: ${errorDetail}]`;
+    await recordProviderAuthFailure("apple-music", message);
+    return { held: true, reason: message, code: "session_expired" };
+  }
+
   const host = resolveAppleWrapperHost();
   let portsOpen = options.portsOpen;
   if (portsOpen === undefined && options.checkPorts !== false) {
@@ -822,12 +886,18 @@ export async function handleAppleDecryptFailure(
   }
 
   if (portsOpen === false) {
-    const message = `Apple Music decryption wrapper is unreachable (ports 10020/20020 not answering); Apple downloads are held until it responds. [detail: ${errorDetail}]`;
+    const message = `Apple Music decryption wrapper is not answering (ports 10020/20020 not answering); Apple downloads are held until it responds. [detail: ${errorDetail}]`;
     await recordProviderAuthFailure("apple-music", message);
-  } else if (count >= APPLE_DECRYPT_FAILURE_THRESHOLD) {
+    return { held: true, reason: message, code: "wrapper_unreachable" };
+  }
+
+  if (count >= APPLE_DECRYPT_FAILURE_THRESHOLD) {
     const message = `Apple Music decryption failed repeatedly (${count} failures in ${Math.round(APPLE_DECRYPT_FAILURE_WINDOW_MS / 60000)}m): ${errorDetail}`;
     await recordProviderAuthFailure("apple-music", message);
+    return { held: true, reason: message, code: "session_expired" };
   }
+
+  return { held: false };
 }
 
 export async function handleAppleDecryptSuccess(): Promise<void> {

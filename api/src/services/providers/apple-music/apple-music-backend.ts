@@ -20,8 +20,14 @@ import {
   APPLE_WRAPPER_STUCK_MESSAGE,
   hasAppleWrapperSession,
 } from "./apple-music-auth.js";
-import { ProviderAuthError } from "../provider-auth-error.js";
+import {
+  ProviderAuthError,
+  isAppleTruncatedSegmentError,
+  APPLE_TRUNCATED_SEGMENT_PATTERN,
+} from "../provider-auth-error.js";
 import { recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
+
+export { isAppleTruncatedSegmentError, APPLE_TRUNCATED_SEGMENT_PATTERN };
 import { ProviderUnavailableError } from "../../download/provider-unavailable-error.js";
 import { db, withSqliteWriteGate } from "../../../database.js";
 import { markAcquisitionPlanningStale } from "../../music/acquisition-planning-control.js";
@@ -52,13 +58,15 @@ export const APPLE_SESSION_FAILURE_PATTERN =
   /reading response from device|device:\s*eof|\bckc\b|decrypt failed|sign[\s-]?in|unauthor|invalid.*(?:token|session|user)|forbidden|\b401\b|\b403\b/i;
 
 export const APPLE_DECRYPT_FAILURE_PATTERN =
-  /\bdecrypt(?:ing|ion)?\b.*?\bfailed\b|\bfailed\b.*?\bdecrypt(?:ing|ion)?\b|failed to run v2(?::\s*decrypt)?|reading response from device|device:\s*eof|\bckc\b|decryption wrapper/i;
+  /\bdecrypt(?:ing|ion)?\b.*?\bfailed\b|\bfailed\b.*?\bdecrypt(?:ing|ion)?\b|failed to run v2:\s*decrypt|reading response from device|device:\s*eof|\bckc\b|decryption wrapper/i;
 
 export function isAppleDecryptFailure(text: string): boolean {
+  if (isAppleTruncatedSegmentError(text)) return false;
   return APPLE_DECRYPT_FAILURE_PATTERN.test(text || "");
 }
 
 export function isAppleSessionFailure(text: string): boolean {
+  if (isAppleTruncatedSegmentError(text)) return false;
   return APPLE_SESSION_FAILURE_PATTERN.test(text || "") || isAppleDecryptFailure(text);
 }
 
@@ -155,6 +163,9 @@ export async function recordUnavailableAppleTrack(
 
 export function describeAppleDownloaderFailure(code: number | null, errorDetail: string): string {
   const detail = (errorDetail || "").trim();
+  if (isAppleTruncatedSegmentError(detail)) {
+    return `apple-music-downloader exited with code ${code}${detail ? `: ${detail}` : ""}`;
+  }
   if (isAppleSessionFailure(detail) || isAppleDecryptFailure(detail)) {
     return "Apple Music decryption failed because the wrapper session expired or Apple rejected it. "
       + "Re-authenticate Apple Music from the Auth page (enter the Apple ID 2FA code promptly; the wrapper only waits ~60s). "
@@ -475,7 +486,7 @@ export function parseAppleDownloaderProgressLine(
     };
   }
 
-  if (/Unavailable|Invalid media-user-token|Failed|Error|Exception/i.test(cleanLine) && !/lyric|lrc/i.test(cleanLine)) {
+  if ((/Unavailable|Invalid media-user-token|Failed|Error|Exception/i.test(cleanLine) || isAppleTruncatedSegmentError(cleanLine)) && !/lyric|lrc/i.test(cleanLine)) {
     return {
       currentFileNum: current?.currentFileNum,
       totalFiles: current?.totalFiles,
@@ -854,12 +865,15 @@ export class AppleMusicBackend implements DownloadBackend {
         ? primaryResult.fatalOtherError : undefined);
 
     if (decryptErrorDetail) {
-      await handleAppleDecryptFailure(decryptErrorDetail).catch(() => undefined);
-      throw new ProviderAuthError(
-        "apple-music",
-        describeAppleDownloaderFailure(primaryResult.code, decryptErrorDetail),
-        "session_expired",
-      );
+      const holdResult = await handleAppleDecryptFailure(decryptErrorDetail).catch(() => ({ held: false as const }));
+      if (holdResult?.held) {
+        throw new ProviderAuthError(
+          "apple-music",
+          holdResult.reason || describeAppleDownloaderFailure(primaryResult.code, decryptErrorDetail),
+          holdResult.code || "session_expired",
+        );
+      }
+      throw new Error(describeAppleDownloaderFailure(primaryResult.code, decryptErrorDetail));
     }
 
     if (primaryResult.fatalOtherError) {
@@ -1014,12 +1028,15 @@ export class AppleMusicBackend implements DownloadBackend {
         ? result.fatalOtherError : undefined);
 
     if (decryptErrorDetail) {
-      await handleAppleDecryptFailure(decryptErrorDetail).catch(() => undefined);
-      throw new ProviderAuthError(
-        "apple-music",
-        describeAppleDownloaderFailure(result.code, decryptErrorDetail),
-        "session_expired",
-      );
+      const holdResult = await handleAppleDecryptFailure(decryptErrorDetail).catch(() => ({ held: false as const }));
+      if (holdResult?.held) {
+        throw new ProviderAuthError(
+          "apple-music",
+          holdResult.reason || describeAppleDownloaderFailure(result.code, decryptErrorDetail),
+          holdResult.code || "session_expired",
+        );
+      }
+      throw new Error(describeAppleDownloaderFailure(result.code, decryptErrorDetail));
     }
 
     if (result.fatalOtherError) {

@@ -27,10 +27,12 @@ const {
   AppleMusicBackend,
   describeAppleDownloaderFailure,
   isAppleDecryptFailure,
+  isAppleSessionFailure,
+  isAppleTruncatedSegmentError,
   isAppleUnavailableTrackError,
 } = await import("./apple-music-backend.js");
-const { ProviderAuthError } = await import("../provider-auth-error.js");
-const { executeWithSameOfferRetries } = await import("../../download/download-failure-policy.js");
+const { ProviderAuthError, errorIndicatesProviderAuth } = await import("../provider-auth-error.js");
+const { executeWithSameOfferRetries, classifyDownloadFailure } = await import("../../download/download-failure-policy.js");
 
 after(() => {
   clearStoredAppleMusicToken();
@@ -256,8 +258,9 @@ test("Apple downloader backend rejects with ProviderAuthError on 'Failed to run 
     (err: any) => {
       assert.ok(err instanceof ProviderAuthError);
       assert.equal(err.provider, "apple-music");
-      assert.equal(err.code, "session_expired");
-      assert.match(err.message, /Apple Music decryption failed because the wrapper session expired/);
+      assert.equal(err.code, "wrapper_unreachable");
+      assert.match(err.message, /Apple Music decryption wrapper is not answering/);
+      assert.doesNotMatch(err.message, /re-authenticate/i);
       assert.match(err.message, /Failed to run v2: decrypt/);
       return true;
     },
@@ -298,4 +301,188 @@ test("Apple downloader single track rejects with ProviderAuthError on 'Failed to
       return true;
     },
   );
+});
+
+test("truncated segment errors ('decode mdat', 'does not match expected length', 'unexpected EOF') are classified as transient and not auth failures (#144)", () => {
+  const realMessage1 = "Decrypting...  13%  (4.7/36 MB) Failed to run v2: decode mdat pos 4718142: read box body length 3145728 does not match expected length 1421683";
+  const realMessage2 = "decode mdat pos 17063423: read box body length 2097152 does not match expected length 1048576";
+  const realMessage2Short = "decode mdat pos 17063423 ...";
+  const unexpectedEofMessage = "Failed to run v2: decode mdat: unexpected EOF";
+
+  for (const msg of [realMessage1, realMessage2, realMessage2Short, unexpectedEofMessage]) {
+    assert.equal(isAppleTruncatedSegmentError(msg), true, `should recognize as truncated segment: ${msg}`);
+    assert.equal(isAppleDecryptFailure(msg), false, `should not be decrypt failure: ${msg}`);
+    assert.equal(isAppleSessionFailure(msg), false, `should not be session failure: ${msg}`);
+    assert.equal(errorIndicatesProviderAuth(msg), false, `should not indicate provider auth: ${msg}`);
+    assert.equal(classifyDownloadFailure(new Error(msg)), "transient", `should be classified transient: ${msg}`);
+
+    const desc = describeAppleDownloaderFailure(1, msg);
+    assert.match(desc, /exited with code 1/);
+    assert.doesNotMatch(desc, /re-authenticate/i);
+    assert.doesNotMatch(desc, /session expired/i);
+  }
+});
+
+test("downloader with real truncated-segment error does not trigger an auth hold and retries on same offer (#144)", async () => {
+  await auth.recordProviderAuthOk("apple-music", { force: true });
+  assert.equal(auth.providerNeedsReauth("apple-music"), false);
+
+  const realErrorLines = [
+    "Track 1 of 1: songs",
+    "1440904918",
+    "Decrypting...  13%  (4.7/36 MB) Failed to run v2: decode mdat pos 4718142: read box body length 3145728 does not match expected length 1421683",
+    "Error detected, exiting...",
+  ];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-mdat-test-"));
+
+  let callCount = 0;
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => {
+      callCount++;
+      return createMockChildProcess(realErrorLines, 1);
+    },
+    recordUnavailableTrack: () => {},
+    countMediaFiles: () => 0,
+    loadToken: () => ({ media_user_token: "test-token" }),
+    syncToken: () => {},
+  });
+
+  // Direct backend call rejects with a regular Error, NOT ProviderAuthError
+  await assert.rejects(
+    () => backend.download(
+      {
+        provider: "apple-music",
+        entityType: "album",
+        providerId: "1440904699",
+        downloadPath: testDownloadDir,
+      },
+      { onProgress: () => {} },
+    ),
+    (err: any) => {
+      assert.equal(err instanceof ProviderAuthError, false, "Must not throw ProviderAuthError");
+      assert.match(err.message, /decode mdat/);
+      assert.match(err.message, /does not match expected length/);
+      assert.doesNotMatch(err.message, /re-authenticate/i);
+      return true;
+    },
+  );
+
+  // Apple Music must NOT be held
+  assert.equal(auth.providerNeedsReauth("apple-music"), false, "Must not put Apple Music on hold");
+
+  // Inside executeWithSameOfferRetries: first attempt fails with truncated error, second succeeds
+  let attempt = 0;
+  const retryResult = await executeWithSameOfferRetries(
+    { sleep: async () => {} },
+    async () => {
+      attempt++;
+      if (attempt === 1) {
+        throw new Error(realErrorLines[2]);
+      }
+      return "download-success";
+    },
+  );
+
+  assert.equal(attempt, 2, "Should have retried the same offer");
+  assert.equal(retryResult, "download-success");
+  assert.equal(auth.providerNeedsReauth("apple-music"), false);
+});
+
+test("second real message 'decode mdat pos 17063423' retries on same offer without auth hold (#144)", async () => {
+  await auth.recordProviderAuthOk("apple-music", { force: true });
+  assert.equal(auth.providerNeedsReauth("apple-music"), false);
+
+  const realErrorLines = [
+    "Track 1 of 1: songs",
+    "1440904918",
+    "decode mdat pos 17063423: read box body length 2097152 does not match expected length 1048576",
+    "Error detected, exiting...",
+  ];
+  const testDownloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "apple-dl-mdat2-test-"));
+
+  const backend = new AppleMusicBackend({
+    preflight: async () => {},
+    spawn: () => createMockChildProcess(realErrorLines, 1),
+    recordUnavailableTrack: () => {},
+    countMediaFiles: () => 0,
+    loadToken: () => ({ media_user_token: "test-token" }),
+    syncToken: () => {},
+  });
+
+  await assert.rejects(
+    () => backend.download(
+      {
+        provider: "apple-music",
+        entityType: "album",
+        providerId: "1440904699",
+        downloadPath: testDownloadDir,
+      },
+      { onProgress: () => {} },
+    ),
+    (err: any) => {
+      assert.equal(err instanceof ProviderAuthError, false);
+      assert.match(err.message, /decode mdat pos 17063423/);
+      assert.doesNotMatch(err.message, /re-authenticate/i);
+      return true;
+    },
+  );
+
+  assert.equal(auth.providerNeedsReauth("apple-music"), false);
+});
+
+test("single real decrypt failure with ports answering and no session error does not trigger an auth hold (#144)", async () => {
+  resetAppleDecryptFailuresForTests();
+  await auth.recordProviderAuthOk("apple-music", { force: true });
+  assert.equal(auth.providerNeedsReauth("apple-music"), false);
+
+  // 1st decrypt failure with ports open and no wrapper log session error
+  const result = await handleAppleDecryptFailure("Decrypting... Failed to run v2: decrypt: internal cipher error", {
+    portsOpen: true,
+    hasSessionError: false,
+  });
+
+  assert.equal(result.held, false);
+  assert.equal(auth.providerNeedsReauth("apple-music"), false, "Single decrypt error with ports open must not trigger hold");
+});
+
+test("real decrypt failure with wrapper log Sign-In/CKC error triggers auth hold with re-authenticate message (#144)", async () => {
+  resetAppleDecryptFailuresForTests();
+  await auth.recordProviderAuthOk("apple-music", { force: true });
+  assert.equal(auth.providerNeedsReauth("apple-music"), false);
+
+  const result = await handleAppleDecryptFailure("Decrypting... Failed to run v2: decrypt: auth error", {
+    portsOpen: true,
+    hasSessionError: true,
+  });
+
+  assert.equal(result.held, true);
+  assert.equal(result.code, "session_expired");
+  assert.match(result.reason || "", /re-authenticate/i);
+  assert.equal(auth.providerNeedsReauth("apple-music"), true);
+
+  const authRow = auth.readProviderAuthPublic("apple-music");
+  assert.match(authRow?.lastError || "", /re-authenticate/i);
+
+  // Reset
+  await auth.recordProviderAuthOk("apple-music", { force: true });
+});
+
+test("providerAuthCopy returns 'decryption wrapper not answering' for unreachable holds and 'Re-authenticate' only for session errors (#144)", () => {
+  // 1. Unreachable wrapper hold
+  const unreachableCopy = auth.providerAuthCopy("apple-music", "Apple Music decryption wrapper is not answering (ports 10020/20020 not answering)");
+  assert.equal(unreachableCopy.banner, "Apple Music decryption wrapper is not answering");
+  assert.doesNotMatch(unreachableCopy.banner, /re-authenticate/i);
+  assert.equal(unreachableCopy.queueMessage, "Waiting for the Apple Music decryption wrapper");
+
+  // 2. Restarting / default unreachable copy (no lastError or ports down)
+  const defaultCopy = auth.providerAuthCopy("apple-music", null);
+  assert.equal(defaultCopy.banner, "Apple Music decryption wrapper is not answering");
+  assert.doesNotMatch(defaultCopy.banner, /re-authenticate/i);
+
+  // 3. Real session problem
+  const sessionCopy = auth.providerAuthCopy("apple-music", "Apple Music decryption failed because the wrapper session expired. Re-authenticate Apple Music from the Auth page.");
+  assert.equal(sessionCopy.banner, "Re-authenticate Apple Music");
+  assert.match(sessionCopy.banner, /re-authenticate/i);
+  assert.equal(sessionCopy.queueMessage, "Waiting for Apple Music re-authentication");
 });
