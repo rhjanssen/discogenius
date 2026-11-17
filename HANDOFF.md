@@ -1,21 +1,23 @@
 # Session Handoff
 
-- **Branch**: `agent/issue-136` (updating PR #136 / `agent/issue-133`)
+- **Branch**: `agent/issue-134` / `agent/issue-142`
 - **What is done**:
-  - **Issue #133 / PR #136**: Addressed all PO review feedback and resolved the timing-dependent test flake:
-    1. **Fixed timing-dependent test assertion in `provider-auth-state.test.ts`**: Seeded the `apple-music` auth row as `ok` with a fixed old `since` (matching `test-prov`), eliminating the millisecond collision between `recordProviderAuthOk` and `recordProviderAuthFailure`.
-    2. **Regression in `recordProviderAuthFailure` fixed**: `since` updates to `now` when transitioning from `ok` to `needs_reauth`, retaining `since` only when already `needs_reauth`.
-    3. **Targeted stuck rewrite & cleanup**: Removed unused `force` option from `recordProviderAuthFailure`. Only `apple-music` with `APPLE_WRAPPER_STUCK_MESSAGE` rewrites once when already held and does not rewrite again on duplicate calls. Generic `/stuck/i` messages on other providers are ignored.
-    4. **Thread-safe restart state derivation**: `hasAttemptedWrapperRestart`, `reconcileWrapperLoginStatus`, and `probeAppleWrapperHealth` derive whether a restart was attempted directly from persisted `authRow` in SQLite (`lastError === APPLE_WRAPPER_STUCK_MESSAGE`) rather than module globals across worker threads.
-    5. **Preserved real session failures**: `runAppleWrapperHoldProbe` checks wrapper `login_status.json` before restarting or overwriting with the stuck message, preventing real session errors from being hidden.
-    6. **Dual port readiness check & clean process group termination**: Supervisor probes both ports 10020 and 20020 with 1s timeout to catch accept backlogs. `setsid` and `stop_server()` ensure clean child process termination.
+  - **Issue #133 / PR #136 / release 2.26.2**: Merged onto `main`.
+    - Clean wrapper process termination, readiness check, and hold backoff.
+  - **Issue #134 / PR #142**: Addressed all PO review feedback:
+    1. **Spatial interlude re-queue fix**: Required track-level spatial offer (`source_quality` only, never `album_quality` fallback) in `UpgraderService` so stereo interludes that legitimately sit in Atmos albums are skipped and never queued in an infinite re-download loop.
+    2. **Regression test**: Added unit test `checkUpgrades does not queue stereo interlude in spatial album when track has no spatial offer` verifying that an Atmos album with 1 stereo-only track in the spatial library queues no jobs.
+    3. **Paced cursor neutrality**: Refactored the paced scan loop to compute `destination` first (without `continue`), check `budget` (breaking before cursor advance when budget is reached), advance `cursor = row.file_id`, and then execute the skip/`continue` guards.
+    4. **Hoisted prepared statements**: Hoisted all 7 `db.prepare` statements used by `resolveUpgradeDestination` into a context prepared once per `checkUpgrades` run, eliminating per-row statement preparation.
+    5. **Rebased cleanly onto latest `main` (`v2.26.2`)**.
+  - **Core changes from #134 preserved**:
+    - Explicit `slot` ("stereo" | "spatial" | "video"), `libraryId`, `libraryRoot`, and `acquisitionPlanId` determined from the file being upgraded and passed to `DownloadWaitQueue.enqueue` and command payloads.
+    - Single-track import fallback in `organizer.ts` (`organizeDownload` for `type === "track"`) to existing `TrackFiles.library_slot`.
+    - Tests: 13 tests in `upgrader-canonical.test.ts` and 4 tests in `import-pipeline.e2e.test.ts` all passing.
   - **Verification**:
-    - Full `yarn ci` passed (eslint 0 errors, api & app typecheck, 100% passing api & app unit tests across the entire repository, clean production builds).
-    - `provider-auth-state.test.ts` verified with 5 consecutive successful test runs with zero failures.
-    - In-container Docker shell test verified startup, process tree, clean process termination on restart, and both ports 10020 and 20020 answering.
-- **What is half-done**:
-  - None. All review items and test blocker from PR #136 resolved.
-- **What was verified against running container**:
-  - Docker shell-level test verified container startup with v11 entrypoint, verified parent/child process structure, simulated restart via `restart_server.txt`, verified all previous processes were terminated without orphans, and verified both ports 10020 and 20020 answer immediately after restart.
-- **Open questions for PO**:
-  - None. PR #136 is ready for merge.
+    - Rebased onto `origin/main` (v2.26.2 / `f29ef14e`).
+    - Full `yarn ci` passed (eslint 0 errors, typecheck, API tests pass, app tests pass, production build).
+- **What is half-done**: Nothing; ready for PO review and merge.
+- **What was NOT verified on LAN**:
+  - Cloud agent environment cannot reach LAN (`192.168.1.50` / `192.168.1.100` / live container). Live-server testing with real TIDAL token remains for LAN session / user.
+- **Open questions for PO**: None.

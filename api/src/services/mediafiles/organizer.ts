@@ -3001,7 +3001,44 @@ export class OrganizerService {
       const resolvedArtistName = artistContext.artistName || "Unknown Artist";
       const naming = getNamingConfig();
 
-      const requestedSlot = requestedTarget?.slot || raw.slot;
+      let fallbackSlot: "stereo" | "spatial" | null = null;
+      if (!requestedTarget?.slot && !raw.slot) {
+        const existingFile = db.prepare(`
+          SELECT library_slot
+          FROM TrackFiles
+          WHERE file_type = 'track'
+            AND (
+              (provider = ? AND provider_entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT))
+              OR (? IS NOT NULL AND canonical_track_mbid = ?)
+              OR (? IS NOT NULL AND canonical_recording_mbid = ?)
+            )
+          ORDER BY
+            CASE WHEN provider = ? AND CAST(provider_id AS TEXT) = CAST(? AS TEXT) THEN 0 ELSE 1 END,
+            id DESC
+          LIMIT 1
+        `).get(
+          streamingProviderId,
+          providerId,
+          trackRow?.mbid || null,
+          trackRow?.mbid || null,
+          raw.canonicalRecordingMbid || null,
+          raw.canonicalRecordingMbid || null,
+          streamingProviderId,
+          providerId,
+        ) as { library_slot?: string | null } | undefined;
+
+        const candidateSlot = String(existingFile?.library_slot || "").trim().toLowerCase();
+        if (candidateSlot === "stereo" || candidateSlot === "spatial") {
+          fallbackSlot = candidateSlot;
+        } else if (albumId) {
+          const canonicalContext = this.resolveCanonicalAlbumImportContext(raw, albumId);
+          if (canonicalContext?.slot === "stereo" || canonicalContext?.slot === "spatial") {
+            fallbackSlot = canonicalContext.slot;
+          }
+        }
+      }
+
+      const requestedSlot = requestedTarget?.slot || raw.slot || fallbackSlot;
       if (requestedSlot !== "stereo" && requestedSlot !== "spatial") {
         throw new Error("Audio import requires an explicit stereo or spatial destination");
       }
@@ -3016,7 +3053,7 @@ export class OrganizerService {
 
       const jobCanonicalTrackMbid = String(raw.canonicalTrackMbid || "").trim() || null;
       const jobCanonicalRecordingMbid = String(raw.canonicalRecordingMbid || "").trim() || null;
-      const jobSlot = String(raw.slot || "").trim() || null;
+      const jobSlot = String(raw.slot || requestedSlot || "").trim() || null;
       const jobTrackNumber = Number(raw.trackNumber || 0) > 0 ? Number(raw.trackNumber) : null;
       const jobVolumeNumber = Number(raw.volumeNumber || 0) > 0 ? Number(raw.volumeNumber) : null;
 
