@@ -191,14 +191,17 @@ test("recordProviderAuthFailure: updates since to now when transitioning from ok
   const failureSince = row1?.since;
 
   // Now test apple-music: ok -> needs_reauth updates since, then stuck message rewrite keeps since
-  await auth.recordProviderAuthOk("apple-music");
-  const appleOkRow = auth.readProviderAuthPublic("apple-music");
-  const appleOkSince = appleOkRow?.since;
+  const oldAppleOkSince = "2026-01-01T00:00:00.000Z";
+  dbModule.db.prepare(`
+    INSERT INTO ProviderAuthState (provider, status, since, updated_at)
+    VALUES ('apple-music', 'ok', ?, ?)
+    ON CONFLICT(provider) DO UPDATE SET status = 'ok', since = excluded.since, updated_at = excluded.updated_at
+  `).run(oldAppleOkSince, oldAppleOkSince);
 
   const appleFail1 = await auth.recordProviderAuthFailure("apple-music", "ports 10020 not answering");
   assert.equal(appleFail1.transitioned, true);
   const appleRow1 = auth.readProviderAuthPublic("apple-music");
-  assert.notEqual(appleRow1?.since, appleOkSince, "apple since must update on ok -> needs_reauth transition");
+  assert.notEqual(appleRow1?.since, oldAppleOkSince, "apple since must update on ok -> needs_reauth transition");
   const initialAppleFailSince = appleRow1?.since;
   assert.ok(initialAppleFailSince);
 
