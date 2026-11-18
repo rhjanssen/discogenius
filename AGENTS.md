@@ -5,18 +5,15 @@ session. This file is the single source of truth for rules; `docs/` holds the
 living design/operator docs and `docs/TASKS.md` is the backlog.
 
 ## Project identity & goals
-- Self-hosted music library manager that uses streaming-service rippers instead
-  of torrent indexers, plus discography deduplication on top of release-type
-  filtering.
-- Manages stereo, spatial (Atmos), and music-video libraries — by default in
-  three separate library roots.
-- Providers: TIDAL, Apple Music, Amazon Music, Spotify, YouTube / YouTube Music,
-  and Deezer. Each is an availability/download resource behind one shared
-  adapter contract (`docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md`); TIDAL is the
-  most exercised.
-- **Key decisions**: keep the TypeScript stack (Express + better-sqlite3 `api/`,
-  React + Vite + Fluent UI v9 `app/`). Frontend stays pure Fluent UI.
-  MusicBrainz is canonical identity; providers are availability/download only.
+- Self-hosted music library manager: streaming-service rippers instead of
+  torrent indexers, plus discography deduplication on top of release-type
+  filtering. Stereo, spatial (Atmos) and music-video libraries, by default in
+  three separate roots.
+- Providers (TIDAL, Apple Music, Amazon Music, Spotify, YouTube / YouTube Music,
+  Deezer) are availability/download resources behind one adapter contract
+  (`docs/STREAMING_PROVIDER_PLUGIN_CONTRACT.md`); TIDAL is the most exercised.
+- **Key decisions**: keep the TypeScript stack; frontend stays pure Fluent UI
+  v9; MusicBrainz is canonical identity.
 - Core views are catalog-primary (online catalog or local MusicBrainz). Provider
   data may supplement canonical holes (artwork asset ids, copyright, provider
   URLs, availability/downloads), but do not preserve provider-only
@@ -29,13 +26,38 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - `app/` — React + Vite + Fluent UI v9 + TanStack Query
 - `e2e/` — Playwright tests
 - `config/` — runtime state (TOML config, SQLite DB, provider tokens) — never commit
-- `.ref_*` — read-only reference checkouts; consult them, never import from them. They are provided
-  by the Cloud Agent environment (not this repo); look here first when copying
-  an approach from another project: `.ref_apple-music-downloader`,
+- `.ref_*` — read-only reference checkouts (from `install.sh`, not this repo).
+  Check them first when copying an approach; never import from them:
+  `.ref_apple-music-downloader`,
   `.ref_arr_scripts`, `.ref_fluentui`, `.ref_immich`, `.ref_jellyfin`,
   `.ref_kodi`, `.ref_lidarr`, `.ref_musicbrainz-docker`, `.ref_picard`,
   `.ref_qbittorrent`, `.ref_tidarr`, `.ref_tiddl`, `.ref_yt-dlp`.
 - `docs/LIDARR_STRUCTURE_ALIGNMENT.md` is a historical folder-mapping reference.
+
+## How to work (every change)
+- **Smallest change that meets the issue's acceptance criteria.** Subtract
+  before you add: delete what your change makes dead, migrate every caller and
+  drop the old path in the same PR. No speculative guards, options, wrappers or
+  abstractions.
+- **Fix root causes.** Reproduce first, then fix where the system first went
+  wrong. A guard, retry, fallback or swallowed error is a fix only if the state
+  it handles is legitimate; otherwise find what produced it. `rg` for every
+  instance of the same fault. Two failed fixes on one assumption: write the
+  assumption down and test it before a third.
+- **Keep context lean.** Targeted `rg` and ranged reads; never dump large files,
+  logs, lockfiles or test output. Send long output to a file and grep it.
+- **Proceed on reversible work** inside the issue without asking. Stop and
+  propose findings only for product decisions, larger fix rounds beyond the
+  issue, or irreversible steps (data deletion, releases, live data).
+- **Tests assert observable behaviour** (return values, HTTP responses, rows read
+  back, what a provider receives), with expected values taken from the
+  requirement. A test must fail when the behaviour breaks and survive an
+  internal refactor. A bug fix gets a test that fails before the fix.
+- **No narrating comments.** Comment only a non-obvious *why* or an external
+  constraint. No commented-out code, debug logging or scratch files.
+- **Explain every number you report** (test counts, timings, row counts): say
+  what was measured and rule out skipped, cached or retried work.
+- **A lesson that keeps recurring becomes a test, type or lint**, not more text here.
 
 ## Architecture & development rules
 - TypeScript everywhere; Yarn 1.x only.
@@ -46,7 +68,9 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
   drains and dispatches to handlers in `commands/handlers/`, and `scheduler.ts`
   enqueues due scheduled tasks. Use `CommandExecutor.yieldToEventLoop()` in heavy
   inline loops.
-- Validate external boundaries explicitly.
+- Parse external data (request bodies, provider responses, config, files) once
+  at the boundary into typed models; trust internal types after that. Command
+  handlers must converge when re-run or resumed after a crash.
 - Respect `monitored_lock` / `monitor_lock`: automation must never flip
   user-locked monitor state. Automatic curation (`enable_redundancy_filter`,
   default on) is optional. Off monitors one edition per release group and
@@ -111,10 +135,9 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 ## Robert's preferences & testing
 - Use artists **Bastille** and **Bakermat** for live app tests.
 - Real-data testing over mocks (live provider token in `config/`).
-- Propose findings before larger fix rounds.
-- **Reviewing other AI's work**: be critical. Run FULL `yarn ci` because vite
-  `app build` tolerates type errors. Clean scratch debris. Verify behavioural
-  claims against the running container before trusting them.
+- **Reviewing other AI's work**: be critical; run FULL `yarn ci` (vite `app
+  build` tolerates type errors) and verify behavioural claims against the
+  running container before trusting them.
 - **Native tools**: do not claim ffmpeg/fpcalc are untestable on Windows. Use
   `winget install` or test inside the Docker container (the Dockerfile bundles
   `ffmpeg` + `libchromaprint-tools` for fpcalc).
@@ -127,69 +150,68 @@ living design/operator docs and `docs/TASKS.md` is the backlog.
 - **Developer Agents (Cursor, Claude Code, Google Antigravity / Gemini, Codex)**:
   pick up the next `ready` issue (or task assigned via `HANDOFF.md`), work on a
   dedicated branch, verify with `yarn ci` (and against the running container when
-  on the LAN), and open a PR. Propose findings before larger fix rounds instead
-  of acting unilaterally.
-- **Session handover (`HANDOFF.md`)**: whichever agent is stopping rewrites
-  `HANDOFF.md` at the end of its session with the current branch, what is done,
-  what is half-done, what was verified against the running container, and open
-  questions for the PO. Keep it a short overwritten note, never a growing log.
-- **Cross-agent delegation & quota-aware routing (`scripts/agent-env/usage-status.mjs` & `dispatch.mjs` + `.github/workflows/agent-dispatch.yml`)**:
-  - **Priority rule**: **Cursor shares subscription quota with Grok Bot (Product Owner)**. Always route dev work to **Claude** or **Gemini / Antigravity** first, and reserve **Cursor** only as a last resort when both Claude and Gemini are out of usage.
-  - **Check live usage limits**: `node scripts/agent-env/usage-status.mjs` (or `--json`). Reads Claude's live 5h/7d rolling usage % from `%APPDATA%/Claude/plan-usage-history.json`, local cooldown state (`config/.agent-usage-state.json`), and GitHub `quota-exhausted:*` labels, and outputs `recommendedAgent`.
-  - **Trigger via GitHub Labels (Issues or PRs)**: add label `agent:auto` (auto-routes to Claude/Gemini), `agent:claude`, `agent:gemini`, or `agent:cursor`. Assigning an issue that carries one of these labels (or `ready`) also triggers `.github/workflows/agent-dispatch.yml`.
-  - **Trigger via GitHub Comments (`@mention`)**: comment `@agent-auto`, `@claude`, `@gemini`, or `@cursor` on any Issue or PR.
-  - **Trigger via CLI (`scripts/agent-env/dispatch.mjs`)**:
-    - Auto-route (Claude/Gemini first, Cursor last, with automatic failover): `node scripts/agent-env/dispatch.mjs --to auto --issue <N>`
-    - Claude Cloud VM (`claude.ai/code`): `node scripts/agent-env/dispatch.mjs --to claude-cloud --issue <N>`
-    - Gemini Cloud VM (GitHub Actions): `node scripts/agent-env/dispatch.mjs --to gemini --issue <N>`
-    - Local Antigravity / Gemini (LAN access): `node scripts/agent-env/dispatch.mjs --to antigravity --issue <N>`
-    - Cursor Cloud VM (fallback only): `node scripts/agent-env/dispatch.mjs --to cursor-cloud --issue <N>`
-  - **Automatic mid-task failover**: all agents work on branch `agent/issue-<N>`. If Claude or Gemini hits its usage limit mid-run, `.github/workflows/agent-dispatch.yml` (and `dispatch.mjs`) automatically commits & pushes WIP to `origin/agent/issue-<N>`, labels `quota-exhausted:<agent>`, and triggers the other agent (`claude` ↔ `gemini`) to resume from `agent/issue-<N>` and `HANDOFF.md`.
+  on the LAN), and open a PR.
+- **Session handover (`HANDOFF.md`)**: the agent that stops overwrites it with
+  branch, done, half-done, what was live-verified, and open questions for the
+  PO. A short note, never a growing log.
+- **Quota-aware routing** (`scripts/agent-env/usage-status.mjs`, `dispatch.mjs`,
+  `.github/workflows/agent-dispatch.yml`):
+  - Route dev work to Claude or Gemini first. Cursor shares quota with Grok Bot
+    (PO), so use it only when both are out.
+  - `node scripts/agent-env/usage-status.mjs [--json]` prints live usage
+    (Claude 5h/7d, local cooldowns, `quota-exhausted:*` labels) and `recommendedAgent`.
+  - Triggers: label `agent:auto|claude|gemini|cursor` (assigning a labelled or
+    `ready` issue also fires), comment `@agent-auto|@claude|@gemini|@cursor`, or
+    `node scripts/agent-env/dispatch.mjs --to <auto|claude-cloud|gemini|antigravity|cursor-cloud> --issue <N>`.
+  - Failover: agents work on `agent/issue-<N>`. On quota exhaustion the workflow
+    pushes WIP, labels `quota-exhausted:<agent>`, and the other agent resumes
+    from that branch and `HANDOFF.md`.
 
 ## Cloud & local agent environment (Cursor, Claude Code, Google Antigravity / Gemini)
-- All agents share the same setup scripts and rules so work can move freely
-  between them:
-  `scripts/agent-env/install.sh` (`ffmpeg` + `fpcalc` check, `yarn install`,
-  `.ref_*` clones, library dirs; idempotent, `SKIP_REFS=1` skips the clones) and
-  `scripts/agent-env/start.sh` (dev stack on API `127.0.0.1:3737` + Vite
-  `127.0.0.1:8080` with repo-local `library/` and `downloads/` roots; exits 0
-  when both are already up).
-- **Cursor `environment.json`**: `install` = `cd /agent/repos/discogenius && bash
-  scripts/agent-env/install.sh`, `start` = `cd /agent/repos/discogenius && bash
-  scripts/agent-env/start.sh`.
-- **Claude Code on the web**: the environment setup script runs one directory
-  above the checkout, so it is `cd discogenius && bash scripts/agent-env/install.sh`.
-  There is no start hook: run `bash scripts/agent-env/start.sh` as a background
-  process when you need the running app. `CLAUDE.md` imports this file.
-- **Google Antigravity (`agy`) / Gemini**: loads `AGENTS.md` and
-  `.agents/skills.json` (`skills/*/SKILL.md`) natively both locally and in
-  GitHub Actions (`@gemini` / `agent:gemini`).
-- Containers without IPv6 cannot bind Vite's default `::`; `start.sh` then sets
-  `DISCOGENIUS_DEV_HOST=0.0.0.0`.
-- Cloud agents cannot reach the LAN (NAS `192.168.1.50`, local MusicBrainz mirror
-  `192.168.1.100`, live container), have no provider tokens unless set as secrets,
-  and have no `tiddl`. Use the public catalogue route there; live-server work
-  stays with an agent on the LAN (Antigravity, local Claude Code, or Grok Bot).
+- All agents share `scripts/agent-env/install.sh` (`ffmpeg`/`fpcalc` check,
+  `yarn install`, `.ref_*` clones, library dirs; idempotent, `SKIP_REFS=1` skips
+  clones) and `scripts/agent-env/start.sh` (API `127.0.0.1:3737` + Vite
+  `127.0.0.1:8080`, repo-local `library/` and `downloads/`; exits 0 when up; sets
+  `DISCOGENIUS_DEV_HOST=0.0.0.0` where IPv6 is missing).
+- **Cursor `environment.json`**: `install`/`start` = `cd /agent/repos/discogenius
+  && bash scripts/agent-env/{install,start}.sh`.
+- **Claude Code on the web**: setup runs one dir above the checkout (`cd
+  discogenius && bash scripts/agent-env/install.sh`); no start hook, so run
+  `start.sh` in the background when needed. `CLAUDE.md` imports this file.
+- **Antigravity (`agy`) / Gemini** loads `AGENTS.md` and `.agents/skills.json`
+  (`skills/*/SKILL.md`) natively, locally and in GitHub Actions.
+- Cloud agents cannot reach the LAN (NAS `192.168.1.50`, MusicBrainz mirror
+  `192.168.1.100`, live container), have no provider tokens unless set as
+  secrets, and have no `tiddl`. Use the public catalogue route there; live-server
+  work stays with a LAN agent (Antigravity, local Claude Code, or Grok Bot).
+
+## Before you say done
+1. Full `yarn ci` is green; failing test NAMES compared with `main` (below).
+2. The new or changed path has a behaviour test that fails without the change.
+3. Blast radius: `rg` every consumer of what you changed (symbols, SQL columns,
+   API JSON fields, string literals, CHECK values). Name the one fact that makes
+   the change safe and prove it with a test or script, not prose.
+4. Checked against the real artifact: the running app with Bastille and
+   Bakermat when on the LAN; otherwise write "not live-verified" in the PR.
+5. Diff has no dead code, debug output, scratch files or narrating comments.
+6. PR body: goal, what changed, how it was verified (commands and results),
+   what was not verified. Then update `HANDOFF.md`.
 
 ## Validation checklist
-- `yarn --cwd api build` after backend changes; `yarn --cwd app build` after
-  frontend changes.
-- `yarn ci` = `yarn lint && yarn typecheck && yarn test:api && yarn build`.
-  ALWAYS run before tagging a release to catch tsc-only errors.
+- `yarn ci` = `yarn lint && yarn typecheck && yarn test:api && yarn build`;
+  always before a PR or release tag (catches tsc-only errors).
 - `docker compose up -d --build` when runtime packaging changes.
 - **Production-service tests boot the ACTIVE schema** via
-  `api/src/test-support/active-schema-fixture.ts`. `domain-baseline.ts` is the
-  aspirational CORE schema contract (catalogue/library only) and is never what
-  `initDatabase()` creates. Getting that mixup wrong once let an UPDATE writing
-  a non-existent column ship with a fully green suite.
+  `api/src/test-support/active-schema-fixture.ts` (see Database rules); testing
+  against `domain-baseline.ts` once shipped an UPDATE to a non-existent column
+  with a fully green suite.
 - **Judge a change by failing test NAMES, not counts.** Capture the TAP output
   before and after and `comm` the sorted `not ok` lines; zero newly-failing is
   the gate. `api/scripts/run-tests.mjs` retries clone-flake files in isolation
   and APPENDS that output, so cut at the first `1..N` line before comparing or
   you will read the retry summary as the main one.
-- Test flake: the node test-runner occasionally fails a whole file with "Unable
-  to deserialize cloned data" — rerun in isolation before calling it a
-  regression.
+- Flake: a whole file failing with "Unable to deserialize cloned data" — rerun
+  it in isolation before calling it a regression.
 - Renames are done one table family per commit, gated by `tsc` plus the
   failure-name comparison. A value used as a string literal (e.g. an
   `entity_type` CHECK) must land together with its fixture sweep — `tsc` cannot
@@ -278,9 +300,8 @@ from. Same reason `foreign_release_id` keeps its name.
   something against `domain-baseline` proves nothing about production.
 
 ## Import & M4A
-- M4A stores tags fine (iTunes-style atoms).
-- The duration "—" bug was `music-metadata` failing on Atmos MP4; fixed with
-  `probeMediaDuration()` (ffprobe).
+- M4A stores tags fine (iTunes atoms). Atmos MP4 durations come from
+  `probeMediaDuration()` (ffprobe) because `music-metadata` fails on them.
 - A track stays "unknown" when `music-metadata` fails and the filename-title
   fuzzy match to a provider/MB recording also fails.
 
