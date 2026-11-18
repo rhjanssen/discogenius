@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.5] - 2026-11-18
+
+### Fixed
+
+- Quality upgrades no longer import files into the library and then fail with "imported tracks without exact provider offer identity". Album and track upgrades now carry the exact track offers of the winning acquisition plan, and an upgrade whose offers cannot be resolved is skipped instead of queued. At import time, a payload without offers is rebuilt from the current acquisition plan, and if that is not possible the import stops before any file is moved into the library, so the same albums are no longer re-downloaded every upgrade check (#148).
+
 ## [2.26.4] - 2026-11-17
 
 ### Fixed
