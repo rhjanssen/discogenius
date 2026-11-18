@@ -1,21 +1,25 @@
 # Session Handoff
 
-- **Branch**: `agent/issue-144` (PR #145 for Issue #144)
+- **Branch**: `agent/issue-148` (PR for Issue #148)
 - **What is done**:
-  - **Issue #144**: Fixed truncated-segment 'decode mdat' errors being misclassified as Apple auth / session expiry:
-    1. **Truncated segment error classifier (`isAppleTruncatedSegmentError`)**: Defined `/decode mdat|does not match expected length|unexpected eof/iu` in `provider-auth-error.ts` and re-exported from `apple-music-backend.ts`. Excluded from `isAppleDecryptFailure`, `isAppleSessionFailure`, `errorIndicatesProviderAuth`, and `asProviderAuthError`.
-    2. **Transient retry policy**: `classifyDownloadFailure` in `download-failure-policy.ts` classifies truncated segment errors as `transient`, retrying them on the same offer via `executeWithSameOfferRetries` without burning same-offer attempts or triggering an auth hold.
-    3. **Regex precision**: Changed `failed to run v2(?::\s*decrypt)?` to `failed to run v2:\s*decrypt` in both `APPLE_DECRYPT_FAILURE_PATTERN` and `AUTH_FAILURE_TEXT` so v2 decode steps (`Failed to run v2: decode mdat`) do not match decrypt failures.
-    4. **Downloader progress line parsing**: Updated `parseAppleDownloaderProgressLine` so truncated segment lines are recognized as error lines and their detailed status messages are preserved for logging/diagnostics instead of collapsing to generic "No tracks downloaded".
-    5. **Auth hold gating**: Updated `handleAppleDecryptFailure` and `AppleMusicBackend`: only wrapper-unreachable (`portsOpen === false`), Sign-In or CKC errors in the wrapper log (`checkWrapperSessionOrLogErrors`), or repeated real decrypt errors (`count >= APPLE_DECRYPT_FAILURE_THRESHOLD` within 10m window) trigger an auth hold. A single isolated decrypt failure with open ports and no session error throws a regular Error instead of `ProviderAuthError`, avoiding false auth holds.
-    6. **Hold message & banner wording**: Updated `providerAuthCopy` and `handleAppleDecryptFailure` so restarting or unreachable wrappers receive "Apple Music decryption wrapper is not answering" rather than "re-authenticate". The "Re-authenticate Apple Music" banner and instructions are shown only when the wrapper or downloader reports an actual session problem (Sign-In, CKC, or expired session).
-    7. **Comprehensive tests**: Added unit tests in `apple-music-hold.test.ts` and `download-failure-policy.test.ts` with both production downloader messages (`Decrypting...  13%  (4.7/36 MB) Failed to run v2: decode mdat pos 4718142...` and `decode mdat pos 17063423...`), unexpected EOF, single decrypt errors, wrapper log Sign-In/CKC errors, and hold message copy.
+  - **Issue #148**: Fixed quality upgrade import failure where commands organized files and then failed with `[ImportDownload] Acquisition plan <id> imported tracks without exact provider offer identity`:
+    1. **Upgrader enqueue identity (`UpgraderService`)**:
+       - Enqueue payloads for both `DownloadAlbum` and `DownloadTrack` upgrades now carry `trackOffers` (and `acquisitionMode` where appropriate) whenever `acquisitionPlanId` is set, matching the winning plan's assignments (`providerTrackItemId`, `providerAudioVariantId`, canonical MBIDs, edition IDs) built via `buildAcquisitionDownloadCommand`.
+       - If matching offers cannot be built or a provider/edition mismatch is detected against the winning plan, upgrade enqueue is skipped closed rather than enqueued without identity.
+       - Enqueue now selects from `SelectedAcquisitionPlans` (winning plan) with in-memory memoization per plan ID during the check pass.
+       - Added `trackOffers?: DownloadTrackOffer[];` to `DownloadTrackCommand` in `command-bodies.ts`.
+    2. **Import-phase offer reconstruction & pre-organize guard (`downloaded-tracks-import-service.ts`)**:
+       - Added `reconstructPlanTrackOffers(planId, expectedProvider?, expectedReleaseMbid?)` using `evaluateAcquisitionDownload(db, planId, { allowUnverifiedProjection: true })`.
+       - `DownloadedTracksImportService.process`: Refuses to organize files into the library if `acquisitionPlanId` is set, `trackOffers` is empty, and offers cannot be reconstructed from the plan, failing closed before any library mutation.
+       - `persistDownloadedProviderProvenance`: If `trackOffers` is empty and `acquisitionPlanId` is set, reconstructs offers from the current acquisition plan to stamp `provider_item_id` and `source_audio_variant_id` on `TrackFiles` without throwing.
+    3. **Tests**:
+       - `upgrader-canonical.test.ts`: Added unit tests verifying `checkUpgrades` enqueues album-level upgrades with `trackOffers` and `acquisitionMode`, single-track upgrades with that specific track offer, and refuses offers when provider or edition diverges from winning plan.
+       - `import-operation-identity.test.ts`: Added unit tests verifying provenance stamping with plan payload, plan offer reconstruction for current-main payloads, rejection when plan does not exist, provider/edition mismatch rejection, and failing closed before organizing files.
   - **Verification**:
-    - Rebased cleanly onto latest `main` (`789d8a06` including #134).
-    - Full `yarn ci` passed (eslint 0 errors, api and app typecheck, 2746/2746 passing api tests, 201/201 passing app tests, clean api and app production builds).
+    - Full `yarn ci` passed (`yarn lint`, `yarn typecheck`, `yarn test:api` [2758/2758 passing], `yarn test:app` [201/201 passing], `yarn build`).
 - **What is half-done**:
-  - None. All acceptance criteria for Issue #144 are implemented and verified.
+  - None. All acceptance criteria for Issue #148 are met.
 - **What was verified against running container**:
-  - Simulated process and socket-level responses matching wrapper behavior; automated test suite verifies all download paths, auth holds, same-offer retries, and banner rendering.
+  - Validated database and download pipeline against active schema (user_version 46).
 - **Open questions for PO**:
-  - None. Ready for review.
+  - None. PR #147 remains compatible with this enqueue and import contract.

@@ -288,6 +288,7 @@ export interface ReconcileMediaServersCommand extends CommandBodyCommon {
 
 export interface DownloadTrackCommand extends CommandBodyCommon {
   type?: "track";
+  trackOffers?: DownloadTrackOffer[];
 }
 
 export interface DownloadVideoCommand extends CommandBodyCommon {

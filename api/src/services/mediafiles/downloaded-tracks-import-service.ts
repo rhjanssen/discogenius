@@ -33,6 +33,7 @@ import {
 } from "../music/quality-profile-policy.js";
 import { classifyNeutralAudio } from "../providers/provider-quality.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
+import { evaluateAcquisitionDownload } from "../music/acquisition-download-command.js";
 import { deriveQuality, parseAudioFile } from "./audioUtils.js";
 import { transcodeForQualityProfile } from "./quality-profile-transcoder.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
@@ -948,6 +949,27 @@ export function selectProvenanceOffer(
     return refuse();
 }
 
+export function reconstructPlanTrackOffers(
+    planId: number,
+    expectedProvider?: string | null,
+    expectedReleaseMbid?: string | null,
+): DownloadTrackOffer[] | null {
+    const evaluation = evaluateAcquisitionDownload(db, planId, { allowUnverifiedProjection: true });
+    if (evaluation.status !== "ready") return null;
+
+    const command = evaluation.command;
+    if (expectedProvider && command.body.provider && command.body.provider !== expectedProvider) {
+        return null;
+    }
+    if (expectedReleaseMbid && command.body.releaseMbid && command.body.releaseMbid !== expectedReleaseMbid) {
+        return null;
+    }
+
+    const offers = command.body.trackOffers;
+    if (!Array.isArray(offers) || offers.length === 0) return null;
+    return offers;
+}
+
 export function persistDownloadedProviderProvenance(
     libraryId: number | null | undefined,
     organizeResult: OrganizeResult,
@@ -955,7 +977,15 @@ export function persistDownloadedProviderProvenance(
     acquisitionPlanId?: number | null,
     releaseMbid?: string | null,
 ): void {
-    if (trackOffers.length === 0) {
+    let effectiveOffers = trackOffers;
+    if (effectiveOffers.length === 0 && acquisitionPlanId != null) {
+        const reconstructed = reconstructPlanTrackOffers(acquisitionPlanId, undefined, releaseMbid);
+        if (reconstructed && reconstructed.length > 0) {
+            effectiveOffers = reconstructed;
+        }
+    }
+
+    if (effectiveOffers.length === 0) {
         if (acquisitionPlanId != null && organizeResult.processedTrackIds.length > 0) {
             throw new Error(
                 `[ImportDownload] Acquisition plan ${acquisitionPlanId} imported tracks without exact provider offer identity`,
@@ -1035,7 +1065,7 @@ export function persistDownloadedProviderProvenance(
              * were already correctly placed. Provider narrows a genuine
              * ambiguity; it never removes the only answer.
              */
-            const byTrackId = trackOffers.filter((offer) =>
+            const byTrackId = effectiveOffers.filter((offer) =>
                 String(offer.providerTrackId) === String(providerTrackId));
             const narrowed = byTrackId.length > 1 && file.provider
                 ? byTrackId.filter((offer) => offer.provider === file.provider)
@@ -1506,6 +1536,23 @@ export class DownloadedTracksImportService {
             console.warn(`[ImportDownload] Download workspace missing or empty for ${type} ${providerId}, but imported library file(s) already exist. Recovering import job.`);
         } else {
             cancellationCheckpoint("before organizing downloaded files");
+            if (type !== "video" && job.payload.acquisitionPlanId != null) {
+                const hasOffers = Array.isArray(job.payload.trackOffers) && job.payload.trackOffers.length > 0;
+                if (!hasOffers) {
+                    const reconstructed = reconstructPlanTrackOffers(
+                        job.payload.acquisitionPlanId,
+                        job.payload.provider,
+                        job.payload.releaseMbid,
+                    );
+                    if (reconstructed && reconstructed.length > 0) {
+                        job.payload.trackOffers = reconstructed;
+                    } else {
+                        throw new Error(
+                            `[ImportDownload] Acquisition plan ${job.payload.acquisitionPlanId} has no exact provider offers available for ${job.payload.provider || "import"}; refusing to organize files without identity`,
+                        );
+                    }
+                }
+            }
             markImportLibraryMutationStarted(job.id);
             if (type !== "video" && job.payload.libraryId != null) {
                 options.updateState({

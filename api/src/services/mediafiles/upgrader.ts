@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { db } from "../../database.js";
 import { Config } from "../config/config.js";
 import {CommandNames} from "../commands/command-names.js";
+import { type DownloadTrackOffer, type DownloadAlbumCommand, type DownloadTrackCommand } from "../commands/command-bodies.js";
 import { updateAlbumDownloadStatus } from "../download/download-state.js";
 import { downloadProcessor } from "../download/download-processor.js";
 import { DownloadWaitQueue, isSpatialQualityOrOffer } from "../download/download-wait-queue.js";
@@ -12,7 +13,7 @@ import { conformExistingTrackFile } from "./library-quality-conform.js";
 import { readIntEnv } from "../../utils/env.js";
 import { isSpatialAudioQuality } from "../../utils/spatial-audio.js";
 import { providerResolvedAlbumIdSql } from "../providers/provider-item-artist-scope.js";
-import { acquisitionProfileSlot } from "../music/acquisition-download-command.js";
+import { acquisitionProfileSlot, buildAcquisitionDownloadCommand, type AcquisitionDownloadCommand } from "../music/acquisition-download-command.js";
 
 export type UpgradeDetail = {
     mediaId: string;
@@ -26,6 +27,7 @@ export type UpgradeDetail = {
     libraryId?: number | null;
     acquisitionPlanId?: number | null;
     libraryRoot?: string | null;
+    trackId?: number | null;
 };
 
 export type UpgradeResult = {
@@ -594,7 +596,7 @@ export class UpgraderService {
             selectPlanByTrack: db.prepare(`
                 SELECT plan.id
                 FROM AcquisitionPlanTracks plan_track
-                JOIN AcquisitionPlans plan ON plan.id = plan_track.plan_id
+                JOIN SelectedAcquisitionPlans plan ON plan.id = plan_track.plan_id
                 WHERE plan_track.track_id = ?
                   AND plan.library_id = ?
                   AND plan.state = 'current'
@@ -723,6 +725,7 @@ export class UpgraderService {
                             libraryId: destination.libraryId,
                             acquisitionPlanId: destination.acquisitionPlanId,
                             libraryRoot: destination.libraryRoot,
+                            trackId: row.track_id,
                         });
                     } catch (error) {
                         console.error(
@@ -754,6 +757,7 @@ export class UpgraderService {
                     libraryId: destination.libraryId,
                     acquisitionPlanId: destination.acquisitionPlanId,
                     libraryRoot: destination.libraryRoot,
+                    trackId: row.track_id,
                 });
 
                 if (row.media_type === 'Music Video') {
@@ -785,6 +789,15 @@ export class UpgraderService {
         const trackMediaIdsQueuedViaAlbum = new Set<string>();
         let albumsLoopCounter = 0;
         let albumTrackTransferLoopCounter = 0;
+
+        const planCommandCache = new Map<number, AcquisitionDownloadCommand | null>();
+        const getOrBuildPlanCommand = (planId: number): AcquisitionDownloadCommand | null => {
+            if (planCommandCache.has(planId)) return planCommandCache.get(planId)!;
+            const cmd = buildAcquisitionDownloadCommand(db, planId);
+            planCommandCache.set(planId, cmd);
+            return cmd;
+        };
+
         for (const target of albumsNeedingUpgrade.values()) {
             albumsLoopCounter++;
             await this.maybeYield(albumsLoopCounter);
@@ -814,6 +827,19 @@ export class UpgraderService {
             if (albumTracksToUpgrade.length >= 3 || albumTracksToUpgrade.length >= totalAlbumTracks * 0.5) {
                 console.log(`[UPGRADER] Queuing ${target.provider} album ${target.albumId} (${target.slot}) for upgrade (${albumTracksToUpgrade.length}/${totalAlbumTracks} tracks need upgrade)`);
 
+                let planCommand: AcquisitionDownloadCommand | null = null;
+                if (target.acquisitionPlanId != null) {
+                    planCommand = getOrBuildPlanCommand(target.acquisitionPlanId);
+                    const planOffers = planCommand?.body.trackOffers ?? [];
+                    const matchesProvider = planCommand?.body.provider === target.provider;
+                    const matchesAlbum = planCommand?.body.providerId === target.albumId
+                        || planOffers.some(o => o.providerAlbumId === target.albumId);
+                    if (!planCommand || !matchesProvider || !matchesAlbum) {
+                        console.log(`[UPGRADER] Skipping album-level upgrade for ${target.provider} album ${target.albumId}: cannot build matching offers from acquisition plan ${target.acquisitionPlanId}.`);
+                        continue;
+                    }
+                }
+
                 updateAlbumDownloadStatus(target.albumId);
 
                 DownloadWaitQueue.enqueue({
@@ -824,11 +850,14 @@ export class UpgraderService {
                     providerId: target.albumId,
                     slot: target.slot,
                     payload: {
+                        ...(planCommand ? planCommand.body : {}),
                         providerId: target.albumId,
                         provider: target.provider,
                         type: "album",
                         reason: "upgrade",
-                        url: buildStreamingMediaUrl("album", target.albumId, target.provider),
+                        url: (planCommand && planCommand.body.url)
+                            ? planCommand.body.url
+                            : buildStreamingMediaUrl("album", target.albumId, target.provider),
                         slot: target.slot,
                         ...(target.libraryId ? { libraryId: target.libraryId } : {}),
                         ...(target.acquisitionPlanId ? { acquisitionPlanId: target.acquisitionPlanId } : {}),
@@ -866,6 +895,23 @@ export class UpgraderService {
                 continue;
             }
 
+            let matchingOffer: DownloadTrackOffer | undefined;
+            let planCommand: AcquisitionDownloadCommand | null = null;
+            if (!isVideo && d.acquisitionPlanId != null) {
+                planCommand = getOrBuildPlanCommand(d.acquisitionPlanId);
+                const planOffers = planCommand?.body.trackOffers ?? [];
+                const matchesProvider = planCommand?.body.provider === d.provider;
+                if (!planCommand || !matchesProvider) {
+                    console.log(`[UPGRADER] Skipping ${jobType} upgrade for ${d.provider}:${d.mediaId}: cannot resolve matching offer from acquisition plan ${d.acquisitionPlanId}.`);
+                    continue;
+                }
+                matchingOffer = planOffers.find(o => String(o.providerTrackId) === String(d.mediaId));
+                if (!matchingOffer) {
+                    console.log(`[UPGRADER] Skipping ${jobType} upgrade for ${d.provider}:${d.mediaId}: cannot resolve matching offer from acquisition plan ${d.acquisitionPlanId}.`);
+                    continue;
+                }
+            }
+
             console.log(`[UPGRADER] Queuing ${jobType} upgrade for ${d.provider}:${d.mediaId} (${d.slot}): ${d.reason}`);
 
             DownloadWaitQueue.enqueue({
@@ -884,6 +930,13 @@ export class UpgraderService {
                     slot: d.slot,
                     ...(d.libraryId ? { libraryId: d.libraryId } : {}),
                     ...(d.acquisitionPlanId ? { acquisitionPlanId: d.acquisitionPlanId } : {}),
+                    ...(matchingOffer ? {
+                        trackOffers: [matchingOffer],
+                        canonicalTrackMbid: matchingOffer.canonicalTrackMbid,
+                        canonicalRecordingMbid: matchingOffer.canonicalRecordingMbid,
+                        releaseMbid: planCommand?.body.releaseMbid,
+                        releaseGroupMbid: planCommand?.body.releaseGroupMbid,
+                    } : {}),
                     ...(d.libraryRoot ? { libraryRoot: d.libraryRoot } : {}),
                 },
                 priority: -5,

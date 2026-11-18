@@ -12,6 +12,8 @@ import {
   prepareActiveSchemaEnv,
   resetActiveSchemaRows,
 } from "../../test-support/active-schema-fixture.js";
+import { seedSelectedAcquisitionPlan } from "../../test-support/acquisition-plan-fixture.js";
+import { getDownloadWorkspacePath } from "../download/download-routing.js";
 
 // Production-service test → ACTIVE schema, never domain-baseline.
 const { tempDir } = prepareActiveSchemaEnv("import-operation-identity");
@@ -24,6 +26,8 @@ const {
   releaseGroupMbidFromJobContext,
   ensureDestAlbumArtworkForFileIds,
   assertImportedAudioTagsApplied,
+  reconstructPlanTrackOffers,
+  DownloadedTracksImportService,
 } = await import("./downloaded-tracks-import-service.js");
 
 after(() => closeActiveSchemaDb(dbModule, tempDir));
@@ -719,4 +723,270 @@ test("the same recording on two editions is the plan's own offer, not an ambiguo
   ).get(fileId) as { provider_item_id: number; source_audio_variant_id: number };
   assert.equal(row.provider_item_id, item.id);
   assert.equal(row.source_audio_variant_id, plannedVariant.id);
+});
+
+function seedPlanGraph(input: {
+  provider: string;
+  providerReleaseId: string;
+  providerTrackId: string;
+  releaseGroupMbid: string;
+  releaseMbid: string;
+  trackMbid: string;
+  recordingMbid: string;
+  libraryId: number;
+  quality?: string;
+}) {
+  const artist = db.prepare("SELECT id, mbid FROM ArtistMetadata WHERE mbid = 'op-artist'").get() as { id: number; mbid: string };
+
+  const album = db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+    VALUES (?, ?, ?, 'Plan Album', 'album')
+    RETURNING id
+  `).get(input.releaseGroupMbid, artist.mbid, artist.id) as { id: number };
+
+  const edition = db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, artist_metadata_id, title, track_count, media_count)
+    VALUES (?, ?, ?, ?, ?, 'Plan Edition', 1, 1)
+    RETURNING id
+  `).get(input.releaseMbid, album.id, input.releaseGroupMbid, artist.mbid, artist.id) as { id: number };
+
+  const rec = db.prepare(`
+    INSERT INTO Recordings (mbid, title, artist_mbid, artist_metadata_id)
+    VALUES (?, 'Plan Rec', ?, ?)
+    RETURNING id
+  `).get(input.recordingMbid, artist.mbid, artist.id) as { id: number };
+
+  const track = db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, album_edition_id, recording_id, recording_mbid, medium_position, position, title)
+    VALUES (?, ?, ?, ?, ?, 1, 1, 'Plan Track')
+    RETURNING id
+  `).get(input.trackMbid, input.releaseMbid, edition.id, rec.id, input.recordingMbid) as { id: number };
+
+  db.prepare(`
+    INSERT OR IGNORE INTO LibraryAlbums (library_id, release_group_id, selection_mode, locked, reason, curation_version)
+    VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(input.libraryId, album.id);
+
+  let libraryEdition = db.prepare("SELECT id FROM LibraryEditions WHERE library_id = ? AND edition_id = ?")
+    .get(input.libraryId, edition.id) as { id: number } | undefined;
+  if (!libraryEdition) {
+    libraryEdition = db.prepare(`
+      INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, reason, curation_version)
+      VALUES (?, ?, 'auto', 'test', 1)
+      RETURNING id
+    `).get(input.libraryId, edition.id) as { id: number };
+  }
+
+  const providerRelease = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES (?, 'release', ?, 'Provider Release', 'available')
+    RETURNING id
+  `).get(input.provider, input.providerReleaseId) as { id: number };
+
+  const providerTrack = db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
+    VALUES (?, 'track', ?, 'Provider Track', 'available')
+    RETURNING id
+  `).get(input.provider, input.providerTrackId) as { id: number };
+
+  const member = db.prepare(`
+    INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position)
+    VALUES (?, ?, 1, 1)
+    RETURNING id
+  `).get(providerRelease.id, providerTrack.id) as { id: number };
+
+  const releaseMatch = db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(providerRelease.id, edition.id) as { id: number };
+
+  const trackMatch = db.prepare(`
+    INSERT INTO ProviderTrackMatches (
+      provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
+      recording_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, ?, ?, ?, 'accepted', 'automatic', 1, 'test', 1)
+    RETURNING id
+  `).get(providerTrack.id, member.id, releaseMatch.id, track.id, rec.id) as { id: number };
+
+  const quality = input.quality ?? "hires-lossless";
+  const variant = db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (
+      provider_item_id, variant_key, quality_class, provider_quality_label, availability
+    ) VALUES (?, ?, ?, ?, 'available')
+    RETURNING id
+  `).get(
+    providerTrack.id,
+    quality,
+    quality === "hires-lossless" ? "lossless" : quality,
+    quality === "hires-lossless" ? "HIRES_LOSSLESS" : quality.toUpperCase(),
+  ) as { id: number };
+
+  const plan = seedSelectedAcquisitionPlan(db, {
+    libraryEditionId: libraryEdition.id,
+    provider: input.provider,
+    coverage: 1,
+    targetTrackCount: 1,
+  });
+
+  const source = db.prepare(`
+    INSERT INTO AcquisitionPlanSources (plan_id, provider_edition_match_id, role, sort_order)
+    VALUES (?, ?, 'primary', 0)
+    RETURNING id
+  `).get(plan.id, releaseMatch.id) as { id: number };
+
+  db.prepare(`
+    INSERT INTO AcquisitionPlanTracks (
+      plan_id, track_id, source_id, provider_track_match_id, provider_audio_variant_id,
+      source_quality_snapshot
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(plan.id, track.id, source.id, trackMatch.id, variant.id, JSON.stringify({ quality: "hires-lossless" }));
+
+  return {
+    planId: plan.id,
+    providerReleaseItemId: providerRelease.id,
+    providerTrackItemId: providerTrack.id,
+    variantId: variant.id,
+    editionId: edition.id,
+    trackId: track.id,
+  };
+}
+
+test("persistDownloadedProviderProvenance with plan payload stamps provenance and does not throw", () => {
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile({ provider: "tidal", provider_id: "prov-track-upg" });
+  const graph = seedPlanGraph({
+    provider: "tidal",
+    providerReleaseId: "prov-album-upg",
+    providerTrackId: "prov-track-upg",
+    releaseGroupMbid: "rg-upg",
+    releaseMbid: "rel-upg",
+    trackMbid: "trk-upg-1",
+    recordingMbid: "rec-upg-1",
+    libraryId,
+  });
+
+  const offers = [{
+    provider: "tidal",
+    providerTrackId: "prov-track-upg",
+    providerTrackItemId: graph.providerTrackItemId,
+    providerAudioVariantId: graph.variantId,
+    canonicalTrackMbid: "trk-upg-1",
+    canonicalRecordingMbid: "rec-upg-1",
+  }];
+
+  persistDownloadedProviderProvenance(
+    libraryId,
+    organizeResult(["prov-track-upg"], { "prov-track-upg": fileId }),
+    offers,
+    graph.planId,
+    "rel-upg",
+  );
+
+  const row = db.prepare(
+    "SELECT provider_item_id, source_audio_variant_id FROM TrackFiles WHERE id = ?",
+  ).get(fileId) as { provider_item_id: number; source_audio_variant_id: number };
+  assert.equal(row.provider_item_id, graph.providerTrackItemId);
+  assert.equal(row.source_audio_variant_id, graph.variantId);
+});
+
+test("current-main payload shape (plan id set, trackOffers empty, organizer reported processed tracks) reconstructs offers from current plan and stamps provenance", () => {
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile({ provider: "tidal", provider_id: "prov-track-reconstruct" });
+  const graph = seedPlanGraph({
+    provider: "tidal",
+    providerReleaseId: "prov-album-reconstruct",
+    providerTrackId: "prov-track-reconstruct",
+    releaseGroupMbid: "rg-reconstruct",
+    releaseMbid: "rel-reconstruct",
+    trackMbid: "trk-reconstruct-1",
+    recordingMbid: "rec-reconstruct-1",
+    libraryId,
+  });
+
+  // Empty trackOffers + acquisitionPlanId set (current-main payload shape)
+  persistDownloadedProviderProvenance(
+    libraryId,
+    organizeResult(["prov-track-reconstruct"], { "prov-track-reconstruct": fileId }),
+    [],
+    graph.planId,
+  );
+
+  const row = db.prepare(
+    "SELECT provider_item_id, source_audio_variant_id FROM TrackFiles WHERE id = ?",
+  ).get(fileId) as { provider_item_id: number; source_audio_variant_id: number };
+  assert.equal(row.provider_item_id, graph.providerTrackItemId);
+  assert.equal(row.source_audio_variant_id, graph.variantId);
+});
+
+test("persistDownloadedProviderProvenance with plan id set and empty trackOffers fails closed when plan does not exist", () => {
+  const libraryId = seedLibrary();
+  const fileId = seedTrackFile({ provider: "tidal", provider_id: "prov-track-missing" });
+
+  assert.throws(
+    () => persistDownloadedProviderProvenance(
+      libraryId,
+      organizeResult(["prov-track-missing"], { "prov-track-missing": fileId }),
+      [],
+      999999,
+    ),
+    /\[ImportDownload\] Acquisition plan 999999 imported tracks without exact provider offer identity/,
+  );
+});
+
+test("reconstructPlanTrackOffers refuses offers from a different provider or different edition than the winning plan", () => {
+  const libraryId = seedLibrary();
+  const graph = seedPlanGraph({
+    provider: "apple-music",
+    providerReleaseId: "prov-album-apple-reconstruct",
+    providerTrackId: "prov-track-apple-reconstruct",
+    releaseGroupMbid: "rg-apple-reconstruct",
+    releaseMbid: "rel-apple-reconstruct",
+    trackMbid: "trk-apple-reconstruct-1",
+    recordingMbid: "rec-apple-reconstruct-1",
+    libraryId,
+  });
+
+  // Provider mismatch
+  assert.equal(reconstructPlanTrackOffers(graph.planId, "tidal"), null);
+  // Edition mismatch
+  assert.equal(reconstructPlanTrackOffers(graph.planId, "apple-music", "rel-other-mbid"), null);
+  // Correct match
+  const valid = reconstructPlanTrackOffers(graph.planId, "apple-music", "rel-apple-reconstruct");
+  assert.ok(Array.isArray(valid));
+  assert.equal(valid.length, 1);
+  assert.equal(valid[0].provider, "apple-music");
+  assert.equal(valid[0].providerTrackItemId, graph.providerTrackItemId);
+});
+
+test("DownloadedTracksImportService.process rejects import before organizing files when acquisition plan cannot resolve offers", async () => {
+  const libraryId = seedLibrary();
+  const workspace = getDownloadWorkspacePath("album", "album-missing-plan", "tidal");
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.writeFileSync(path.join(workspace, "01 - Plan Track.flac"), "dummy audio content");
+
+  const job = {
+    id: 8888,
+    name: "ImportDownload",
+    payload: {
+      type: "album",
+      provider: "tidal",
+      providerId: "album-missing-plan",
+      libraryId,
+      acquisitionPlanId: 999999,
+      trackOffers: [],
+      path: workspace,
+    },
+  };
+
+  try {
+    await assert.rejects(
+      () => DownloadedTracksImportService.process(job as any, { updateState: () => {} }),
+      /\[ImportDownload\] Acquisition plan 999999 has no exact provider offers available/,
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
