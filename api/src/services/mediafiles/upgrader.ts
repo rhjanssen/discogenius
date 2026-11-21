@@ -123,19 +123,14 @@ type UpgradeContext = {
     selectRecordingByMbid: Database.Statement;
 
     selectSelectedPlan: Database.Statement;
-    selectCurrentPlan: Database.Statement;
-    selectAcceptedEditionMatch: Database.Statement;
     selectReleaseByMemberItemId: Database.Statement;
-    selectReleaseByProviderId: Database.Statement;
     selectReleaseByTrackProviderId: Database.Statement;
+    selectReleaseByProviderId: Database.Statement;
 
     selectPlanTrackItem: Database.Statement;
     selectReleaseMemberTrackItem: Database.Statement;
     selectReleaseMemberDirect: Database.Statement;
     selectReleaseMemberTrackItemByProviderId: Database.Statement;
-    selectProviderTrackMatchDirect: Database.Statement;
-    selectProviderItemById: Database.Statement;
-    selectProviderTrackItemByProviderId: Database.Statement;
 
     selectVideoTrackItem: Database.Statement;
     selectVideoItemByIdOrProviderId: Database.Statement;
@@ -293,14 +288,14 @@ function resolveWinningAlbum(
     context: UpgradeContext,
     cache: Map<string, WinningAlbumPlan | null>,
 ): WinningAlbumPlan | null {
-    const cacheKey = `${destination.libraryId ?? ""}\0${destination.slot ?? ""}\0${editionId ?? ""}\0${row.file_provider ?? ""}\0${row.file_provider_id ?? ""}`;
+    const cacheKey = `${destination.libraryId ?? ""}\0${editionId ?? ""}`;
     if (cache.has(cacheKey)) {
         return cache.get(cacheKey)!;
     }
 
     let winner: WinningAlbumPlan | null = null;
 
-    // Priority 1: SelectedAcquisitionPlans for (libraryId, editionId)
+    // Only the selected (winning) plan may supply upgrades; no plan, no upgrade.
     if (destination.libraryId != null && editionId != null) {
         const selected = context.selectSelectedPlan.get(destination.libraryId, editionId) as {
             plan_id: number;
@@ -320,122 +315,6 @@ function resolveWinningAlbum(
         }
     }
 
-    // Priority 2: AcquisitionPlans (state = 'current') for (libraryId, editionId)
-    if (!winner && destination.libraryId != null && editionId != null) {
-        const current = context.selectCurrentPlan.get(destination.libraryId, editionId) as {
-            plan_id: number;
-            provider: string;
-            download_mode: string;
-            provider_release_id: string | null;
-            provider_edition_item_id: number | null;
-        } | undefined;
-        if (current) {
-            winner = {
-                planId: current.plan_id,
-                provider: current.provider,
-                albumId: current.provider_release_id ? String(current.provider_release_id) : null,
-                providerEditionItemId: current.provider_edition_item_id ?? null,
-                downloadMode: (current.download_mode as "album" | "tracks") || "album",
-            };
-        }
-    }
-
-    // Priority 3: Accepted ProviderEditionMatches for editionId
-    if (!winner && editionId != null) {
-        const accepted = context.selectAcceptedEditionMatch.get(
-            editionId,
-            row.file_provider ?? null,
-            row.file_provider ?? null,
-        ) as {
-            provider: string;
-            provider_release_id: string | null;
-            provider_edition_item_id: number | null;
-        } | undefined;
-        if (accepted) {
-            winner = {
-                planId: null,
-                provider: accepted.provider,
-                albumId: accepted.provider_release_id ? String(accepted.provider_release_id) : null,
-                providerEditionItemId: accepted.provider_edition_item_id ?? null,
-                downloadMode: "album",
-            };
-        }
-    }
-
-    // Priority 4: Fallback from file's own provider release/membership
-    if (!winner) {
-        if (row.file_provider_item_id != null) {
-            const byMember = context.selectReleaseByMemberItemId.get(
-                editionId ?? null,
-                editionId ?? null,
-                row.file_provider_item_id,
-            ) as {
-                provider: string;
-                provider_release_id: string | null;
-                provider_edition_item_id: number | null;
-            } | undefined;
-            if (byMember) {
-                winner = {
-                    planId: null,
-                    provider: byMember.provider,
-                    albumId: byMember.provider_release_id ? String(byMember.provider_release_id) : null,
-                    providerEditionItemId: byMember.provider_edition_item_id ?? null,
-                    downloadMode: "album",
-                };
-            }
-        }
-        if (!winner && row.file_provider && row.file_provider_id) {
-            if (row.file_provider_entity_type === "release") {
-                const byRel = context.selectReleaseByProviderId.get(row.file_provider, row.file_provider_id) as {
-                    provider: string;
-                    provider_release_id: string | null;
-                    provider_edition_item_id: number | null;
-                } | undefined;
-                if (byRel) {
-                    winner = {
-                        planId: null,
-                        provider: byRel.provider,
-                        albumId: byRel.provider_release_id ? String(byRel.provider_release_id) : null,
-                        providerEditionItemId: byRel.provider_edition_item_id ?? null,
-                        downloadMode: "album",
-                    };
-                }
-            } else if (row.file_provider_entity_type === "track") {
-                const byTrack = context.selectReleaseByTrackProviderId.get(
-                    editionId ?? null,
-                    editionId ?? null,
-                    row.file_provider,
-                    row.file_provider_id,
-                ) as {
-                    provider: string;
-                    provider_release_id: string | null;
-                    provider_edition_item_id: number | null;
-                } | undefined;
-                if (byTrack) {
-                    winner = {
-                        planId: null,
-                        provider: byTrack.provider,
-                        albumId: byTrack.provider_release_id ? String(byTrack.provider_release_id) : null,
-                        providerEditionItemId: byTrack.provider_edition_item_id ?? null,
-                        downloadMode: "album",
-                    };
-                }
-            }
-        }
-        if (!winner && row.file_provider) {
-            winner = {
-                planId: null,
-                provider: row.file_provider,
-                albumId: null,
-                providerEditionItemId: null,
-                downloadMode: "tracks",
-            };
-        }
-    }
-
-    if (winner && row.file_provider_entity_type === "release" && row.file_provider_id && row.file_provider === winner.provider) {
-        winner.albumId = String(row.file_provider_id);
-    }
     if (winner && winner.albumId && winner.providerEditionItemId == null) {
         const byRel = context.selectReleaseByProviderId.get(winner.provider, winner.albumId) as {
             provider_edition_item_id: number | null;
@@ -494,32 +373,6 @@ function resolveWinningTrack(
             if (item) return item;
         }
 
-        // When providerEditionItemId is known, only resolve tracks inside that release.
-        return null;
-    }
-
-    // 3. Accepted ProviderTrackMatches for the winning provider (only when providerEditionItemId is null)
-    if (trackId != null || recordingId != null) {
-        const item = context.selectProviderTrackMatchDirect.get(
-            winningAlbum.provider,
-            trackId ?? null,
-            trackId ?? null,
-            recordingId ?? null,
-            recordingId ?? null,
-        ) as WinningTrackItem | undefined;
-        if (item) return item;
-    }
-
-    // 4. Direct provider item when file matches the winning provider (only when providerEditionItemId is null)
-    if (row.file_provider === winningAlbum.provider) {
-        if (row.file_provider_item_id != null) {
-            const item = context.selectProviderItemById.get(row.file_provider_item_id, winningAlbum.provider) as WinningTrackItem | undefined;
-            if (item) return item;
-        }
-        if (row.file_provider_id != null && (row.file_provider_entity_type === "track" || !row.file_provider_entity_type)) {
-            const item = context.selectProviderTrackItemByProviderId.get(winningAlbum.provider, row.file_provider_id) as WinningTrackItem | undefined;
-            if (item) return item;
-        }
     }
 
     return null;
@@ -575,14 +428,17 @@ export class UpgraderService {
      * @param artistId Optional artist ID to restrict the scan
      * @param options  maxUnits caps queued albums/tracks/conversions for one paced run
      */
-    /** Upgrade downloads still waiting. A paced pass tops this up to a small
-     * ceiling instead of piling upgrades behind the regular download backlog. */
-    static pendingUpgradeCount(): number {
+    /** Downloads still waiting, split into upgrades and everything else (missing
+     * music). A paced pass waits until no missing download is left, then tops
+     * upgrades up to a small ceiling. */
+    static pendingDownloadCounts(): { upgrades: number; missing: number } {
         const row = db.prepare(`
-            SELECT COUNT(*) AS cnt FROM DownloadQueue
-            WHERE json_valid(payload) AND json_extract(payload, '$.reason') = 'upgrade'
-        `).get() as { cnt: number } | undefined;
-        return Number(row?.cnt) || 0;
+            SELECT
+              COALESCE(SUM(CASE WHEN json_valid(payload) AND json_extract(payload, '$.reason') = 'upgrade' THEN 1 ELSE 0 END), 0) AS upgrades,
+              COUNT(*) AS total
+            FROM DownloadQueue
+        `).get() as { upgrades: number; total: number };
+        return { upgrades: Number(row.upgrades), missing: Number(row.total) - Number(row.upgrades) };
     }
 
     /** Last TrackFiles.id a paced run looked at; the next paced run resumes after it. */
@@ -765,40 +621,6 @@ export class UpgraderService {
                 ORDER BY CASE WHEN source.role = 'primary' THEN 0 ELSE 1 END, source.sort_order ASC
                 LIMIT 1
             `),
-            selectCurrentPlan: db.prepare(`
-                SELECT
-                  plan.id AS plan_id,
-                  plan.provider,
-                  plan.download_mode,
-                  release_item.provider_id AS provider_release_id,
-                  release_item.id AS provider_edition_item_id
-                FROM AcquisitionPlans plan
-                LEFT JOIN AcquisitionPlanSources source
-                  ON source.plan_id = plan.id
-                LEFT JOIN ProviderEditionMatches release_match
-                  ON release_match.id = source.provider_edition_match_id
-                LEFT JOIN ProviderItems release_item
-                  ON release_item.id = release_match.provider_edition_item_id
-                WHERE plan.library_id = ?
-                  AND plan.edition_id = ?
-                  AND plan.state = 'current'
-                ORDER BY plan.rank ASC, CASE WHEN source.role = 'primary' THEN 0 ELSE 1 END, source.sort_order ASC, plan.id DESC
-                LIMIT 1
-            `),
-            selectAcceptedEditionMatch: db.prepare(`
-                SELECT
-                  release_item.provider,
-                  release_item.provider_id AS provider_release_id,
-                  release_item.id AS provider_edition_item_id
-                FROM ProviderEditionMatches match
-                JOIN ProviderItems release_item
-                  ON release_item.id = match.provider_edition_item_id
-                WHERE match.edition_id = ?
-                  AND match.match_state = 'accepted'
-                  AND (? IS NULL OR release_item.provider = ?)
-                ORDER BY match.confidence DESC, match.id ASC
-                LIMIT 1
-            `),
             selectReleaseByMemberItemId: db.prepare(`
                 SELECT
                   release_item.provider,
@@ -815,17 +637,6 @@ export class UpgraderService {
                 ORDER BY
                   CASE WHEN rel_match.id IS NOT NULL THEN 0 ELSE 1 END,
                   release_item.id ASC
-                LIMIT 1
-            `),
-            selectReleaseByProviderId: db.prepare(`
-                SELECT
-                  release_item.provider,
-                  release_item.provider_id AS provider_release_id,
-                  release_item.id AS provider_edition_item_id
-                FROM ProviderItems release_item
-                WHERE release_item.provider = ?
-                  AND release_item.entity_type = 'release'
-                  AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
                 LIMIT 1
             `),
             selectReleaseByTrackProviderId: db.prepare(`
@@ -848,6 +659,17 @@ export class UpgraderService {
                 ORDER BY
                   CASE WHEN rel_match.id IS NOT NULL THEN 0 ELSE 1 END,
                   release_item.id ASC
+                LIMIT 1
+            `),
+            selectReleaseByProviderId: db.prepare(`
+                SELECT
+                  release_item.provider,
+                  release_item.provider_id AS provider_release_id,
+                  release_item.id AS provider_edition_item_id
+                FROM ProviderItems release_item
+                WHERE release_item.provider = ?
+                  AND release_item.entity_type = 'release'
+                  AND CAST(release_item.provider_id AS TEXT) = CAST(? AS TEXT)
                 LIMIT 1
             `),
             selectPlanTrackItem: db.prepare(`
@@ -912,35 +734,6 @@ export class UpgraderService {
                 WHERE member.provider_edition_item_id = ?
                   AND member_item.provider = ?
                   AND CAST(member_item.provider_id AS TEXT) = CAST(? AS TEXT)
-                LIMIT 1
-            `),
-            selectProviderTrackMatchDirect: db.prepare(`
-                SELECT
-                  member_item.id AS provider_item_id,
-                  member_item.provider,
-                  member_item.provider_id AS provider_track_id
-                FROM ProviderTrackMatches track_match
-                JOIN ProviderItems member_item
-                  ON member_item.id = track_match.provider_track_item_id
-                 AND member_item.entity_type = 'track'
-                WHERE member_item.provider = ?
-                  AND track_match.match_state = 'accepted'
-                  AND (
-                    (? IS NOT NULL AND track_match.track_id = ?)
-                    OR (? IS NOT NULL AND track_match.recording_id = ?)
-                  )
-                LIMIT 1
-            `),
-            selectProviderItemById: db.prepare(`
-                SELECT id AS provider_item_id, provider, provider_id AS provider_track_id
-                FROM ProviderItems
-                WHERE id = ? AND provider = ? AND entity_type = 'track'
-                LIMIT 1
-            `),
-            selectProviderTrackItemByProviderId: db.prepare(`
-                SELECT id AS provider_item_id, provider, provider_id AS provider_track_id
-                FROM ProviderItems
-                WHERE provider = ? AND entity_type = 'track' AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
                 LIMIT 1
             `),
             selectVideoTrackItem: db.prepare(`
@@ -1146,6 +939,63 @@ export class UpgraderService {
             }
 
             // --- AUDIO TRACK HANDLING ---
+            // A file above the audio quality setting is conformed locally, whatever plan it came from.
+            const settingCheck = UpgradableSpecification.evaluateAudioChange({
+                profile: qualityProfile,
+                currentQuality: row.current_quality,
+                sourceQuality: null,
+                codec: row.current_codec,
+                extension: row.current_extension,
+                bitDepth: row.current_bit_depth,
+                sampleRate: row.current_sample_rate,
+            });
+            if (settingCheck.direction === "downgrade") {
+                if (unitsUsed() >= budget) {
+                    budgetSpent = true;
+                    break scan;
+                }
+                cursor = row.file_id;
+                if (settingCheck.needsChange && row.file_path) {
+                    try {
+                        await conformExistingTrackFile({
+                            fileId: row.file_id,
+                            filePath: row.file_path,
+                            relativePath: row.relative_path,
+                            libraryRoot: row.library_root,
+                            filename: row.filename,
+                            expectedPath: row.expected_path,
+                            codec: row.current_codec,
+                            extension: row.current_extension,
+                            quality: row.current_quality,
+                            bitDepth: row.current_bit_depth,
+                            sampleRate: row.current_sample_rate,
+                            audioQuality: qualityConfig.audio_quality,
+                        });
+                        result.tracks++;
+                        conversions++;
+                        result.details.push({
+                            mediaId: String(row.file_provider_id ?? row.file_id),
+                            type: "track",
+                            reason: settingCheck.reason,
+                            provider: row.file_provider ?? "local",
+                            albumId: null,
+                            action: "downconvert",
+                            slot: destination.slot,
+                            libraryId: destination.libraryId,
+                            acquisitionPlanId: destination.acquisitionPlanId,
+                            libraryRoot: destination.libraryRoot,
+                            trackId: trackId ?? row.track_id ?? null,
+                        });
+                    } catch (error) {
+                        console.error(
+                            `[UPGRADER] Downconvert failed for ${row.file_path}:`,
+                            error instanceof Error ? error.message : error,
+                        );
+                    }
+                }
+                continue;
+            }
+
             // Rule 1: Album-level winner. Resolve the winning album acquisition plan / release.
             const winningAlbum = resolveWinningAlbum(row, destination, editionId, resolverContext, winningAlbumCache);
             if (!winningAlbum) {
@@ -1275,47 +1125,9 @@ export class UpgraderService {
                 }
             }
 
-            if (evaluation.direction === "downgrade") {
-                if (evaluation.needsChange && row.file_path) {
-                    try {
-                        await conformExistingTrackFile({
-                            fileId: row.file_id,
-                            filePath: row.file_path,
-                            relativePath: row.relative_path,
-                            libraryRoot: row.library_root,
-                            filename: row.filename,
-                            expectedPath: row.expected_path,
-                            codec: row.current_codec,
-                            extension: row.current_extension,
-                            quality: row.current_quality,
-                            bitDepth: row.current_bit_depth,
-                            sampleRate: row.current_sample_rate,
-                            audioQuality: qualityConfig.audio_quality,
-                        });
-                        result.tracks++;
-                        conversions++;
-                        result.details.push({
-                            mediaId: winningTrack.provider_track_id,
-                            type: "track",
-                            reason: evaluation.reason,
-                            provider: winningAlbum.provider,
-                            albumId: winningAlbum.albumId,
-                            action: "downconvert",
-                            slot: destination.slot,
-                            libraryId: destination.libraryId,
-                            acquisitionPlanId: destination.acquisitionPlanId,
-                            libraryRoot: destination.libraryRoot,
-                            trackId: trackId ?? row.track_id ?? null,
-                        });
-                    } catch (error) {
-                        console.error(
-                            `[UPGRADER] Downconvert failed for ${row.file_path}:`,
-                            error instanceof Error ? error.message : error,
-                        );
-                    }
-                }
-                continue;
-            }
+            // Only the quality setting decides a downconvert (handled above); a
+            // provider offer below the file is no reason to touch it.
+            if (evaluation.direction === "downgrade") continue;
 
             if (evaluation.needsChange) {
                 const expectedTarget = evaluation.targetQuality || qualityProfile.audioCutoff;

@@ -8,7 +8,7 @@
     - Upgrades skip before queuing if no matching offer exists or if provider/edition diverges from the plan.
     - Memoized plan commands in `planCommandCache` per run to avoid redundant allocations.
   - **Album-level winner quality upgrade policy (#146)**:
-    1. **Album-level winner**: Upgrades planned against winning album acquisition plan only (Lidarr-style). Resolved by priority: `SelectedAcquisitionPlans` -> `AcquisitionPlans` (current) -> accepted `ProviderEditionMatches` -> file provider item membership/snapshot.
+    1. **Album-level winner**: Upgrades are planned against the edition's selected acquisition plan (`SelectedAcquisitionPlans`) only. No selected plan (unmonitored edition, no plan yet) means no upgrade; the earlier fallback cascade was removed in PO review.
     2. **Spatial library**: Tracks that winning plan only has in stereo (interludes) stay in that album and are not re-queued to Atmos while the plan has no Atmos version.
     3. **Stereo-only track later gains Atmos**: Upgraded once Atmos becomes available in the winning plan.
     4. **Stereo library, Atmos-only file**: Replaced as soon as a real stereo version exists in the winning plan into the stereo slot.
@@ -17,7 +17,8 @@
        - Stereo fallback loop prevention: falls back to album-level stereo only when winning track has no variants at all (`variants.length === 0`), never when it has a spatial variant.
        - No provider mixing inside albums: standalone per-track upgrades never mix providers or releases with existing files; whole-album replacement cleanly replaces when album threshold (>=50% or >=3 tracks) is met.
        - Strict cross-edition scoping: `resolveWinningTrack` strictly confines resolution inside `providerEditionItemId` when known.
-       - Deterministic release fallback: prefers releases with accepted `ProviderEditionMatches`.
+       - PO review: a downconvert is decided by the audio quality setting alone, before any plan lookup; a provider offer below the file never triggers one.
+       - PO review (Robert, 21 Nov): missing first. A scheduled `CheckUpgrades` pass skips while any non-upgrade download still waits (`pendingDownloadCounts`).
   - **Tests**:
     - Kept all #149 tests passing unchanged in `upgrader-canonical.test.ts` and `import-operation-identity.test.ts` (28/28 tests passing).
     - Kept all canonical tests from PR #147 passing (27/27 tests in `upgrader-canonical.test.ts`).

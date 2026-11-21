@@ -64,7 +64,8 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
 };
 
 /** A scheduled upgrade pass queues at most this many album/track downloads or
- * conversions, and does nothing while this many upgrade downloads still wait. */
+ * conversions. It does nothing while missing music still waits to download
+ * (missing first), or while this many upgrade downloads still wait. */
 const SCHEDULED_UPGRADE_UNIT_BUDGET = 25;
 const SCHEDULED_UPGRADE_QUEUE_CEILING = 50;
 
@@ -75,11 +76,13 @@ export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, 
     });
     const mode = job.payload.mode ?? "manual";
     if (mode === "scheduled") {
-        const pending = UpgraderService.pendingUpgradeCount();
-        if (pending >= SCHEDULED_UPGRADE_QUEUE_CEILING) {
+        const pending = UpgraderService.pendingDownloadCounts();
+        if (pending.missing > 0 || pending.upgrades >= SCHEDULED_UPGRADE_QUEUE_CEILING) {
             ctx.updateCommandDescription(job, {
                 progress: 100,
-                description: `Skipped: ${pending} upgrade downloads already waiting`,
+                description: pending.missing > 0
+                    ? `Skipped: ${pending.missing} missing downloads still waiting`
+                    : `Skipped: ${pending.upgrades} upgrade downloads already waiting`,
             });
             return;
         }

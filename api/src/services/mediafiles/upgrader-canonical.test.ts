@@ -126,6 +126,80 @@ function seedAcceptedTrackEdge(input: {
   `).run(input.memberItemId, member.id, releaseMatch.id, track.id, recordingId);
 }
 
+/** Make the provider release the edition's selected (winning) plan, with every
+ * accepted track match on `memberReleaseId` (default: that release) as a plan track. */
+function seedWinningPlan(input: {
+  editionMbid: string;
+  provider: string;
+  providerReleaseId: string;
+  memberReleaseId?: string;
+  libraryId?: number;
+}) {
+  const libraryId = input.libraryId ?? 1;
+  const edition = db.prepare("SELECT id, release_group_id FROM AlbumEditions WHERE mbid = ?")
+    .get(input.editionMbid) as { id: number; release_group_id: number };
+  const releaseItemId = (db.prepare("SELECT id FROM ProviderItems WHERE provider = ? AND entity_type = 'release' AND provider_id = ?")
+    .get(input.provider, input.providerReleaseId) as { id: number }).id;
+  const memberReleaseItemId = input.memberReleaseId
+    ? (db.prepare("SELECT id FROM ProviderItems WHERE provider = ? AND entity_type = 'release' AND provider_id = ?")
+      .get(input.provider, input.memberReleaseId) as { id: number }).id
+    : releaseItemId;
+  db.prepare(`
+    INSERT OR IGNORE INTO LibraryAlbums (library_id, release_group_id, selection_mode, locked, reason, curation_version)
+    VALUES (?, ?, 'auto', 0, 'test', 1)
+  `).run(libraryId, edition.release_group_id);
+  const libraryEditionId = ((db.prepare("SELECT id FROM LibraryEditions WHERE library_id = ? AND edition_id = ?")
+    .get(libraryId, edition.id) as { id: number } | undefined)
+    ?? db.prepare(`
+      INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, reason, curation_version)
+      VALUES (?, ?, 'auto', 'test', 1)
+      RETURNING id
+    `).get(libraryId, edition.id) as { id: number }).id;
+  const releaseMatchId = ((db.prepare("SELECT id FROM ProviderEditionMatches WHERE provider_edition_item_id = ? AND edition_id = ?")
+    .get(releaseItemId, edition.id) as { id: number } | undefined)
+    ?? db.prepare(`
+      INSERT INTO ProviderEditionMatches (
+        provider_edition_item_id, edition_id, relation, match_state, decision_source, confidence, method, matcher_version
+      ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+      RETURNING id
+    `).get(releaseItemId, edition.id) as { id: number }).id;
+  const trackMatches = db.prepare(`
+    SELECT track_match.id, track_match.track_id, track_match.provider_track_item_id
+    FROM ProviderTrackMatches track_match
+    JOIN ProviderEditionMembers member ON member.id = track_match.provider_edition_member_id
+    WHERE member.provider_edition_item_id = ? AND track_match.match_state = 'accepted'
+  `).all(memberReleaseItemId) as Array<{ id: number; track_id: number; provider_track_item_id: number }>;
+  const planId = seedSelectedAcquisitionPlan(db, {
+    libraryEditionId,
+    provider: input.provider,
+    coverage: trackMatches.length,
+    targetTrackCount: trackMatches.length,
+    planKey: `winning-${input.provider}-${input.providerReleaseId}-${libraryId}`,
+  }).id;
+  const sourceId = (db.prepare(`
+    INSERT INTO AcquisitionPlanSources (plan_id, provider_edition_match_id, role, sort_order)
+    VALUES (?, ?, 'primary', 0)
+    RETURNING id
+  `).get(planId, releaseMatchId) as { id: number }).id;
+  const spatialLibrary = (db.prepare("SELECT name FROM Libraries WHERE id = ?").get(libraryId) as { name: string }).name === "Spatial";
+  for (const match of trackMatches) {
+    const variantId = ((db.prepare(`
+      SELECT id FROM ProviderItemAudioVariants WHERE provider_item_id = ?
+      ORDER BY (quality_class = 'spatial') = ? DESC, id LIMIT 1
+    `).get(match.provider_track_item_id, spatialLibrary ? 1 : 0) as { id: number } | undefined)
+      ?? db.prepare(`
+        INSERT INTO ProviderItemAudioVariants (provider_item_id, variant_key, quality_class, provider_quality_label, availability)
+        VALUES (?, 'lossless', 'lossless', 'LOSSLESS', 'available')
+        RETURNING id
+      `).get(match.provider_track_item_id) as { id: number }).id;
+    db.prepare(`
+      INSERT INTO AcquisitionPlanTracks (plan_id, track_id, source_id, provider_track_match_id, provider_audio_variant_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(planId, match.track_id, sourceId, match.id, variantId);
+  }
+  return planId;
+}
+
 function insertTrackFile(overrides: Record<string, unknown>) {
   const legacyMediaId = overrides.media_id;
   const artistMetadataId = overrides.artist_metadata_id
@@ -195,7 +269,9 @@ function listDownloadJobs() {
 test("checkUpgrades queues canonical audio album upgrades without provider catalog rows", async () => {
   seedArtistAndRelease();
   const tidalRelease = providerItem("tidal", "release", "album-provider-1", "Canonical Album");
-  addReleaseMember(tidalRelease, providerItem("tidal", "track", "track-provider-1", "Track One"));
+  const tidalTrack = providerItem("tidal", "track", "track-provider-1", "Track One");
+  addReleaseMember(tidalRelease, tidalTrack);
+  seedAcceptedTrackEdge({ releaseItemId: tidalRelease, memberItemId: tidalTrack, canonicalReleaseMbid: "release-1", canonicalTrackMbid: "track-1" });
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
     canonical_release_group_mbid: "release-group-1",
@@ -206,6 +282,8 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
     provider_entity_type: "track",
     provider_id: "track-provider-1",
   });
+
+  seedWinningPlan({ editionMbid: "release-1", provider: "tidal", providerReleaseId: "album-provider-1" });
 
   const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
 
@@ -228,6 +306,58 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
   assert.equal(albumPayload.url, "https://tidal.com/browse/album/album-provider-1");
   assert.equal(albumPayload.slot, "stereo");
   assert.equal(albumPayload.libraryId, 1);
+});
+
+test("scheduled CheckUpgrades waits while missing music is still queued", async () => {
+  const { handleCheckUpgrades } = await import("../commands/handlers/curation-handlers.js");
+  const { DownloadWaitQueue } = await import("../download/download-wait-queue.js");
+  seedArtistAndRelease();
+  const tidalRelease = providerItem("tidal", "release", "album-provider-1", "Canonical Album");
+  const tidalTrack = providerItem("tidal", "track", "track-provider-1", "Track One");
+  addReleaseMember(tidalRelease, tidalTrack);
+  seedAcceptedTrackEdge({ releaseItemId: tidalRelease, memberItemId: tidalTrack, canonicalReleaseMbid: "release-1", canonicalTrackMbid: "track-1" });
+  seedWinningPlan({ editionMbid: "release-1", provider: "tidal", providerReleaseId: "album-provider-1" });
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    track_id: canonicalTrackId("track-1"),
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "track-provider-1",
+  });
+  const missing = DownloadWaitQueue.enqueue({
+    refKey: "missing-album-1",
+    mediaKind: "album",
+    commandName: CommandNames.DownloadAlbum,
+    provider: "tidal",
+    providerId: "missing-album-1",
+    slot: "stereo",
+    payload: { provider: "tidal", providerId: "missing-album-1", type: "album" },
+    notify: false,
+  });
+  const descriptions: string[] = [];
+  const ctx = { updateCommandDescription: (_job: unknown, update: { description?: string }) => { descriptions.push(String(update.description)); } };
+  const job = { id: 1, payload: { mode: "scheduled" } };
+
+  await handleCheckUpgrades(job as never, ctx as never);
+  assert.deepEqual(listDownloadJobs().map((row) => row.ref_id), ["missing-album-1"]);
+  assert.equal(descriptions.at(-1), "Skipped: 1 missing downloads still waiting");
+
+  DownloadWaitQueue.remove(missing.id);
+  const { updateConfig, getConfigSection } = await import("../config/config.js");
+  const previous = getConfigSection("quality").upgrade_existing_files;
+  updateConfig("quality", { upgrade_existing_files: true });
+  try {
+    await handleCheckUpgrades(job as never, ctx as never);
+  } finally {
+    updateConfig("quality", { upgrade_existing_files: previous });
+  }
+  const queued = listDownloadJobs();
+  assert.equal(queued.length, 1);
+  assert.equal(JSON.parse(queued[0].payload).reason, "upgrade");
 });
 
 test("checkUpgrades queues canonical video upgrades without provider catalog rows", async () => {
@@ -284,7 +414,9 @@ test("checkUpgrades does not queue Apple Music album ids as TIDAL (Grace Note)",
   seedArtistAndRelease();
   const appleAlbumId = "1776562088";
   const appleRelease = providerItem("apple-music", "release", appleAlbumId, "Grace Note");
-  addReleaseMember(appleRelease, providerItem("apple-music", "track", "apple-track-1", "Grace Note"));
+  const appleTrack = providerItem("apple-music", "track", "apple-track-1", "Grace Note");
+  addReleaseMember(appleRelease, appleTrack);
+  seedAcceptedTrackEdge({ releaseItemId: appleRelease, memberItemId: appleTrack, canonicalReleaseMbid: "release-1", canonicalTrackMbid: "track-1" });
   insertTrackFile({
     canonical_artist_mbid: "artist-mbid",
     canonical_release_group_mbid: "release-group-1",
@@ -301,6 +433,8 @@ test("checkUpgrades does not queue Apple Music album ids as TIDAL (Grace Note)",
     relative_path: "grace-note.m4a",
     filename: "grace-note.m4a",
   });
+
+  seedWinningPlan({ editionMbid: "release-1", provider: "apple-music", providerReleaseId: appleAlbumId });
 
   const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
 
@@ -358,6 +492,8 @@ test("checkUpgrades skips album-level upgrade when provider has zero album track
     codec: "AAC",
     extension: "m4a",
   });
+
+  seedWinningPlan({ editionMbid: "release-1", provider: "apple-music", providerReleaseId: "1776562088", memberReleaseId: "single-999" });
 
   const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
 
@@ -463,6 +599,83 @@ test("CheckUpgrades keeps 24/48 when the setting is MAX", {
     "-v", "error", "-show_entries", "stream=sample_rate", "-of", "default=noprint_wrappers=1", source,
   ], { windowsHide: true, encoding: "utf-8" });
   assert.match(probe.stdout, /48000/);
+});
+
+test("CheckUpgrades keeps a hi-res file when the winning plan only offers lossless", {
+  skip: !ffmpegAvailable,
+}, async () => {
+  seedArtistAndRelease();
+  const source = path.join(tempDir, "keep-above-offer.flac");
+  const generated = spawnSync("ffmpeg", [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=96000:duration=0.3",
+    "-c:a", "flac", "-sample_fmt", "s32", source,
+  ], { windowsHide: true });
+  assert.equal(generated.status, 0, String(generated.stderr || ""));
+  const tidalRelease = providerItem("tidal", "release", "album-provider-1", "Canonical Album");
+  const tidalTrack = providerItem("tidal", "track", "track-provider-1", "Track One");
+  addReleaseMember(tidalRelease, tidalTrack);
+  seedAcceptedTrackEdge({ releaseItemId: tidalRelease, memberItemId: tidalTrack, canonicalReleaseMbid: "release-1", canonicalTrackMbid: "track-1" });
+  seedWinningPlan({ editionMbid: "release-1", provider: "tidal", providerReleaseId: "album-provider-1" });
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    track_id: canonicalTrackId("track-1"),
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "track-provider-1",
+    quality: "HIRES_LOSSLESS",
+    codec: "FLAC",
+    bit_depth: 24,
+    sample_rate: 96000,
+    file_path: source,
+    relative_path: "keep-above-offer.flac",
+    filename: "keep-above-offer.flac",
+    extension: "flac",
+  });
+
+  await withQualityConfig({ audio_quality: "max" }, async () => {
+    const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
+    assert.deepEqual(result.details, []);
+    assert.deepEqual(listDownloadJobs(), []);
+  });
+  const probe = spawnSync("ffprobe", [
+    "-v", "error", "-show_entries", "stream=sample_rate", "-of", "default=noprint_wrappers=1", source,
+  ], { windowsHide: true, encoding: "utf-8" });
+  assert.match(probe.stdout, /96000/);
+});
+
+test("checkUpgrades does not upgrade a file whose edition has no selected acquisition plan", async () => {
+  seedArtistAndRelease();
+  const tidalRelease = providerItem("tidal", "release", "album-provider-1", "Canonical Album");
+  const tidalTrack = providerItem("tidal", "track", "track-provider-1", "Track One");
+  addReleaseMember(tidalRelease, tidalTrack);
+  seedAcceptedTrackEdge({ releaseItemId: tidalRelease, memberItemId: tidalTrack, canonicalReleaseMbid: "release-1", canonicalTrackMbid: "track-1" });
+  db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (provider_item_id, variant_key, quality_class, provider_quality_label, availability)
+    VALUES (?, 'hires', 'hires-lossless', 'HIRES_LOSSLESS', 'available')
+  `).run(tidalTrack);
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    track_id: canonicalTrackId("track-1"),
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "track-provider-1",
+    quality: "LOSSLESS",
+    codec: "FLAC",
+  });
+
+  const result = await UpgraderService.checkUpgrades(true, String((db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'").get() as { id: number }).id));
+
+  assert.deepEqual(result.details, []);
+  assert.deepEqual(listDownloadJobs(), []);
 });
 
 test("CheckUpgrades downconverts 24/48 FLAC to 16/44.1 when the setting is HIGH", {
@@ -632,6 +845,8 @@ test("checkUpgrades sets explicit slot: stereo and libraryId when queuing single
     });
   }
 
+  seedWinningPlan({ editionMbid: "rel-single-trk", provider: "tidal", providerReleaseId: "album-single-prov" });
+
   const result = await UpgraderService.checkUpgrades(true, String(artist.id));
   assert.equal(result.tracks, 1);
   assert.equal(result.albums, 0);
@@ -722,6 +937,8 @@ test("checkUpgrades sets explicit slot: spatial and spatial libraryId for spatia
       relative_path: `file-${i}.flac`,
     });
   }
+
+  seedWinningPlan({ editionMbid: "rel-spatial-trk", provider: "tidal", providerReleaseId: "album-spatial-prov", libraryId: spatialLib.id });
 
   const result = await UpgraderService.checkUpgrades(true, String(artist.id));
   assert.equal(result.tracks, 1);
@@ -1381,6 +1598,8 @@ test("checkUpgrades allows genuine stereo upgrade in a spatial album within winn
     relative_path: "interlude.flac",
   });
 
+  seedWinningPlan({ editionMbid: "rel-spatial-stereo-up", provider: "tidal", providerReleaseId: "album-spatial-stereo-up-prov", libraryId: spatialLib.id });
+
   const result = await UpgraderService.checkUpgrades(true, String(artist.id));
   assert.equal(result.tracks, 1);
   assert.equal(result.albums, 0);
@@ -1448,6 +1667,8 @@ test("checkUpgrades replaces Atmos file in stereo library with stereo from winni
     file_path: "C:/Music/track1.flac",
     relative_path: "track1.flac",
   });
+
+  seedWinningPlan({ editionMbid: "rel-atmos-replace", provider: "tidal", providerReleaseId: "album-atmos-replace-prov" });
 
   const result = await UpgraderService.checkUpgrades(true, String(artist.id));
   assert.equal(result.tracks, 1);
@@ -1552,6 +1773,8 @@ test("checkUpgrades upgrades stereo interlude when Atmos offer later appears in 
   });
 
   // Step 1: without Atmos offer, interlude not queued (satisfies cutoff)
+  seedWinningPlan({ editionMbid: "rel-later-atmos", provider: "tidal", providerReleaseId: "album-later-atmos-prov", libraryId: spatialLib.id });
+
   const resultInitial = await UpgraderService.checkUpgrades(true, String(artist.id));
   assert.equal(resultInitial.tracks, 0);
 
@@ -2055,108 +2278,6 @@ test("checkUpgrades does not leak cross-edition track offers for the same record
     assert.equal(result.albums, 0);
     assert.deepEqual(listDownloadJobs(), []);
   });
-});
-
-test("checkUpgrades deterministic release fallback prefers release with accepted edition match", async () => {
-  const artist = db.prepare(`
-    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
-    RETURNING id
-  `).get("artist-fallback", "Fallback Artist") as { id: number };
-
-  db.prepare(`INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
-    VALUES (?, ?, ?, ?, ?)`).run("rg-fallback", "artist-fallback", "Fallback Album", "album", "2024-01-01");
-  db.prepare(`INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, track_count, media_count)
-    VALUES (?, ?, ?, ?, ?, ?)`).run("rel-fallback", "rg-fallback", "artist-fallback", "Fallback Album", 3, 1);
-
-  for (let i = 1; i <= 3; i++) {
-    db.prepare(`INSERT INTO Recordings (mbid, title, artist_mbid, is_video)
-      VALUES (?, ?, ?, ?)`).run(`rec-fallback-${i}`, `Track ${i}`, "artist-fallback", 0);
-    db.prepare(`INSERT INTO Tracks (mbid, release_mbid, recording_mbid, title, medium_position, position)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(`trk-fallback-${i}`, "rel-fallback", `rec-fallback-${i}`, `Track ${i}`, 1, i);
-  }
-
-  // 1. Single release inserted FIRST (smaller ProviderItems.id)
-  const singleRelease = providerItem("tidal", "release", "album-tidal-single", "Single Release");
-
-  // 2. Album release inserted SECOND (larger ProviderItems.id)
-  const albumRelease = providerItem("tidal", "release", "album-tidal-album", "Album Release");
-
-  // Track 1 belongs to BOTH the single and the album
-  const sharedTrack = providerItem("tidal", "track", "track-shared-1", "Track 1");
-  addReleaseMember(singleRelease, sharedTrack, 1);
-  addReleaseMember(albumRelease, sharedTrack, 1);
-
-  // Tracks 2 and 3 belong to albumRelease (so album has 3 tracks total)
-  for (let i = 2; i <= 3; i++) {
-    const albumTrack = providerItem("tidal", "track", `track-album-${i}`, `Track ${i}`);
-    addReleaseMember(albumRelease, albumTrack, i);
-  }
-
-  // ONLY albumRelease has an accepted ProviderEditionMatches row for rel-fallback
-  seedAcceptedTrackEdge({
-    releaseItemId: albumRelease,
-    memberItemId: sharedTrack,
-    canonicalReleaseMbid: "rel-fallback",
-    canonicalTrackMbid: "trk-fallback-1",
-  });
-
-  // Track 1 has LOSSLESS variant
-  db.prepare(`
-    INSERT INTO ProviderItemAudioVariants (
-      provider_item_id, variant_key, quality_class, provider_quality_label, availability
-    ) VALUES (?, 'vk-shared-lossless', 'lossless', 'LOSSLESS', 'available')
-  `).run(sharedTrack);
-
-  // File 1 is LOW quality; provider_id is track-shared-1
-  insertTrackFile({
-    canonical_artist_mbid: "artist-fallback",
-    canonical_release_group_mbid: "rg-fallback",
-    canonical_release_mbid: "rel-fallback",
-    canonical_track_mbid: "trk-fallback-1",
-    canonical_recording_mbid: "rec-fallback-1",
-    track_id: canonicalTrackId("trk-fallback-1"),
-    provider: "tidal",
-    provider_entity_type: "track",
-    provider_id: "track-shared-1",
-    quality: "LOW",
-    codec: "AAC",
-    library_slot: "stereo",
-    file_path: "C:/Music/fallback-1.m4a",
-    relative_path: "fallback-1.m4a",
-  });
-
-  // Files 2 and 3 are already LOSSLESS (1/3 tracks needing upgrade = 33% < 50% threshold, so standalone track upgrade)
-  for (let i = 2; i <= 3; i++) {
-    insertTrackFile({
-      canonical_artist_mbid: "artist-fallback",
-      canonical_release_group_mbid: "rg-fallback",
-      canonical_release_mbid: "rel-fallback",
-      canonical_track_mbid: `trk-fallback-${i}`,
-      canonical_recording_mbid: `rec-fallback-${i}`,
-      track_id: canonicalTrackId(`trk-fallback-${i}`),
-      provider: "tidal",
-      provider_entity_type: "track",
-      provider_id: `track-album-${i}`,
-      quality: "LOSSLESS",
-      codec: "FLAC",
-      library_slot: "stereo",
-      file_path: `C:/Music/fallback-${i}.flac`,
-      relative_path: `fallback-${i}.flac`,
-    });
-  }
-
-  const result = await UpgraderService.checkUpgrades(true, String(artist.id));
-  assert.equal(result.tracks, 1);
-  assert.equal(result.albums, 0);
-
-  const jobs = listDownloadJobs();
-  assert.equal(jobs.length, 1);
-  assert.equal(jobs[0].name, CommandNames.DownloadTrack);
-  assert.equal(jobs[0].ref_id, "track-shared-1");
-  const payload = JSON.parse(jobs[0].payload);
-  assert.equal(payload.provider, "tidal");
-  assert.equal(payload.providerId, "track-shared-1");
-  assert.equal(payload.slot, "stereo");
 });
 
 test("checkUpgrades allows upgrading provider-less (manual-import) files from the winning plan", async () => {
