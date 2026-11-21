@@ -7,6 +7,7 @@ import { ArtistStatisticsService } from "../../music/artist-statistics-service.j
 import { appEvents, AppEvent } from "../app-events.js";
 import { CommandTrigger } from "../command-trigger.js";
 import { CommandQueueManager } from "../command-queue-manager.js";
+import { CommandNames } from "../command-names.js";
 import type { CommandHandler } from "./handler-context.js";
 import { clearAcquisitionPlanningRevision } from "../../music/acquisition-planning-control.js";
 
@@ -65,13 +66,20 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
 
 /** A scheduled upgrade pass queues at most this many album/track downloads or
  * conversions. No pass, scheduled or manual, runs while missing music still
- * waits to download (missing first), or while this many upgrade downloads
- * still wait. */
+ * waits to download or a missing-music pass has yet to queue it (missing
+ * first), or while this many upgrade downloads still wait. */
 const SCHEDULED_UPGRADE_UNIT_BUDGET = 25;
 /** A manual pass forces upgrades on, so it gets a cap too: one click must not
  * queue the whole library (13k tracks live on 21 Nov). */
 const MANUAL_UPGRADE_UNIT_BUDGET = 100;
 const SCHEDULED_UPGRADE_QUEUE_CEILING = 50;
+/** A curation or missing pass queues its missing albums artist by artist, so
+ * the download queue alone does not show the missing music still to come. */
+const MISSING_PASS_COMMAND_NAMES = [
+    CommandNames.ApplyCuration,
+    CommandNames.DownloadMissing,
+    CommandNames.DownloadMissingForce,
+] as const;
 
 export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, ctx) => {
     ctx.updateCommandDescription(job, {
@@ -79,6 +87,13 @@ export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, 
         description: "Tracked files - comparing against quality profile cutoffs",
     });
     const mode = job.payload.mode ?? "manual";
+    if (CommandQueueManager.countJobsByTypesAndStatuses(MISSING_PASS_COMMAND_NAMES, ["queued", "started"]) > 0) {
+        ctx.updateCommandDescription(job, {
+            progress: 100,
+            description: "Skipped: missing-music pass still running",
+        });
+        return;
+    }
     const pending = UpgraderService.pendingDownloadCounts();
     if (pending.missing > 0 || pending.upgrades >= SCHEDULED_UPGRADE_QUEUE_CEILING) {
         ctx.updateCommandDescription(job, {
