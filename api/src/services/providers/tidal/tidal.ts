@@ -14,7 +14,6 @@ import { tidalVideoQualityTag } from "./tidal-quality.js";
 import { resolveTidalVideoQualityTag } from "./tidal-video-probe.js";
 import { isTimeoutError } from "../../../utils/timeout.js";
 import { ProviderRateLimitError, providerRequestState } from "../provider-request-state.js";
-import { readIntEnv } from "../../../utils/env.js";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 const TIDAL_API_BASE_V2 = "https://api.tidal.com/v2";
 // TIDAL's JSON:API developer platform. Our device-flow token is accepted here
@@ -202,9 +201,9 @@ export async function withRetry<T>(
     try {
       return await fn();
     } catch (error: any) {
-      const status = error.message?.match(/\d{3}/)?.[0];
-      const is429 = status === '429' || error?.status === 429 || error instanceof ProviderRateLimitError;
-      const is5xx = status && parseInt(status) >= 500 && parseInt(status) < 600;
+      const status = typeof error?.status === "number" ? error.status : undefined;
+      const is429 = status === 429 || error instanceof ProviderRateLimitError;
+      const is5xx = typeof status === "number" && status >= 500 && status < 600;
       const isTimeout = isTimeoutError(error);
 
       // Don't retry on non-retryable errors
@@ -239,7 +238,7 @@ export async function withRetry<T>(
 const RATE_LIMIT_MAX_DELAY_MS = 30_000;
 const RATE_LIMIT_MIN_WAIT_MS = 20_000; // Tidalrr: wait 20s on 429
 const RETRY_BACKOFF_FACTOR = 1.5; // old scripts: backoff factor for 5xx/429
-const RETRY_MAX_ATTEMPTS = readIntEnv("DISCOGENIUS_TIDAL_MAX_RETRIES", 5, 1);
+const RETRY_MAX_ATTEMPTS = 5;
 let rateLimitUntil = 0;
 
 // Proactive rate limiting — python-tidal uses ThreadPoolExecutor(2) with no
@@ -446,7 +445,7 @@ async function tidalFetchWithRetry(
       const retryAfterMs = parseRetryAfterMs(response);
       const waitMs = retryAfterMs != null
         ? Math.max(0, retryAfterMs)
-        : readIntEnv("DISCOGENIUS_TIDAL_RATE_LIMIT_MIN_WAIT_MS", RATE_LIMIT_MIN_WAIT_MS, 0);
+        : RATE_LIMIT_MIN_WAIT_MS;
       const willRetry = attempt < maxRetries;
       const deadline = Date.now() + waitMs;
 

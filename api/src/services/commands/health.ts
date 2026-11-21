@@ -471,7 +471,8 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
       agingEligibleCommandTypes.length > 0
       && !hasStuckAgingCommands
       && started > 0
-      && (!pool?.started || activeBusyWorkers.length > 0)
+      && pool?.started === true
+      && activeBusyWorkers.length > 0
       && expiredLeases === 0
       && noProgress === 0
       && staleBusyWorkers.length === 0;

@@ -209,3 +209,17 @@ test("withRetry honours backoff on 429 and does not give up after three attempts
   assert.equal(attempts, 4);
 });
 
+test("withRetry does not treat non-429 error messages containing '429' as rate limits", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    () => withRetry(async () => {
+      attempts += 1;
+      const err = new Error("Resource /v1/albums/1429001 not found (404)");
+      (err as any).status = 404;
+      throw err;
+    }, "test-no-regex-429", 5),
+    (err: any) => err.status === 404,
+  );
+  assert.equal(attempts, 1, "does not retry 404 errors containing '429' in the message");
+});
+

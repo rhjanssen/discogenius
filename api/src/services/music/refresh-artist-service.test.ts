@@ -1261,13 +1261,22 @@ test("RefreshArtist provider video lookup retries after 429 and succeeds (#152)"
   assert.equal(videoItem?.provider_id, "retried-video-1");
 });
 
-test("RefreshArtist provider album fetch retries past 3 immediate 429s after backoff and succeeds (#152)", async () => {
+test("RefreshArtist provider album fetch retries past 3 immediate 429s after backoff and succeeds through matchArtistProviders (#152)", async () => {
   const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  const artistId = "test-album-retry-artist";
+  const artistMbid = "eeee5555-5555-4555-8555-555555555555";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+  `).run(artistMbid, "Album Retry Artist");
+
   let albumAttempts = 0;
   const provider = {
     id: "retry-album-provider",
     name: "Retry Album Provider",
-    getArtistAlbums: async (artistId: string) => {
+    capabilities: { musicVideos: false },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => ({ id: "provider-artist-1", name: "Album Retry Artist" }),
+    getArtistAlbums: async () => {
       albumAttempts++;
       if (albumAttempts <= 3) {
         throw new ProviderRateLimitError(provider.id, Date.now() + 10);
@@ -1275,21 +1284,237 @@ test("RefreshArtist provider album fetch retries past 3 immediate 429s after bac
       return [{
         providerId: "retried-album-1",
         title: "Retried Album",
-        artistId,
+        artist: { providerId: "provider-artist-1", name: "Album Retry Artist" },
         releaseDate: "2026-11-20",
-        num_tracks: 1,
+        trackCount: 1,
+        volumeCount: 1,
+        type: "ALBUM",
       }];
+    },
+    getAlbumTracks: async () => [],
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  } as any;
+
+  const artistRow = dbModule.db.prepare(
+    "SELECT id FROM ArtistMetadata WHERE mbid = ?",
+  ).get(artistMbid) as { id: number };
+  const artistItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES (?, 'artist', 'provider-artist-1', 'Album Retry Artist')
+    RETURNING id
+  `).get(provider.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(artistItem.id, artistRow.id);
+
+  const manager = providersModule.streamingProviderManager as any;
+  const originalGetAll = manager.getAllStreamingProviders;
+  const service = refreshServiceModule.RefreshArtistService as any;
+  const originalSearchCollaborations = service.searchCanonicalCollaborationOffers;
+  const originalStore = service.storeProviderAlbumOffers;
+  const originalReplay = service.replayStaleTrackMatches;
+  const originalReviews = service.refreshMissingAlbumReviews;
+  const originalCovers = service.precacheArtistMediaCovers;
+  let storedAlbums: any[] = [];
+
+  manager.getAllStreamingProviders = () => [provider];
+  service.searchCanonicalCollaborationOffers = async () => ({ albums: [], matches: new Map() });
+  service.storeProviderAlbumOffers = async (
+    _providerId: string,
+    _artistMbid: string | null,
+    albums: any[],
+  ) => { storedAlbums = albums; };
+  service.replayStaleTrackMatches = async () => undefined;
+  service.refreshMissingAlbumReviews = async () => undefined;
+  service.precacheArtistMediaCovers = async () => undefined;
+
+  try {
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(
+      artistId,
+      artistMbid,
+      {},
+      true,
+    );
+  } finally {
+    manager.getAllStreamingProviders = originalGetAll;
+    service.searchCanonicalCollaborationOffers = originalSearchCollaborations;
+    service.storeProviderAlbumOffers = originalStore;
+    service.replayStaleTrackMatches = originalReplay;
+    service.refreshMissingAlbumReviews = originalReviews;
+    service.precacheArtistMediaCovers = originalCovers;
+  }
+
+  assert.equal(albumAttempts, 4, "album fetch retried past 3 immediate 429s and succeeded");
+  assert.equal(storedAlbums.length, 1);
+  assert.equal(storedAlbums[0].provider_id, "retried-album-1");
+});
+
+test("RefreshArtist waits out realistic 60s rate-limit window using fake timers (#152)", async () => {
+  const { mock } = await import("node:test");
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+
+  const artistId = "test-apple-wait-artist";
+  const artistMbid = "ffff6666-6666-4666-8666-666666666666";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Apple Wait Artist')
+  `).run(artistMbid);
+
+  let attempts = 0;
+  const provider = {
+    id: "apple-music",
+    name: "Apple Music",
+    capabilities: { musicVideos: false },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => ({ id: "apple-artist-1", name: "Apple Wait Artist" }),
+    getArtistAlbums: async () => {
+      attempts++;
+      if (attempts === 1) {
+        // Realistic Apple Music 429: 60s deferral window
+        throw new ProviderRateLimitError("apple-music", Date.now() + 60_000);
+      }
+      return [{
+        providerId: "apple-delayed-album-1",
+        title: "Delayed Album",
+        artist: { providerId: "apple-artist-1", name: "Apple Wait Artist" },
+        releaseDate: "2026-11-20",
+        trackCount: 1,
+        volumeCount: 1,
+        type: "ALBUM",
+      }];
+    },
+    getAlbumTracks: async () => [],
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  } as any;
+
+  const artistRow = dbModule.db.prepare(
+    "SELECT id FROM ArtistMetadata WHERE mbid = ?",
+  ).get(artistMbid) as { id: number };
+  const artistItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES (?, 'artist', 'apple-artist-1', 'Apple Wait Artist')
+    RETURNING id
+  `).get(provider.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(artistItem.id, artistRow.id);
+
+  const manager = providersModule.streamingProviderManager as any;
+  const originalGetAll = manager.getAllStreamingProviders;
+  const service = refreshServiceModule.RefreshArtistService as any;
+  const originalSearchCollaborations = service.searchCanonicalCollaborationOffers;
+  const originalStore = service.storeProviderAlbumOffers;
+  const originalReplay = service.replayStaleTrackMatches;
+  const originalReviews = service.refreshMissingAlbumReviews;
+  const originalCovers = service.precacheArtistMediaCovers;
+  let storedAlbums: any[] = [];
+  let progressCalls = 0;
+
+  manager.getAllStreamingProviders = () => [provider];
+  service.searchCanonicalCollaborationOffers = async () => ({ albums: [], matches: new Map() });
+  service.storeProviderAlbumOffers = async (
+    _providerId: string,
+    _artistMbid: string | null,
+    albums: any[],
+  ) => { storedAlbums = albums; };
+  service.replayStaleTrackMatches = async () => undefined;
+  service.refreshMissingAlbumReviews = async () => undefined;
+  service.precacheArtistMediaCovers = async () => undefined;
+
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  try {
+    const refreshPromise = refreshServiceModule.RefreshArtistService.matchArtistProviders(
+      artistId,
+      artistMbid,
+      {
+        progress: (event: any) => {
+          if (event.kind === "status" && event.message.includes("waiting out rate limit on Apple Music")) {
+            progressCalls++;
+          }
+        },
+      },
+      true,
+    );
+
+    // Allow async microtasks to run until sleep(60000) is reached.
+    await new Promise((resolve) => setImmediate(resolve));
+    mock.timers.tick(60_000);
+
+    await refreshPromise;
+    assert.equal(attempts, 2, "initial attempt failed with 60s rate limit, second attempt succeeded after timer advance");
+    assert.equal(progressCalls, 1, "reported rate-limit wait progress");
+    assert.equal(storedAlbums.length, 1);
+    assert.equal(storedAlbums[0].provider_id, "apple-delayed-album-1");
+  } finally {
+    mock.timers.reset();
+    manager.getAllStreamingProviders = originalGetAll;
+    service.searchCanonicalCollaborationOffers = originalSearchCollaborations;
+    service.storeProviderAlbumOffers = originalStore;
+    service.replayStaleTrackMatches = originalReplay;
+    service.refreshMissingAlbumReviews = originalReviews;
+    service.precacheArtistMediaCovers = originalCovers;
+  }
+});
+
+test("RefreshArtist does not nest retries when TIDAL throws ProviderRateLimitError (#152)", async () => {
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  const selectedArtistMbid = "12121212-1212-4212-8212-121212121212";
+  const ownerArtistMbid = "98989898-9898-4898-8898-989898989898";
+  const releaseGroupMbid = "34343434-3434-4434-8434-343434343434";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Tidal Selected Artist'), (?, 'Tidal Owner Artist')
+  `).run(selectedArtistMbid, ownerArtistMbid);
+  const rg = dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, 'Tidal No Nest Collab', 'Single', '2026-11-20')
+    RETURNING id
+  `).get(releaseGroupMbid, ownerArtistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, 'Tidal No Nest Collab', 'Official', '2026-11-20', 1, 1)
+  `).run("56565656-5656-4656-8656-565656565656", rg.id, releaseGroupMbid, ownerArtistMbid);
+  const selected = dbModule.db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?").get(selectedArtistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship)
+    VALUES (?, ?, ?, ?, 'credited')
+  `).run(selected.id, selectedArtistMbid, rg.id, releaseGroupMbid);
+
+  let tidalAttempts = 0;
+  const tidalProvider = {
+    id: "tidal",
+    name: "TIDAL",
+    capabilities: { musicVideos: true },
+    searchReleaseGroup: async () => {
+      tidalAttempts++;
+      throw new ProviderRateLimitError("tidal", Date.now() + 20_000);
     },
   } as any;
 
-  const albums = await (refreshServiceModule.RefreshArtistService as any).retryOnRateLimit(
-    () => provider.getArtistAlbums("artist-123"),
-    { provider, action: "fetch artist albums" },
-  );
+  await (refreshServiceModule.RefreshArtistService as any)
+    .searchCanonicalCollaborationOffers(tidalProvider, selectedArtistMbid, true);
 
-  assert.equal(albumAttempts, 4, "album fetch retried past 3 immediate 429s and succeeded");
-  assert.equal(albums.length, 1);
-  assert.equal(albums[0].providerId, "retried-album-1");
+  assert.equal(tidalAttempts, 1, "TIDAL call was executed once without nested retry multiplier at service layer");
 });
 
 
