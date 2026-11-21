@@ -64,9 +64,13 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
 };
 
 /** A scheduled upgrade pass queues at most this many album/track downloads or
- * conversions. It does nothing while missing music still waits to download
- * (missing first), or while this many upgrade downloads still wait. */
+ * conversions. No pass, scheduled or manual, runs while missing music still
+ * waits to download (missing first), or while this many upgrade downloads
+ * still wait. */
 const SCHEDULED_UPGRADE_UNIT_BUDGET = 25;
+/** A manual pass forces upgrades on, so it gets a cap too: one click must not
+ * queue the whole library (13k tracks live on 21 Nov). */
+const MANUAL_UPGRADE_UNIT_BUDGET = 100;
 const SCHEDULED_UPGRADE_QUEUE_CEILING = 50;
 
 export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, ctx) => {
@@ -75,22 +79,20 @@ export const handleCheckUpgrades: CommandHandler<"CheckUpgrades"> = async (job, 
         description: "Tracked files - comparing against quality profile cutoffs",
     });
     const mode = job.payload.mode ?? "manual";
-    if (mode === "scheduled") {
-        const pending = UpgraderService.pendingDownloadCounts();
-        if (pending.missing > 0 || pending.upgrades >= SCHEDULED_UPGRADE_QUEUE_CEILING) {
-            ctx.updateCommandDescription(job, {
-                progress: 100,
-                description: pending.missing > 0
-                    ? `Skipped: ${pending.missing} missing downloads still waiting`
-                    : `Skipped: ${pending.upgrades} upgrade downloads already waiting`,
-            });
-            return;
-        }
+    const pending = UpgraderService.pendingDownloadCounts();
+    if (pending.missing > 0 || pending.upgrades >= SCHEDULED_UPGRADE_QUEUE_CEILING) {
+        ctx.updateCommandDescription(job, {
+            progress: 100,
+            description: pending.missing > 0
+                ? `Skipped: ${pending.missing} missing downloads still waiting`
+                : `Skipped: ${pending.upgrades} upgrade downloads already waiting`,
+        });
+        return;
     }
     const result = await UpgraderService.checkUpgrades(
         mode === "manual",
         undefined,
-        mode === "scheduled" ? { maxUnits: SCHEDULED_UPGRADE_UNIT_BUDGET } : {},
+        { maxUnits: mode === "scheduled" ? SCHEDULED_UPGRADE_UNIT_BUDGET : MANUAL_UPGRADE_UNIT_BUDGET },
     );
     ctx.updateCommandDescription(job, {
         progress: 100,

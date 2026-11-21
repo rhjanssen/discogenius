@@ -308,7 +308,7 @@ test("checkUpgrades queues canonical audio album upgrades without provider catal
   assert.equal(albumPayload.libraryId, 1);
 });
 
-test("scheduled CheckUpgrades waits while missing music is still queued", async () => {
+test("CheckUpgrades, scheduled or manual, waits while missing music is still queued", async () => {
   const { handleCheckUpgrades } = await import("../commands/handlers/curation-handlers.js");
   const { DownloadWaitQueue } = await import("../download/download-wait-queue.js");
   seedArtistAndRelease();
@@ -343,6 +343,10 @@ test("scheduled CheckUpgrades waits while missing music is still queued", async 
   const job = { id: 1, payload: { mode: "scheduled" } };
 
   await handleCheckUpgrades(job as never, ctx as never);
+  assert.deepEqual(listDownloadJobs().map((row) => row.ref_id), ["missing-album-1"]);
+  assert.equal(descriptions.at(-1), "Skipped: 1 missing downloads still waiting");
+  // A manual check obeys the same rule.
+  await handleCheckUpgrades({ id: 2, payload: { mode: "manual" } } as never, ctx as never);
   assert.deepEqual(listDownloadJobs().map((row) => row.ref_id), ["missing-album-1"]);
   assert.equal(descriptions.at(-1), "Skipped: 1 missing downloads still waiting");
 
