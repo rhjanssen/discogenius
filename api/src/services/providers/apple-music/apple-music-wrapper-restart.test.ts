@@ -174,6 +174,8 @@ test("shell-level verification: once the PID namespace passes 65535 the supervis
     );
     assert.equal(await waitFor(portsAnswer, 20), true, "Ports should answer after the first start");
 
+    // The wrapper still starts threads right after its ports open; measure once it has settled.
+    await new Promise((r) => setTimeout(r, 15000));
     const idleStart = Number(sh("cat /proc/sys/kernel/ns_last_pid"));
     await new Promise((r) => setTimeout(r, 10000));
     const idleEnd = Number(sh("cat /proc/sys/kernel/ns_last_pid"));
