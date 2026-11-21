@@ -693,6 +693,7 @@ export class DiskScanService {
                 quality IS NULL OR TRIM(quality) = ''
                 OR imported_quality IS NULL OR TRIM(imported_quality) = ''
                 OR codec IS NULL OR TRIM(codec) = ''
+                OR sample_rate < 8000
               )
             ORDER BY id
         `).all(artistId) as Array<{
@@ -704,7 +705,10 @@ export class DiskScanService {
 
         const update = db.prepare(`
             UPDATE TrackFiles
-            SET quality = COALESCE(NULLIF(TRIM(quality), ''), @quality),
+            -- A sub-8 kHz rate is a misread (Apple hi-res ALAC read as 16-bit / 1 Hz),
+            -- so the quality derived from it is wrong too: replace both.
+            SET quality = CASE WHEN sample_rate < 8000 THEN COALESCE(@quality, quality)
+                               ELSE COALESCE(NULLIF(TRIM(quality), ''), @quality) END,
                 imported_quality = COALESCE(NULLIF(TRIM(imported_quality), ''), @quality),
                 bit_depth = COALESCE(@bitDepth, bit_depth),
                 sample_rate = COALESCE(@sampleRate, sample_rate),
@@ -714,7 +718,8 @@ export class DiskScanService {
                 duration = COALESCE(@duration, duration),
                 verified_at = CURRENT_TIMESTAMP
             WHERE id = @id AND (
-                quality IS NOT COALESCE(NULLIF(TRIM(quality), ''), @quality)
+                sample_rate < 8000
+                OR quality IS NOT COALESCE(NULLIF(TRIM(quality), ''), @quality)
                 OR imported_quality IS NOT COALESCE(NULLIF(TRIM(imported_quality), ''), @quality)
                 OR bit_depth IS NOT COALESCE(@bitDepth, bit_depth)
                 OR sample_rate IS NOT COALESCE(@sampleRate, sample_rate)
