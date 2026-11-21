@@ -38,13 +38,34 @@ export function isAppleTruncatedSegmentError(error: unknown): boolean {
   return APPLE_TRUNCATED_SEGMENT_PATTERN.test(message);
 }
 
+export const TIDAL_SESSION_WAIT_MESSAGE =
+  "TIDAL session is not available yet; waiting for a token refresh";
+
+function escapeRegex(pattern: string): string {
+  return pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * One classifier for auth failures that arrive as plain errors (tiddl, older
  * Streamrip output, history rows from before this type existed).
  * Transient network text does not match.
  */
-const AUTH_FAILURE_TEXT =
-  /tidal login expired|TIDAL token refresh failed \(HTTP 401\b|invalid\s+arl|arl\s+(?:expired|invalid)|deezer arl is invalid|needs_reauth|apple music decryption (?:failed|wrapper)|decryption wrapper (?:port|is (?:not answering|unreachable))|failed to run v2:\s*decrypt|decrypting\.\.\.\s*failed/iu;
+const AUTH_FAILURE_TEXT = new RegExp(
+  [
+    "tidal login expired",
+    "TIDAL token refresh failed \\(HTTP 401\\b",
+    escapeRegex(TIDAL_SESSION_WAIT_MESSAGE),
+    "invalid\\s+arl",
+    "arl\\s+(?:expired|invalid)",
+    "deezer arl is invalid",
+    "needs_reauth",
+    "apple music decryption (?:failed|wrapper)",
+    "decryption wrapper (?:port|is (?:not answering|unreachable))",
+    "failed to run v2:\\s*decrypt",
+    "decrypting\\.\\.\\.\\s*failed",
+  ].join("|"),
+  "iu",
+);
 /**
  * An expired ACCESS token ("The token has expired. (Expired on time)" from a
  * TIDAL API call) is not a dead login: the refresh token renews it. Treating

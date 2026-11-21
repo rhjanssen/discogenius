@@ -111,6 +111,22 @@ test("a provider auth error is not retried on the same offer", async () => {
   assert.equal(attempts, 1);
 });
 
+test("TidalSessionUnavailableError is treated as auth wait and not retried on the same offer", async () => {
+  const { TidalSessionUnavailableError } = await import("../providers/tidal/tidal-auth.js");
+  const { errorIndicatesProviderAuth, TIDAL_SESSION_WAIT_MESSAGE } = await import("../providers/provider-auth-error.js");
+  assert.equal(errorIndicatesProviderAuth(new TidalSessionUnavailableError()), true);
+  assert.equal(errorIndicatesProviderAuth(new Error(TIDAL_SESSION_WAIT_MESSAGE)), true);
+  assert.equal(errorIndicatesProviderAuth(new Error("waiting for token refresh")), false);
+  assert.equal(errorIndicatesProviderAuth(new Error("waiting for a token refresh")), false);
+
+  let attempts = 0;
+  await assert.rejects(executeWithSameOfferRetries({ sleep: async () => {} }, async () => {
+    attempts += 1;
+    throw new TidalSessionUnavailableError();
+  }), TidalSessionUnavailableError);
+  assert.equal(attempts, 1);
+});
+
 test("missing downloader provisioning does not repeat same-offer attempts", async () => {
   let attempts = 0;
   await assert.rejects(executeWithSameOfferRetries({ sleep: async () => {} }, async () => {
