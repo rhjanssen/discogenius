@@ -538,3 +538,26 @@ test("stereo want is never filled by a spatial offer at enqueue (#76)", () => {
   assert.equal(waitQueueModule.DownloadWaitQueue.get(stereoRow.id)?.slot, "stereo");
 });
 
+
+test("a missing download is queued ahead of waiting upgrades", () => {
+  const enqueue = (ref: string, reason?: "upgrade") => waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: ref,
+    mediaKind: "track",
+    commandName: queueModule.CommandNames.DownloadTrack,
+    provider: "tidal",
+    providerId: ref,
+    title: ref,
+    artist: "Bastille",
+    payload: { type: "track", provider: "tidal", providerId: ref, title: ref, artist: "Bastille", ...(reason ? { reason } : {}) },
+  });
+  enqueue("missing-1");
+  enqueue("upgrade-1", "upgrade");
+  enqueue("upgrade-2", "upgrade");
+  enqueue("missing-2");
+  enqueue("upgrade-3", "upgrade");
+
+  const order = dbModule.db.prepare("SELECT ref_key FROM DownloadQueue ORDER BY queue_order, id").all() as Array<{ ref_key: string }>;
+  assert.deepEqual(order.map((row) => row.ref_key), ["missing-1", "missing-2", "upgrade-1", "upgrade-2", "upgrade-3"]);
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
+  assert.equal(claimed?.wait.ref_key, "missing-1");
+});

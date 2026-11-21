@@ -494,7 +494,8 @@ export class DownloadWaitQueue {
     const trackIds = input.trackIds ?? [];
     const identity = this.albumIdentity(input);
     const inserted = retrySqliteBusySync(() => db.transaction(() => {
-      const rank = position === "front" ? this.nextFrontRank() : this.nextAppendRank();
+      const rank = position === "front" ? this.nextFrontRank()
+        : payload.reason === "upgrade" ? this.nextAppendRank() : this.nextMissingRank();
       const info = db.prepare(`
         INSERT INTO DownloadQueue (
           ref_key, media_kind, command_name, plan_id, library_id, edition_id, track_ids,
@@ -997,6 +998,21 @@ export class DownloadWaitQueue {
       SELECT MAX(queue_order) AS queue_order FROM DownloadQueue
     `).get() as { queue_order?: number | null } | undefined;
     return (row?.queue_order ?? 0) + QUEUE_RANK_STEP;
+  }
+
+  /** Missing music always downloads before upgrades: a new missing download
+   * lands just ahead of the first waiting upgrade instead of behind it. */
+  private static nextMissingRank(): number {
+    const firstUpgrade = db.prepare(`
+      SELECT MIN(queue_order) AS queue_order FROM DownloadQueue
+      WHERE command_id IS NULL AND json_valid(payload) AND json_extract(payload, '$.reason') = 'upgrade'
+    `).get() as { queue_order?: number | null } | undefined;
+    if (firstUpgrade?.queue_order == null) return this.nextAppendRank();
+    const previous = db.prepare(`
+      SELECT MAX(queue_order) AS queue_order FROM DownloadQueue WHERE queue_order < ?
+    `).get(firstUpgrade.queue_order) as { queue_order?: number | null } | undefined;
+    return allocateFractionalQueueRanks(previous?.queue_order ?? null, firstUpgrade.queue_order, 1)?.[0]
+      ?? this.nextAppendRank();
   }
 
   private static nextFrontRank(): number {
