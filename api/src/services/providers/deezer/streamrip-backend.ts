@@ -9,6 +9,7 @@ import type {
 import { configuredAudioQuality } from "../../config/config.js";
 import { getDeezerConfigDir, loadDeezerCredentials } from "./deezer-auth.js";
 import { ProviderAuthError } from "../provider-auth-error.js";
+import { ProviderUnavailableError } from "../../download/provider-unavailable-error.js";
 
 const MEDIA_EXTENSIONS = new Set([".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus"]);
 
@@ -292,6 +293,41 @@ export function classifyStreamripOutput(output: string): StreamripClassifiedErro
   return errors;
 }
 
+/**
+ * Streamrip's own words for "Deezer will not deliver this resource": API error
+ * 800 (DataException, "no data") for a delisted release, a per-track
+ * NonStreamableError from get_downloadable, or our bridge's missing media URL.
+ * WrongLicense ("not available with your subscription") is the account tier,
+ * not this resource, and stays an ordinary failure.
+ */
+const DEEZER_CONTENT_UNAVAILABLE = [
+  /\bDataException\b/u,
+  /\berror getting downloadable data for track\b/iu,
+  /\bno media URL for this track\b/iu,
+];
+const DEEZER_ACCOUNT_LIMIT = /\bwith your subscription\b/iu;
+
+export function streamripReportsContentUnavailable(
+  outputTail: string,
+  errors: readonly StreamripClassifiedError[],
+): boolean {
+  if (errors.some((error) => error.kind === "transient" || error.kind === "authentication" || error.kind === "configuration")) {
+    return false;
+  }
+  // Rich wraps long log records over several lines.
+  const text = outputTail.replace(/\s+/gu, " ");
+  return DEEZER_CONTENT_UNAVAILABLE.some((pattern) => pattern.test(text)) && !DEEZER_ACCOUNT_LIMIT.test(text);
+}
+
+/** The exception a Python traceback ends with, e.g. `APIError: {"code": 4}`. */
+export function streamripExceptionLine(outputTail: string): string | null {
+  const lines = outputTail.split(/\r?\n/gu).map((line) => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (/^[A-Za-z_][\w.]*(?:Error|Exception)\b:?/u.test(lines[index])) return lines[index].slice(0, 500);
+  }
+  return null;
+}
+
 export function streamripProgressForLine(line: string): DownloadProgress | null {
   const normalized = line.trim();
   if (!normalized) return null;
@@ -321,6 +357,9 @@ export const runStreamripCommand: StreamripCommandRunner = (command, args, optio
 
   const child = spawn(command, args, {
     cwd: options.cwd,
+    // Streamrip logs through rich, which wraps at 80 columns without a TTY
+    // and splits one error over several lines the classifier reads one by one.
+    env: { ...process.env, COLUMNS: "400" },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -422,9 +461,19 @@ export class StreamripDeezerBackend implements DownloadBackend {
     if (errors.some((error) => error.kind === "authentication") && producedFiles.length === 0) {
       throw new ProviderAuthError("deezer", "Deezer ARL is invalid or expired.");
     }
+    if (producedFiles.length === 0 && streamripReportsContentUnavailable(result.outputTail, errors)) {
+      throw new ProviderUnavailableError(
+        "deezer",
+        request.entityType === "album" ? "album" : "track",
+        request.providerId,
+        `Deezer has no downloadable data for ${request.entityType} ${request.providerId}`
+          + `${errorSummary ? `: ${errorSummary}` : ""}`,
+      );
+    }
     if (result.exitCode !== 0 && producedFiles.length === 0) {
       throw new Error(
-        `Streamrip exited with ${result.exitCode ?? "unknown"}: ${errorSummary || result.outputTail || "unknown error"}`,
+        `Streamrip exited with ${result.exitCode ?? "unknown"}: `
+          + `${streamripExceptionLine(result.outputTail) || errorSummary || result.outputTail || "unknown error"}`,
       );
     }
     if (producedFiles.length === 0) {
