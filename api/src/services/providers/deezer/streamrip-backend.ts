@@ -257,6 +257,9 @@ export function classifyStreamripOutput(output: string): StreamripClassifiedErro
   const errors: StreamripClassifiedError[] = [];
   const seen = new Set<string>();
   for (const line of lines) {
+    // Rich prints traceback frames as boxed source code; a comment or argument
+    // in that code ("e-cdns-proxy", "timeout=30") is not an error message.
+    if (/^[│╭╰]/u.test(line)) continue;
     let kind: StreamripErrorKind | null = null;
     let permanent = true;
     if (/error processing media item:\s*['"]id['"]|keyerror:\s*['"]id['"]/iu.test(line)) {
@@ -269,7 +272,7 @@ export function classifyStreamripOutput(output: string): StreamripClassifiedErro
       kind = "geography";
     } else if (/quality.*(?:unavailable|not available|restricted)|format.*not available/iu.test(line)) {
       kind = "quality";
-    } else if (/domain name not found|name resolution|enotfound|eai_again|dns/iu.test(line)) {
+    } else if (/domain name not found|name resolution|enotfound|eai_again|\bdns\b/iu.test(line)) {
       kind = "transient";
       permanent = false;
     } else if (/connection pool is full|httpsconnectionpool|httpconnectionpool|max retries exceeded|discarding connection/iu.test(line)) {
@@ -280,7 +283,7 @@ export function classifyStreamripOutput(output: string): StreamripClassifiedErro
     } else if (/rate.?limit|too many requests|timeout|temporar|network|connection/iu.test(line)) {
       kind = "transient";
       permanent = false;
-    } else if (/\berror\b|\bfailed\b|traceback/iu.test(line)) {
+    } else if (/\berror\b|\bfailed\b|traceback|^[A-Za-z_][\w.]*(?:Error|Exception)\b/iu.test(line)) {
       kind = "unknown";
       permanent = false;
     }

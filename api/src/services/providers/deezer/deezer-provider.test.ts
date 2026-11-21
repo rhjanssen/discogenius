@@ -412,6 +412,55 @@ test("Deezer content it will not deliver ends as an unavailable offer, not a ret
   }
 });
 
+// Live #41462 (Regional at Best): the bridge's own NonStreamableError escaped
+// as a traceback whose source excerpt mentions "e-cdns-proxy hosts".
+const NON_STREAMABLE_TRACEBACK = `
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /app/api/src/services/providers/deezer/streamrip-bridge.py:40 in             │
+│ _reject_legacy_low_quality_fallback                                          │
+│                                                                              │
+│   37 │   # format. Its legacy fallback forces MP3_128 even for a FLAC request, │
+│   38 │   # uses retired e-cdns-proxy hosts. Preserve the acquisition quality │
+│ ❱ 40 │   raise NonStreamableError(                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NonStreamableError: Deezer requested quality unavailable: no media URL for this track; legacy 128 kbps fallback disabled.`;
+
+test("a traceback's source excerpt does not make Deezer unavailability look transient", async () => {
+  assert.deepEqual(
+    classifyStreamripOutput(NON_STREAMABLE_TRACEBACK).map((error) => error.kind),
+    ["quality"],
+  );
+  saveDeezerCredentials({ arl: "h".repeat(192) });
+  const backend = new StreamripDeezerBackend(deezerRunner(1, NON_STREAMABLE_TRACEBACK, { count: 0 }));
+  const error = await backend.download({
+    provider: "deezer",
+    entityType: "track",
+    providerId: "41462",
+    downloadPath: path.join(tempDir, "non-streamable"),
+  }, { onProgress: () => undefined }).then(() => null, (failure: unknown) => failure);
+  assert.ok(error instanceof ProviderUnavailableError, String(error));
+  assert.equal(error.entityType, "track");
+});
+
+test("a crash after a file was written still fails the track", async () => {
+  saveDeezerCredentials({ arl: "i".repeat(192) });
+  const downloadPath = path.join(tempDir, "crashed-track");
+  fs.mkdirSync(downloadPath, { recursive: true });
+  const written = path.join(downloadPath, "7.flac");
+  fs.writeFileSync(written, "fixture");
+  const outputTail = "╭── Traceback (most recent call last) ──╮\n│ ❱ 12 │ tag(file) │\n╰───────────╯\nTypeError: 'NoneType' object is not subscriptable";
+  const backend = new StreamripDeezerBackend(async () => ({
+    exitCode: 1,
+    outputTail,
+    classifiedErrors: classifyStreamripOutput(outputTail),
+    producedFiles: [written],
+  }));
+  await assert.rejects(
+    backend.download({ provider: "deezer", entityType: "track", providerId: "7", downloadPath }, { onProgress: () => undefined }),
+    /item failure: unknown: TypeError/u,
+  );
+});
+
 test("Deezer account limits and transport failures are not offer unavailability", async () => {
   saveDeezerCredentials({ arl: "f".repeat(192) });
   for (const outputTail of [
