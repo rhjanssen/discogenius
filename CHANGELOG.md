@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.7] - 2026-11-21
+
+### Fixed
+
+- Catalog refresh no longer leaves editions unchanged when MusicBrainz merges two recordings that already share a recording relation, a provider video match or a library video selection. The duplicate row is dropped and the rest moves to the surviving recording, so the edition update commits and the release group is stamped complete (#151).
+
 ## [2.26.6] - 2026-11-21
 
 ### Fixed
