@@ -561,3 +561,101 @@ test("a missing download is queued ahead of waiting upgrades", () => {
   const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.equal(claimed?.wait.ref_key, "missing-1");
 });
+
+test("hundreds of missing downloads stay ahead of waiting upgrades in FIFO order (#163)", () => {
+  const enqueue = (ref: string, options: { reason?: "upgrade"; position?: "front" | "back" } = {}) =>
+    waitQueueModule.DownloadWaitQueue.enqueue({
+      refKey: ref,
+      mediaKind: "track",
+      commandName: queueModule.CommandNames.DownloadTrack,
+      provider: "tidal",
+      providerId: ref,
+      title: ref,
+      artist: "Bastille",
+      position: options.position,
+      notify: false,
+      payload: {
+        type: "track",
+        provider: "tidal",
+        providerId: ref,
+        title: ref,
+        artist: "Bastille",
+        ...(options.reason ? { reason: options.reason } : {}),
+      },
+    });
+
+  enqueue("upgrade-1", { reason: "upgrade" });
+  enqueue("upgrade-2", { reason: "upgrade" });
+  enqueue("upgrade-3", { reason: "upgrade" });
+
+  const missing = Array.from({ length: 200 }, (_, index) => `missing-${index}`);
+  for (const ref of missing) enqueue(ref);
+
+  const order = (dbModule.db.prepare(
+    "SELECT ref_key FROM DownloadQueue WHERE command_id IS NULL ORDER BY queue_order ASC, id ASC",
+  ).all() as Array<{ ref_key: string }>).map((row) => row.ref_key);
+  assert.deepEqual(order, [...missing, "upgrade-1", "upgrade-2", "upgrade-3"]);
+
+  const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
+  assert.equal(claimed?.wait.ref_key, "missing-0");
+});
+
+test("missing rank shift leaves claimed rows untouched and preserves front enqueue and manual reorder (#163)", () => {
+  const enqueue = (ref: string, options: { reason?: "upgrade"; position?: "front" | "back" } = {}) =>
+    waitQueueModule.DownloadWaitQueue.enqueue({
+      refKey: ref,
+      mediaKind: "track",
+      commandName: queueModule.CommandNames.DownloadTrack,
+      provider: "tidal",
+      providerId: ref,
+      title: ref,
+      artist: "Bastille",
+      position: options.position,
+      notify: false,
+      payload: {
+        type: "track",
+        provider: "tidal",
+        providerId: ref,
+        title: ref,
+        artist: "Bastille",
+        ...(options.reason ? { reason: options.reason } : {}),
+      },
+    });
+
+  const claimedUpgrade = enqueue("claimed-upgrade", { reason: "upgrade" });
+  const claimResult = waitQueueModule.DownloadWaitQueue.claim(claimedUpgrade.id);
+  assert.ok(claimResult);
+  const claimedOrderBefore = waitQueueModule.DownloadWaitQueue.get(claimedUpgrade.id)!.queue_order;
+
+  enqueue("upgrade-1", { reason: "upgrade" });
+  enqueue("upgrade-2", { reason: "upgrade" });
+
+  // Exceed one shift window (1024 steps) to verify repeated shifts keep order intact.
+  const missingIds: number[] = [];
+  const missingRefs: string[] = [];
+  for (let i = 0; i < 1050; i++) {
+    const ref = `missing-${i}`;
+    missingRefs.push(ref);
+    missingIds.push(enqueue(ref).id);
+  }
+
+  enqueue("upgrade-3", { reason: "upgrade" });
+  enqueue("manual-front", { position: "front" });
+  waitQueueModule.DownloadWaitQueue.reorder([missingIds[1049]], { position: "top" });
+
+  const claimedAfter = waitQueueModule.DownloadWaitQueue.get(claimedUpgrade.id)!;
+  assert.equal(claimedAfter.command_id, claimResult.commandId);
+  assert.equal(claimedAfter.queue_order, claimedOrderBefore);
+
+  const unclaimedOrder = (dbModule.db.prepare(
+    "SELECT ref_key FROM DownloadQueue WHERE command_id IS NULL ORDER BY queue_order ASC, id ASC",
+  ).all() as Array<{ ref_key: string }>).map((row) => row.ref_key);
+  assert.deepEqual(unclaimedOrder, [
+    "missing-1049",
+    "manual-front",
+    ...missingRefs.slice(0, 1049),
+    "upgrade-1",
+    "upgrade-2",
+    "upgrade-3",
+  ]);
+});
