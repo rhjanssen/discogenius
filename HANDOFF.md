@@ -1,25 +1,31 @@
 # Session Handoff
 
-- **Branch**: `agent/issue-148` (PR for Issue #148)
+- **Branch**: `agent/issue-147` / `agent/issue-146` (PR #147 for Issue #146)
 - **What is done**:
-  - **Issue #148**: Fixed quality upgrade import failure where commands organized files and then failed with `[ImportDownload] Acquisition plan <id> imported tracks without exact provider offer identity`:
-    1. **Upgrader enqueue identity (`UpgraderService`)**:
-       - Enqueue payloads for both `DownloadAlbum` and `DownloadTrack` upgrades now carry `trackOffers` (and `acquisitionMode` where appropriate) whenever `acquisitionPlanId` is set, matching the winning plan's assignments (`providerTrackItemId`, `providerAudioVariantId`, canonical MBIDs, edition IDs) built via `buildAcquisitionDownloadCommand`.
-       - If matching offers cannot be built or a provider/edition mismatch is detected against the winning plan, upgrade enqueue is skipped closed rather than enqueued without identity.
-       - Enqueue now selects from `SelectedAcquisitionPlans` (winning plan) with in-memory memoization per plan ID during the check pass.
-       - Added `trackOffers?: DownloadTrackOffer[];` to `DownloadTrackCommand` in `command-bodies.ts`.
-    2. **Import-phase offer reconstruction & pre-organize guard (`downloaded-tracks-import-service.ts`)**:
-       - Added `reconstructPlanTrackOffers(planId, expectedProvider?, expectedReleaseMbid?)` using `evaluateAcquisitionDownload(db, planId, { allowUnverifiedProjection: true })`.
-       - `DownloadedTracksImportService.process`: Refuses to organize files into the library if `acquisitionPlanId` is set, `trackOffers` is empty, and offers cannot be reconstructed from the plan, failing closed before any library mutation.
-       - `persistDownloadedProviderProvenance`: If `trackOffers` is empty and `acquisitionPlanId` is set, reconstructs offers from the current acquisition plan to stamp `provider_item_id` and `source_audio_variant_id` on `TrackFiles` without throwing.
-    3. **Tests**:
-       - `upgrader-canonical.test.ts`: Added unit tests verifying `checkUpgrades` enqueues album-level upgrades with `trackOffers` and `acquisitionMode`, single-track upgrades with that specific track offer, and refuses offers when provider or edition diverges from winning plan.
-       - `import-operation-identity.test.ts`: Added unit tests verifying provenance stamping with plan payload, plan offer reconstruction for current-main payloads, rejection when plan does not exist, provider/edition mismatch rejection, and failing closed before organizing files.
-  - **Verification**:
-    - Full `yarn ci` passed (`yarn lint`, `yarn typecheck`, `yarn test:api` [2758/2758 passing], `yarn test:app` [201/201 passing], `yarn build`).
+  - **Rebased onto current `main`** (`b2c08aa6` / `cb02eb58`, v2.26.5), cleanly integrating #148/#149 upgrade offer identity with the album-level winner upgrade policy (#146).
+  - **Maintained #148 offer attachment and validation intact**:
+    - Whenever `acquisitionPlanId` is set, album and per-track upgrade payloads carry the winning plan's `trackOffers` (and MBIDs) via `buildAcquisitionDownloadCommand`.
+    - Upgrades skip before queuing if no matching offer exists or if provider/edition diverges from the plan.
+    - Memoized plan commands in `planCommandCache` per run to avoid redundant allocations.
+  - **Album-level winner quality upgrade policy (#146)**:
+    1. **Album-level winner**: Upgrades are planned against the edition's selected acquisition plan (`SelectedAcquisitionPlans`) only. No selected plan (unmonitored edition, no plan yet) means no upgrade; the earlier fallback cascade was removed in PO review.
+    2. **Spatial library**: Tracks that winning plan only has in stereo (interludes) stay in that album and are not re-queued to Atmos while the plan has no Atmos version.
+    3. **Stereo-only track later gains Atmos**: Upgraded once Atmos becomes available in the winning plan.
+    4. **Stereo library, Atmos-only file**: Replaced as soon as a real stereo version exists in the winning plan into the stereo slot.
+    5. **Genuine stereo upgrade in spatial album**: Stereo tracks in spatial albums can receive genuine better stereo upgrades within the winning plan.
+    6. **Review fixes**:
+       - Stereo fallback loop prevention: falls back to album-level stereo only when winning track has no variants at all (`variants.length === 0`), never when it has a spatial variant.
+       - No provider mixing inside albums: standalone per-track upgrades never mix providers or releases with existing files; whole-album replacement cleanly replaces when album threshold (>=50% or >=3 tracks) is met.
+       - Strict cross-edition scoping: `resolveWinningTrack` strictly confines resolution inside `providerEditionItemId` when known.
+       - PO review: a downconvert is decided by the audio quality setting alone, before any plan lookup; a provider offer below the file never triggers one.
+       - PO review (Robert, 21 Nov): missing first. A scheduled `CheckUpgrades` pass skips while any non-upgrade download still waits (`pendingDownloadCounts`).
+  - **Tests**:
+    - Kept all #149 tests passing unchanged in `upgrader-canonical.test.ts` and `import-operation-identity.test.ts` (28/28 tests passing).
+    - Kept all canonical tests from PR #147 passing (27/27 tests in `upgrader-canonical.test.ts`).
+    - Added test `checkUpgrades album upgrade enqueued from new winning plan carries that winning plan's trackOffers` verifying that when a new provider wins, the queued payload's `trackOffers` come from the new winner.
 - **What is half-done**:
-  - None. All acceptance criteria for Issue #148 are met.
+  - None.
 - **What was verified against running container**:
-  - Validated database and download pipeline against active schema (user_version 46).
+  - Active SQLite schema fixture matching production schema 46; verified queries use index lookups without full table scans.
 - **Open questions for PO**:
-  - None. PR #147 remains compatible with this enqueue and import contract.
+  - None. Rebase and conflict resolution complete, all #148/#149 behaviors preserved, full `yarn ci` clean.
