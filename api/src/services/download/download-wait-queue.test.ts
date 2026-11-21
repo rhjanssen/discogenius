@@ -561,3 +561,25 @@ test("a missing download is queued ahead of waiting upgrades", () => {
   const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
   assert.equal(claimed?.wait.ref_key, "missing-1");
 });
+
+test("hundreds of missing downloads all stay ahead of waiting upgrades, in order", () => {
+  const enqueue = (ref: string, reason?: "upgrade") => waitQueueModule.DownloadWaitQueue.enqueue({
+    refKey: ref,
+    mediaKind: "track",
+    commandName: queueModule.CommandNames.DownloadTrack,
+    provider: "tidal",
+    providerId: ref,
+    title: ref,
+    artist: "Bastille",
+    payload: { type: "track", provider: "tidal", providerId: ref, title: ref, artist: "Bastille", ...(reason ? { reason } : {}) },
+  });
+  enqueue("upgrade-1", "upgrade");
+  enqueue("upgrade-2", "upgrade");
+  const missing = Array.from({ length: 200 }, (_, index) => `missing-${index}`);
+  for (const ref of missing) enqueue(ref);
+
+  const order = (dbModule.db.prepare("SELECT ref_key FROM DownloadQueue ORDER BY queue_order, id").all() as Array<{ ref_key: string }>)
+    .map((row) => row.ref_key);
+  assert.deepEqual(order, [...missing, "upgrade-1", "upgrade-2"]);
+  assert.equal(waitQueueModule.DownloadWaitQueue.claimNextPage().claimed?.wait.ref_key, "missing-0");
+});
