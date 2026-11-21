@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.11] - 2026-11-21
+
+### Fixed
+
+- Missing music keeps downloading before waiting upgrades even when hundreds of missing albums are queued at once; previously a long run of new missing albums could slip in behind the upgrades (#168).
+
 ## [2.26.10] - 2026-11-21
 
 ### Fixed
