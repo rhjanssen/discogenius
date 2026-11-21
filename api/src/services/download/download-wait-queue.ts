@@ -77,6 +77,8 @@ export interface DownloadWaitRow {
 }
 
 const QUEUE_RANK_STEP = 1024;
+/** Block offset applied to waiting rows from the first upgrade onward when missing inserts fill the gap. */
+const QUEUE_RANK_SHIFT = QUEUE_RANK_STEP * 1024;
 const QUEUE_REBALANCE_WINDOW = 64;
 const CUTOVER_NOTIFY = true;
 
@@ -1001,7 +1003,10 @@ export class DownloadWaitQueue {
   }
 
   /** Missing music always downloads before upgrades: a new missing download
-   * lands just ahead of the first waiting upgrade instead of behind it. */
+   * lands just ahead of the first waiting upgrade instead of behind it. When
+   * there is no step room left before that upgrade, the unclaimed rows from
+   * there on shift back as one block inside enqueue's transaction so their
+   * relative order stays intact. */
   private static nextMissingRank(): number {
     const firstUpgrade = db.prepare(`
       SELECT MIN(queue_order) AS queue_order FROM DownloadQueue
@@ -1009,10 +1014,18 @@ export class DownloadWaitQueue {
     `).get() as { queue_order?: number | null } | undefined;
     if (firstUpgrade?.queue_order == null) return this.nextAppendRank();
     const previous = db.prepare(`
-      SELECT MAX(queue_order) AS queue_order FROM DownloadQueue WHERE queue_order < ?
+      SELECT MAX(queue_order) AS queue_order FROM DownloadQueue
+      WHERE command_id IS NULL AND queue_order < ?
     `).get(firstUpgrade.queue_order) as { queue_order?: number | null } | undefined;
-    return allocateFractionalQueueRanks(previous?.queue_order ?? null, firstUpgrade.queue_order, 1)?.[0]
-      ?? this.nextAppendRank();
+    const rank = previous?.queue_order == null
+      ? firstUpgrade.queue_order - QUEUE_RANK_STEP
+      : previous.queue_order + QUEUE_RANK_STEP;
+    if (rank < firstUpgrade.queue_order) return rank;
+    db.prepare(`
+      UPDATE DownloadQueue SET queue_order = queue_order + ?
+      WHERE command_id IS NULL AND queue_order >= ?
+    `).run(QUEUE_RANK_SHIFT, firstUpgrade.queue_order);
+    return rank;
   }
 
   private static nextFrontRank(): number {
