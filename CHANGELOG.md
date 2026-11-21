@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.8] - 2026-11-21
+
+### Fixed
+
+- An Apple hi-res ALAC file that was stored as 16-bit / 1 Hz is now fully corrected on the next library scan: its imported and source quality, and the Apple track's delivered quality, are set to hi-res too, so planning no longer treats Apple as lossless-only for that track. A file whose sample rate cannot be re-measured no longer gets re-read on every scan (#158).
+
 ## [2.26.7] - 2026-11-21
 
 ### Fixed
