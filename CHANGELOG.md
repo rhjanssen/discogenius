@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.10] - 2026-11-21
+
+### Fixed
+
+- A manual "check for upgrades" now waits while missing music is still queued, just like the scheduled check, and queues at most 100 albums per run instead of the whole library. Repeated runs continue where the previous one stopped (#165).
+
 ## [2.26.9] - 2026-11-21
 
 ### Fixed
