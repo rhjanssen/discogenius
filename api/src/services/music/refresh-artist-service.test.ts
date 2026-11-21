@@ -1160,3 +1160,137 @@ test("connected video provider mints a provider_catalog recording when no catalo
   assert.equal(minted.yt, null);
   assert.equal(minted.status, "provider_catalog");
 });
+
+test("RefreshArtist TIDAL or Apple lookup that receives 429 + retry after eventually succeeds and is not reported as failed (#152)", async () => {
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  const selectedArtistMbid = "aaaa1111-1111-4111-8111-111111111111";
+  const ownerArtistMbid = "bbbb2222-2222-4222-8222-222222222222";
+  const releaseGroupMbid = "cccc3333-3333-4333-8333-333333333333";
+  const releaseMbid = "dddd4444-4444-4444-8444-444444444444";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?), (?, ?)
+  `).run(selectedArtistMbid, "Rate Limit Artist", ownerArtistMbid, "Owner Artist");
+  const releaseGroup = dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, 'Collab Rate Limit Test', 'Single', '2026-11-20')
+    RETURNING id
+  `).get(releaseGroupMbid, ownerArtistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title,
+      status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, 'Collab Rate Limit Test', 'Official', '2026-11-20', 1, 1)
+  `).run(releaseMbid, releaseGroup.id, releaseGroupMbid, ownerArtistMbid);
+  const selectedArtist = dbModule.db.prepare(
+    "SELECT id FROM ArtistMetadata WHERE mbid = ?",
+  ).get(selectedArtistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (
+      artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship
+    ) VALUES (?, ?, ?, ?, 'credited')
+  `).run(selectedArtist.id, selectedArtistMbid, releaseGroup.id, releaseGroupMbid);
+
+  let stereoAttempts = 0;
+  let totalAttempts = 0;
+  const provider = {
+    id: "rate-limit-test-provider",
+    name: "Rate Limit Test Provider",
+    capabilities: { musicVideos: true },
+    searchReleaseGroup: async (query: Record<string, unknown>) => {
+      totalAttempts++;
+      if (query.slot === "stereo") {
+        stereoAttempts++;
+        if (stereoAttempts <= 3) {
+          throw new ProviderRateLimitError(provider.id, Date.now() + 10);
+        }
+      }
+      return [{
+        providerId: "rate-limited-offer-1",
+        title: "Collab Rate Limit Test",
+        artist: { providerId: "owner-provider-id", name: "Owner Artist" },
+        releaseDate: "2026-11-20",
+        trackCount: 1,
+        volumeCount: 1,
+        type: "SINGLE",
+      }];
+    },
+  } as any;
+
+  const result = await (refreshServiceModule.RefreshArtistService as any)
+    .searchCanonicalCollaborationOffers(provider, selectedArtistMbid, true);
+
+  assert.equal(stereoAttempts, 4, "retried past 3 immediate 429s after backoff and succeeded");
+  assert.equal(result.albums.length, 1);
+  assert.equal(result.matches.get("rate-limited-offer-1")?.releaseGroup?.mbid, releaseGroupMbid);
+});
+
+test("RefreshArtist provider video lookup retries after 429 and succeeds (#152)", async () => {
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  const artistId = "test-video-artist-id";
+
+  let videoAttempts = 0;
+  const provider = {
+    id: "retry-video-provider",
+    name: "Retry Video Provider",
+    capabilities: { musicVideos: true },
+    getArtistVideos: async () => {
+      videoAttempts++;
+      if (videoAttempts <= 3) {
+        throw new ProviderRateLimitError(provider.id, Date.now() + 10);
+      }
+      return [{
+        id: "retried-video-1",
+        providerId: "retried-video-1",
+        title: "Retried Video",
+        artistId,
+        releaseDate: "2026-11-20",
+        duration: 200,
+        quality: "HD",
+      }];
+    },
+  } as any;
+
+  await (refreshServiceModule.RefreshArtistService as any)
+    .refreshProviderVideosForMatchedArtist(provider, "test-artist-id", artistId, {});
+
+  assert.equal(videoAttempts, 4, "video fetch retried past 3 immediate 429s and succeeded");
+
+  const videoItem = dbModule.db.prepare(`
+    SELECT provider_id FROM ProviderItems WHERE provider = ? AND entity_type = 'video'
+  `).get(provider.id) as { provider_id: string } | undefined;
+  assert.equal(videoItem?.provider_id, "retried-video-1");
+});
+
+test("RefreshArtist provider album fetch retries past 3 immediate 429s after backoff and succeeds (#152)", async () => {
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  let albumAttempts = 0;
+  const provider = {
+    id: "retry-album-provider",
+    name: "Retry Album Provider",
+    getArtistAlbums: async (artistId: string) => {
+      albumAttempts++;
+      if (albumAttempts <= 3) {
+        throw new ProviderRateLimitError(provider.id, Date.now() + 10);
+      }
+      return [{
+        providerId: "retried-album-1",
+        title: "Retried Album",
+        artistId,
+        releaseDate: "2026-11-20",
+        num_tracks: 1,
+      }];
+    },
+  } as any;
+
+  const albums = await (refreshServiceModule.RefreshArtistService as any).retryOnRateLimit(
+    () => provider.getArtistAlbums("artist-123"),
+    { provider, action: "fetch artist albums" },
+  );
+
+  assert.equal(albumAttempts, 4, "album fetch retried past 3 immediate 429s and succeeded");
+  assert.equal(albums.length, 1);
+  assert.equal(albums[0].providerId, "retried-album-1");
+});
+
+
+

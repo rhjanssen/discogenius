@@ -440,6 +440,47 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
       && Date.now() - Date.parse(worker.lastSeenAt) > 2 * 60_000
     )) ?? [];
 
+    const activeBusyWorkers = pool?.workers.filter((worker) => (
+      worker.busy
+      && Date.now() - Date.parse(worker.lastSeenAt) <= 2 * 60_000
+    )) ?? [];
+
+    const agingEligibleCommandTypes = oldestEligibleAgeMs != null && oldestEligibleAgeMs >= warningAgeMs
+      ? (db.prepare(`
+          SELECT DISTINCT name
+          FROM commands
+          WHERE status = 'queued'
+            AND (retry_after IS NULL OR retry_after <= CURRENT_TIMESTAMP)
+            AND created_at <= datetime('now', '-' || ? || ' seconds')
+        `).all(Math.floor(warningAgeMs / 1000)) as Array<{ name: string }>).map((r) => r.name)
+      : [];
+
+    const runningCommandTypes = new Set(
+      (db.prepare(`
+        SELECT DISTINCT name
+        FROM commands
+        WHERE status = 'started'
+      `).all() as Array<{ name: string }>).map((r) => r.name)
+    );
+
+    const hasStuckAgingCommands = agingEligibleCommandTypes.some(
+      (name) => !runningCommandTypes.has(name),
+    );
+
+    const isDrainingWave =
+      agingEligibleCommandTypes.length > 0
+      && !hasStuckAgingCommands
+      && started > 0
+      && (!pool?.started || activeBusyWorkers.length > 0)
+      && expiredLeases === 0
+      && noProgress === 0
+      && staleBusyWorkers.length === 0;
+
+    const hasAgingBacklog =
+      oldestEligibleAgeMs != null
+      && oldestEligibleAgeMs >= warningAgeMs
+      && !isDrainingWave;
+
     const details = {
       queued,
       started,
@@ -447,6 +488,7 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
       oldestEligibleAgeMs,
       expiredLeases,
       noProgress,
+      drainingWave: isDrainingWave,
       retryScheduled: commandRuntime?.leases.retryScheduled ?? 0,
       workerPoolStarted: pool?.started ?? false,
       workerCount: pool?.workers.length ?? 0,
@@ -465,7 +507,7 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
     if (
       noProgress > 0
       || failedLast24h > 0
-      || (oldestEligibleAgeMs != null && oldestEligibleAgeMs >= warningAgeMs)
+      || hasAgingBacklog
     ) {
       return {
         scope: "commands.queue",

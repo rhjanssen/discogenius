@@ -25,8 +25,11 @@ import {
 import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metadata/provider-artist-identity-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { StreamingProvider, ProviderAlbum } from "../providers/streaming-provider.js";
-import { ProviderRateLimitError } from "../providers/provider-request-state.js";
+import { ProviderRateLimitError, providerRequestState } from "../providers/provider-request-state.js";
+import { readIntEnv } from "../../utils/env.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 import { isUntrustedTidalCatalogVideoQuality } from "../providers/tidal/tidal-quality.js";
 import {
     discardEditionCoverIfDuplicateOfAlbum,
@@ -531,6 +534,75 @@ export class RefreshArtistService {
         }
     }
 
+    private static async retryOnRateLimit<T>(
+        operation: () => Promise<T>,
+        context: {
+            provider: StreamingProvider | string;
+            action: string;
+            maxRetries?: number;
+        },
+    ): Promise<T> {
+        const providerName = typeof context.provider === "string" ? context.provider : context.provider.name;
+        const providerId = typeof context.provider === "string" ? context.provider : context.provider.id;
+        const maxRetries = context.maxRetries ?? 5;
+        const maxWaitMs = readIntEnv("DISCOGENIUS_PROVIDER_RETRY_MAX_WAIT_MS", 30_000, 0);
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return await operation();
+            } catch (error: any) {
+                const isRateLimit =
+                    error instanceof ProviderRateLimitError ||
+                    error?.status === 429 ||
+                    /429|Too Many Requests/i.test(error?.message);
+
+                if (!isRateLimit) {
+                    throw error;
+                }
+
+                const state = providerRequestState();
+                let waitMs = 0;
+                if (error instanceof ProviderRateLimitError && error.retryAt) {
+                    waitMs = Math.max(0, error.retryAt - Date.now());
+                } else if (error?.retryAfterMs != null) {
+                    waitMs = Math.max(0, error.retryAfterMs);
+                } else {
+                    const retryAt = state.retryAt(providerId);
+                    if (retryAt > Date.now()) {
+                        waitMs = retryAt - Date.now();
+                    } else {
+                        waitMs = Math.min(1000 * Math.pow(2, attempt - 1), 30_000);
+                    }
+                }
+
+                if (waitMs > maxWaitMs) {
+                    console.warn(
+                        `[RefreshArtistService] ${context.action} hit rate limit on ${providerName}; ` +
+                        `advertised wait ${Math.ceil(waitMs)}ms exceeds maximum ${maxWaitMs}ms, deferring`
+                    );
+                    throw error;
+                }
+
+                if (attempt >= maxRetries) {
+                    console.warn(
+                        `[RefreshArtistService] ${context.action} hit rate limit on ${providerName}; ` +
+                        `giving up after ${maxRetries} attempts`
+                    );
+                    throw error;
+                }
+
+                console.warn(
+                    `[RefreshArtistService] ${context.action} hit rate limit on ${providerName}; ` +
+                    `retrying (${attempt}/${maxRetries}) after ${Math.ceil(waitMs)}ms`
+                );
+                if (waitMs > 0) {
+                    await sleep(waitMs);
+                }
+            }
+        }
+        throw new Error(`Failed ${context.action} on ${providerName} after rate limit retries`);
+    }
+
     private static async searchCanonicalCollaborationOffers(
         provider: StreamingProvider,
         artistMbid: string | null,
@@ -605,15 +677,18 @@ export class RefreshArtistService {
 
             for (const slot of slots) {
                 try {
-                    const providerAlbums = await provider.searchReleaseGroup({
-                        artistName: String(target.artist_name || ""),
-                        releaseGroupMbid: target.mbid,
-                        releaseGroupTitle: target.title,
-                        releaseDate: target.first_release_date || null,
-                        slot,
-                        preferredTrackCount: target.preferred_track_count || null,
-                        preferredVolumeCount: target.preferred_volume_count || null,
-                    });
+                    const providerAlbums = await this.retryOnRateLimit(
+                        () => provider.searchReleaseGroup!({
+                            artistName: String(target.artist_name || ""),
+                            releaseGroupMbid: target.mbid,
+                            releaseGroupTitle: target.title,
+                            releaseDate: target.first_release_date || null,
+                            slot,
+                            preferredTrackCount: target.preferred_track_count || null,
+                            preferredVolumeCount: target.preferred_volume_count || null,
+                        }),
+                        { provider, action: `search canonical collaboration ${target.title} (${slot})` },
+                    );
                     const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistMbid));
                     const targetMatches = matchProviderAlbumsToReleaseGroups(
                         albums.map((album) => ({
@@ -1418,9 +1493,12 @@ export class RefreshArtistService {
                 const providerAlbums: ProviderAlbum[] = [];
                 const seenProviderAlbumIds = new Set<string>();
                 for (const providerArtistId of providerArtistIds) {
-                    const identityAlbums = provider.listArtistReleaseOffers
-                        ? await provider.listArtistReleaseOffers(providerArtistId)
-                        : await provider.getArtistAlbums(providerArtistId);
+                    const identityAlbums = await this.retryOnRateLimit(
+                        () => (provider.listArtistReleaseOffers
+                            ? provider.listArtistReleaseOffers(providerArtistId)
+                            : provider.getArtistAlbums(providerArtistId)),
+                        { provider, action: `fetch artist albums for ${providerArtistId}` },
+                    );
                     for (const album of identityAlbums) {
                         const key = String(album.providerId);
                         if (seenProviderAlbumIds.has(key)) continue;
@@ -1558,7 +1636,10 @@ export class RefreshArtistService {
                     let bulkTracks: Map<string, any> | null = null;
                     if (provider.getAlbumTracksBulk) {
                         try {
-                            bulkTracks = await provider.getAlbumTracksBulk(missingAlbums.map((album) => String(album.provider_id)));
+                            bulkTracks = await this.retryOnRateLimit(
+                                () => provider.getAlbumTracksBulk!(missingAlbums.map((album) => String(album.provider_id))),
+                                { provider, action: `bulk tracklist fetch for ${missingAlbums.length} albums` },
+                            );
                         } catch (error) {
                             console.warn(`[RefreshArtistService] Bulk tracklist fetch failed for ${provider.name}, falling back per-album:`, error);
                         }
@@ -1579,7 +1660,10 @@ export class RefreshArtistService {
                                     // album through the provider's complete endpoint.
                                     const rawTracks = completeBatch
                                         ? completeBatch
-                                        : await provider.getAlbumTracks(album.provider_id);
+                                        : await this.retryOnRateLimit(
+                                            () => provider.getAlbumTracks(album.provider_id),
+                                            { provider, action: `fetch tracks for album ${album.provider_id}` },
+                                        );
                                     album._provider_tracks = rawTracks.map((t: any) => slotTrack(t));
                                     // Keep the raw provider tracks so we can persist them as
                                     // track offer rows once the album offers exist (below).
@@ -1927,7 +2011,10 @@ export class RefreshArtistService {
         }
 
         try {
-            const videos = (await provider.getArtistVideos(providerArtistId) || [])
+            const videos = (await this.retryOnRateLimit(
+                () => provider.getArtistVideos!(providerArtistId),
+                { provider, action: `fetch artist videos for ${providerArtistId}` },
+            ) || [])
                 .map((video) => ({
                     ...providerVideoToOfferRow(video, artistId),
                     provider: provider.id,
@@ -1952,7 +2039,10 @@ export class RefreshArtistService {
                     const limit = pLimit(4);
                     await Promise.all(missingFacts.map((video) => limit(async () => {
                         try {
-                            const detailed = await provider.getVideo!(String(video.provider_id));
+                            const detailed = await this.retryOnRateLimit(
+                                () => provider.getVideo!(String(video.provider_id)),
+                                { provider, action: `fetch video details for ${video.provider_id}` },
+                            );
                             if (detailed.releaseDate) {
                                 video.release_date = detailed.releaseDate;
                             }

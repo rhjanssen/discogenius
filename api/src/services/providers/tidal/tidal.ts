@@ -13,6 +13,8 @@ import {
 import { tidalVideoQualityTag } from "./tidal-quality.js";
 import { resolveTidalVideoQualityTag } from "./tidal-video-probe.js";
 import { isTimeoutError } from "../../../utils/timeout.js";
+import { ProviderRateLimitError, providerRequestState } from "../provider-request-state.js";
+import { readIntEnv } from "../../../utils/env.js";
 const TIDAL_API_BASE = "https://api.tidal.com/v1";
 const TIDAL_API_BASE_V2 = "https://api.tidal.com/v2";
 // TIDAL's JSON:API developer platform. Our device-flow token is accepted here
@@ -201,7 +203,7 @@ export async function withRetry<T>(
       return await fn();
     } catch (error: any) {
       const status = error.message?.match(/\d{3}/)?.[0];
-      const is429 = status === '429';
+      const is429 = status === '429' || error?.status === 429 || error instanceof ProviderRateLimitError;
       const is5xx = status && parseInt(status) >= 500 && parseInt(status) < 600;
       const isTimeout = isTimeoutError(error);
 
@@ -216,11 +218,17 @@ export async function withRetry<T>(
         throw error;
       }
 
-      // Exponential backoff: 2^(attempt-1) seconds
-      const delaySec = Math.pow(2, attempt - 1);
-      const delayMs = delaySec * 1000;
+      // Exponential backoff or advertised retry wait
+      let delayMs = Math.pow(2, attempt - 1) * 1000;
+      if (is429) {
+        if (error instanceof ProviderRateLimitError && error.retryAt) {
+          delayMs = Math.max(0, error.retryAt - Date.now());
+        } else if (error?.retryAfterMs != null) {
+          delayMs = Math.max(0, error.retryAfterMs);
+        }
+      }
 
-      console.log(`[Retry] ${context} failed (${status || 'error'}), retry ${attempt}/${maxRetries} in ${delaySec}s`);
+      console.log(`[Retry] ${context} failed (${status || 'error'}), retry ${attempt}/${maxRetries} in ${Math.ceil(delayMs / 1000)}s`);
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
   }
@@ -231,7 +239,7 @@ export async function withRetry<T>(
 const RATE_LIMIT_MAX_DELAY_MS = 30_000;
 const RATE_LIMIT_MIN_WAIT_MS = 20_000; // Tidalrr: wait 20s on 429
 const RETRY_BACKOFF_FACTOR = 1.5; // old scripts: backoff factor for 5xx/429
-const RETRY_MAX_ATTEMPTS = 3;
+const RETRY_MAX_ATTEMPTS = readIntEnv("DISCOGENIUS_TIDAL_MAX_RETRIES", 5, 1);
 let rateLimitUntil = 0;
 
 // Proactive rate limiting — python-tidal uses ThreadPoolExecutor(2) with no
@@ -310,10 +318,12 @@ export function getRateLimitMetrics() {
 // Wait for both rate limit and minimum request interval
 async function waitForRequestSlot(context: string) {
   const now = Date.now();
+  const sharedRetryAt = providerRequestState().retryAt("tidal");
+  const effectiveRateLimitUntil = Math.max(rateLimitUntil, sharedRetryAt);
 
   // Wait for any active rate limit window
-  if (now < rateLimitUntil) {
-    const waitMs = rateLimitUntil - now;
+  if (now < effectiveRateLimitUntil) {
+    const waitMs = effectiveRateLimitUntil - now;
     console.warn(`[TidalAPI] Rate limit active, waiting ${Math.ceil(waitMs)}ms before ${context}`);
     await sleep(waitMs);
   }
@@ -434,11 +444,14 @@ async function tidalFetchWithRetry(
 
     if (isRateLimit) {
       const retryAfterMs = parseRetryAfterMs(response);
-      const baseDelay = retryAfterMs ?? RATE_LIMIT_MIN_WAIT_MS;
-      const waitMs = Math.max(baseDelay, RATE_LIMIT_MIN_WAIT_MS);
+      const waitMs = retryAfterMs != null
+        ? Math.max(0, retryAfterMs)
+        : readIntEnv("DISCOGENIUS_TIDAL_RATE_LIMIT_MIN_WAIT_MS", RATE_LIMIT_MIN_WAIT_MS, 0);
       const willRetry = attempt < maxRetries;
+      const deadline = Date.now() + waitMs;
 
-      rateLimitUntil = Math.max(rateLimitUntil, Date.now() + waitMs);
+      rateLimitUntil = Math.max(rateLimitUntil, deadline);
+      providerRequestState().defer("tidal", deadline);
       console.warn(`[TidalAPI] 429 Too Many Requests for ${context} - ${willRetry ? `retry ${attempt}/${maxRetries} in ${Math.ceil(waitMs)}ms` : `giving up after ${maxRetries} attempts`}`);
 
       if (willRetry) {
@@ -835,6 +848,14 @@ export function tidalErrorIsDefinitiveAbsence(error: unknown): boolean {
 
 async function parseTidalJsonResponse(response: Response): Promise<unknown> {
   if (!response.ok) {
+    if (response.status === 429) {
+      const retryAfterMs = parseRetryAfterMs(response);
+      const deadline = Date.now() + (retryAfterMs ?? RATE_LIMIT_MIN_WAIT_MS);
+      providerRequestState().defer("tidal", deadline);
+      const error = new ProviderRateLimitError("tidal", deadline);
+      (error as any).status = 429;
+      throw error;
+    }
     let detail = `Tidal API error: ${response.status} ${response.statusText}`;
     let body: any = null;
     try {

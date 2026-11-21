@@ -191,3 +191,21 @@ test("withRetry retries on timeout error and succeeds (#108)", async () => {
   assert.equal(result, "success");
   assert.equal(attempts, 2);
 });
+
+test("withRetry honours backoff on 429 and does not give up after three attempts (#152)", async () => {
+  let attempts = 0;
+  const result = await withRetry(async () => {
+    attempts += 1;
+    if (attempts <= 3) {
+      const err = new Error("Tidal API error: 429 Too Many Requests");
+      (err as any).status = 429;
+      (err as any).retryAfterMs = 5;
+      throw err;
+    }
+    return "ok-after-retry";
+  }, "test-429-backoff", 5);
+
+  assert.equal(result, "ok-after-retry");
+  assert.equal(attempts, 4);
+});
+
