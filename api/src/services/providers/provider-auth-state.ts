@@ -1,6 +1,6 @@
 import { db, withSqliteWriteGate } from "../../database.js";
 import { appEvents, AppEvent } from "../commands/app-events.js";
-import { normalizeProviderId } from "./provider-auth-error.js";
+import { normalizeProviderId, TIDAL_SESSION_WAIT_MESSAGE } from "./provider-auth-error.js";
 
 export type ProviderAuthStatus = "ok" | "needs_reauth" | "unknown";
 
@@ -105,6 +105,19 @@ export function providerAuthCopy(provider: string, lastError?: string | null): P
     }
     return { provider: id, ...COPY["apple-music"] };
   }
+  if (id === "tidal") {
+    const isSessionWait = isTidalSessionWait(lastError);
+    if (isSessionWait) {
+      return {
+        provider: id,
+        banner: TIDAL_SESSION_WAIT_MESSAGE,
+        queueMessage: "Waiting for Tidal token refresh",
+        href: "/auth?provider=tidal#provider-connect-tidal",
+        settingsLabel: "Go to Tidal login",
+      };
+    }
+    return { provider: id, ...COPY["tidal"] };
+  }
   const known = COPY[id];
   if (known) return { provider: id, ...known };
   const label = id || "provider";
@@ -117,12 +130,21 @@ export function providerAuthCopy(provider: string, lastError?: string | null): P
   };
 }
 
+export function isTidalSessionWait(message: string | null | undefined): boolean {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return lower.includes(TIDAL_SESSION_WAIT_MESSAGE.toLowerCase())
+    || lower.includes("waiting for tidal token refresh");
+}
+
 export function queueHoldMessage(provider: string, lastError?: string | null): string {
-  return providerAuthCopy(provider, lastError).queueMessage;
+  const error = lastError !== undefined ? lastError : readRow(provider)?.last_error;
+  return providerAuthCopy(provider, error).queueMessage;
 }
 
 export function authHoldRecord(provider: string, lastError?: string | null): { provider: string; message: string } {
-  const copy = providerAuthCopy(provider, lastError);
+  const error = lastError !== undefined ? lastError : readRow(provider)?.last_error;
+  const copy = providerAuthCopy(provider, error);
   return { provider: copy.provider, message: copy.queueMessage };
 }
 
@@ -295,10 +317,14 @@ export async function recordProviderAuthFailure(
   const truncatedMessage = message.slice(0, 500);
   const messageChanged = current?.last_error !== truncatedMessage;
   // Already held. A second refresh failure must not write or notify again unless
-  // Apple Music message changed specifically to the stuck message.
+  // Apple Music message changed specifically to the stuck message or Tidal escalates
+  // from a session wait to a real expired login.
   if (current?.status === "needs_reauth") {
     const isAppleStuckUpdate = id === "apple-music" && messageChanged && truncatedMessage === APPLE_WRAPPER_STUCK_MESSAGE;
-    if (!isAppleStuckUpdate) {
+    const isTidalEscalation = id === "tidal" && messageChanged && (
+      isTidalSessionWait(current.last_error) && !isTidalSessionWait(truncatedMessage)
+    );
+    if (!isAppleStuckUpdate && !isTidalEscalation) {
       return { provider: id, status: "needs_reauth", transitioned: false, persisted: false };
     }
   }

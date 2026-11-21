@@ -242,3 +242,51 @@ test("recordProviderAuthFailure: rewrites once when already held and message cha
   const appleStuckAgain = await auth.recordProviderAuthFailure("apple-music", auth.APPLE_WRAPPER_STUCK_MESSAGE);
   assert.equal(appleStuckAgain.persisted, false, "must not rewrite again when stuck message is unchanged");
 });
+
+test("recordProviderAuthFailure: a Tidal session wait does not downgrade a real expired login", async () => {
+  await auth.recordProviderAuthOk("tidal");
+  const initialFail = await auth.recordProviderAuthFailure("tidal", "Tidal login expired (token has expired).");
+  assert.equal(initialFail.transitioned, true);
+  const initialRow = auth.readProviderAuthPublic("tidal");
+  assert.equal(initialRow?.lastError, "Tidal login expired (token has expired).");
+  assert.equal(initialRow?.banner, "Sign in to Tidal again");
+
+  const downgradeAttempt = await auth.recordProviderAuthFailure("tidal", errors.TIDAL_SESSION_WAIT_MESSAGE);
+  assert.equal(downgradeAttempt.persisted, false, "session wait must not overwrite expired login");
+  assert.equal(downgradeAttempt.transitioned, false);
+
+  const rowAfter = auth.readProviderAuthPublic("tidal");
+  assert.equal(rowAfter?.lastError, "Tidal login expired (token has expired).");
+  assert.equal(rowAfter?.banner, "Sign in to Tidal again");
+});
+
+test("recordProviderAuthFailure: a Tidal session wait escalates to a real expired login", async () => {
+  await auth.recordProviderAuthOk("tidal");
+  const waitFail = await auth.recordProviderAuthFailure("tidal", errors.TIDAL_SESSION_WAIT_MESSAGE);
+  assert.equal(waitFail.transitioned, true);
+  const waitRow = auth.readProviderAuthPublic("tidal");
+  assert.equal(waitRow?.lastError, errors.TIDAL_SESSION_WAIT_MESSAGE);
+  assert.equal(waitRow?.banner, errors.TIDAL_SESSION_WAIT_MESSAGE);
+
+  const escalation = await auth.recordProviderAuthFailure("tidal", "Tidal login expired (token has expired).");
+  assert.equal(escalation.persisted, true, "expired login must overwrite session wait");
+  assert.equal(escalation.transitioned, false);
+
+  const escalatedRow = auth.readProviderAuthPublic("tidal");
+  assert.equal(escalatedRow?.lastError, "Tidal login expired (token has expired).");
+  assert.equal(escalatedRow?.banner, "Sign in to Tidal again");
+});
+
+test("queueHoldMessage falls back to stored last_error for Tidal session wait and hold guards do not mutate session wait", async () => {
+  await auth.recordProviderAuthOk("tidal");
+  await auth.recordProviderAuthFailure("tidal", errors.TIDAL_SESSION_WAIT_MESSAGE);
+
+  assert.equal(auth.queueHoldMessage("tidal"), "Waiting for Tidal token refresh");
+
+  const guardResult = await auth.recordProviderAuthFailure("tidal", auth.queueHoldMessage("tidal"));
+  assert.equal(guardResult.persisted, false, "hold guard message must not overwrite session wait");
+
+  const row = auth.readProviderAuthPublic("tidal");
+  assert.equal(row?.lastError, errors.TIDAL_SESSION_WAIT_MESSAGE);
+  assert.equal(row?.banner, errors.TIDAL_SESSION_WAIT_MESSAGE);
+});

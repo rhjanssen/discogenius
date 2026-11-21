@@ -1,5 +1,5 @@
 import { withSqliteWriteGate } from "../../../database.js";
-import { ProviderAuthError } from "../provider-auth-error.js";
+import { ProviderAuthError, TIDAL_SESSION_WAIT_MESSAGE } from "../provider-auth-error.js";
 import { recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
 import fs from "fs";
 import path from "path";
@@ -285,6 +285,18 @@ export async function syncStoredTidalTokenToDownloaders(): Promise<boolean> {
 export const TIDDL_EARLY_EXPIRE_SECONDS = 600;
 const TIDDL_HANDOFF_MARGIN_SECONDS = TIDDL_EARLY_EXPIRE_SECONDS + 5 * 60;
 
+export { TIDAL_SESSION_WAIT_MESSAGE };
+
+/** No usable TIDAL access token right now; the refresh token may still be fine. */
+export class TidalSessionUnavailableError extends ProviderAuthError {
+    readonly status = 401;
+
+    constructor(message = TIDAL_SESSION_WAIT_MESSAGE) {
+        super("tidal", message, "session_unavailable");
+        this.name = "TidalSessionUnavailableError";
+    }
+}
+
 export async function prepareTidalTokenForDownloader(): Promise<void> {
     let token = loadStoredTidalToken();
     if (!token?.access_token) {
@@ -301,7 +313,7 @@ export async function prepareTidalTokenForDownloader(): Promise<void> {
     }
     const expiresAt = tidalTokenExpiresAt(token);
     if (expiresAt !== undefined && expiresAt - Math.floor(Date.now() / 1000) <= TIDDL_HANDOFF_MARGIN_SECONDS) {
-        throw new Error("TIDAL session is not available yet; waiting for a token refresh");
+        throw new TidalSessionUnavailableError();
     }
     syncTokenToTiddl(token);
 }
