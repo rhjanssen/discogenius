@@ -174,14 +174,6 @@ test("shell-level verification: once the PID namespace passes 65535 the supervis
     );
     assert.equal(await waitFor(portsAnswer, 20), true, "Ports should answer after the first start");
 
-    // The wrapper still starts threads right after its ports open; measure once it has settled.
-    await new Promise((r) => setTimeout(r, 15000));
-    const idleStart = Number(sh("cat /proc/sys/kernel/ns_last_pid"));
-    await new Promise((r) => setTimeout(r, 10000));
-    const idleEnd = Number(sh("cat /proc/sys/kernel/ns_last_pid"));
-    // Each docker exec costs one id; an idle supervisor itself must not fork.
-    assert.ok(idleEnd - idleStart <= 3, `Idle supervisor used ${idleEnd - idleStart} PIDs in 10s`);
-
     sh("echo 70000 > /proc/sys/kernel/ns_last_pid");
     fs.writeFileSync(path.join(dataDir, "restart_server.txt"), new Date().toISOString(), "utf-8");
 
@@ -192,6 +184,36 @@ test("shell-level verification: once the PID namespace passes 65535 the supervis
     assert.equal(restarted, true, "Supervisor should exit so Docker restarts the container with a fresh PID namespace");
     assert.equal(await waitFor(portsAnswer, 30), true, "Ports should answer again after the container restart");
     assert.ok(Number(sh("cat /proc/sys/kernel/ns_last_pid")) < 65535, "The restarted container should run in a fresh PID namespace");
+  } finally {
+    try {
+      execSync(`docker rm -f ${containerName}`, { stdio: "ignore" });
+    } catch {
+      // Ignore
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("shell-level verification: an idle supervisor does not fork", {
+  skip: !isDockerRunning() ? "Docker is not available in this environment" : false,
+}, async () => {
+  // No session marker, so no wrapper runs: every new PID in the window would be
+  // the supervisor's own fork (v11 forked a sleep every 2 s). The measurement
+  // uses bash builtins only, inside a single exec, so it adds no PIDs itself.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dg-wrapper-idle-test-"));
+  const dataDir = path.join(tmpDir, "data");
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, "wrapper-entrypoint.sh"), WRAPPER_ENTRYPOINT_SCRIPT, { mode: 0o755 });
+  const containerName = `dg-test-wrapper-idle-${Date.now()}`;
+  try {
+    execSync(
+      `docker run -d --name ${containerName} -v "${dataDir}:/app/rootfs/data" ghcr.io/itouakirai/wrapper:x86@sha256:e47a5f42a3db65296dc641b379b48fc3752dae1d21c7e712c3dd2e7f7e0c2482 /bin/bash /app/rootfs/data/wrapper-entrypoint.sh`,
+      { stdio: "pipe" },
+    );
+    await new Promise((r) => setTimeout(r, 3000));
+    const measure = "exec 9<> <(:); read a < /proc/sys/kernel/ns_last_pid; read -t 10 -u 9 _; read b < /proc/sys/kernel/ns_last_pid; echo $((b - a))";
+    const used = Number(execSync(`docker exec ${containerName} /bin/bash -c '${measure}'`, { encoding: "utf-8" }).trim());
+    assert.equal(used, 0, `Idle supervisor used ${used} PIDs in 10s`);
   } finally {
     try {
       execSync(`docker rm -f ${containerName}`, { stdio: "ignore" });
