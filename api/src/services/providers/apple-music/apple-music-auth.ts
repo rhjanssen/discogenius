@@ -309,7 +309,7 @@ let loginStatus: "idle" | "logging_in" | "waiting_for_2fa" | "success" | "failed
 let loginMessage = "";
 
 // Bump the marker when the script changes so existing installs pick up fixes.
-export const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v11";
+export const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v12";
 export const WRAPPER_ENTRYPOINT_SCRIPT = `#!/bin/bash
 # ${WRAPPER_ENTRYPOINT_VERSION} — managed by Discogenius, manual edits are overwritten.
 # Supervises the Apple Music decryption wrapper: serves decryption on ports
@@ -331,6 +331,26 @@ RESTART_FILE="$DATA_DIR/restart_server.txt"
 SERVER_PID=""
 SERVER_RESTARTS=0
 SERVER_RESTART_WINDOW_START=0
+
+# The wrapper's Android libc stores a mutex owner's thread id in 16 bits, so a
+# wrapper whose thread ids pass 65535 in this container's PID namespace
+# deadlocks in its loader and never opens the decryption ports. Keep the
+# supervisor fork-free while idle (pause instead of sleep) and, when the
+# namespace has used too many ids, exit so Docker restarts the container with a
+# fresh PID namespace. The session survives on the data volume.
+exec {PAUSE_FD}<> <(:)
+pause() {
+    read -r -t "$1" -u "$PAUSE_FD" _ || true
+}
+
+exit_if_pid_namespace_exhausted() {
+    local last_pid=0
+    read -r last_pid < /proc/sys/kernel/ns_last_pid 2>/dev/null || return 0
+    if [ "$last_pid" -gt 60000 ]; then
+        echo "[wrapper-manager] PID namespace at $last_pid (wrapper deadlocks past 65535). Exiting so Docker restarts the container."
+        exit 75
+    fi
+}
 
 write_status() {
     printf '{"status": "%s", "message": "%s"}\\n' "$1" "$2" > "$STATUS_FILE.tmp"
@@ -361,7 +381,7 @@ stop_server() {
     pkill -9 -f "wrapper.*-M 20020" 2>/dev/null || true
     local waited=0
     while ports_bound && [ "$waited" -lt 10 ]; do
-        sleep 1
+        pause 1
         waited=$((waited + 1))
     done
     if ports_bound; then
@@ -371,6 +391,7 @@ stop_server() {
 
 start_server() {
     stop_server
+    exit_if_pid_namespace_exhausted
     echo "[wrapper-manager] Starting decryption server on ports 10020/20020..."
     : > "$SERVER_LOG"
     setsid ./wrapper -M 20020 -D 10020 -H 0.0.0.0 >> "$SERVER_LOG" 2>&1 &
@@ -381,7 +402,7 @@ start_server() {
     # a full accept backlog or hanging socket, since the decrypt protocol has no ping.
     local verified=0
     for i in $(seq 1 15); do
-        sleep 1
+        pause 1
         if ! kill -0 "$SERVER_PID" 2>/dev/null; then
             echo "[wrapper-manager] Decryption server process exited during startup."
             break
@@ -458,6 +479,7 @@ while true; do
     fi
 
     if [ -f "$CRED_FILE" ]; then
+        exit_if_pid_namespace_exhausted
         echo "[wrapper-manager] Login trigger detected."
         CREDS=$(cat "$CRED_FILE")
         rm -f "$CRED_FILE" "$TFA_FILE" "$TFA_FILE.consumed" "$LOG_FILE" "$DATA_DIR/code.txt" /app/code.txt
@@ -508,7 +530,7 @@ while true; do
                 break
             fi
 
-            sleep 1
+            pause 1
             TIMEOUT=$((TIMEOUT+1))
             if [ "$TIMEOUT" -gt 120 ]; then
                 echo "[wrapper-manager] Login handshake timed out. Killing process..."
@@ -572,7 +594,7 @@ while true; do
         fi
     fi
 
-    sleep 2
+    pause 2
 done
 `;
 
