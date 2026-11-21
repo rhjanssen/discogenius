@@ -1,31 +1,18 @@
 # Session Handoff
 
-- **Branch**: `agent/issue-147` / `agent/issue-146` (PR #147 for Issue #146)
+- **Branch**: `agent/issue-151` (Issue #151)
 - **What is done**:
-  - **Rebased onto current `main`** (`b2c08aa6` / `cb02eb58`, v2.26.5), cleanly integrating #148/#149 upgrade offer identity with the album-level winner upgrade policy (#146).
-  - **Maintained #148 offer attachment and validation intact**:
-    - Whenever `acquisitionPlanId` is set, album and per-track upgrade payloads carry the winning plan's `trackOffers` (and MBIDs) via `buildAcquisitionDownloadCommand`.
-    - Upgrades skip before queuing if no matching offer exists or if provider/edition diverges from the plan.
-    - Memoized plan commands in `planCommandCache` per run to avoid redundant allocations.
-  - **Album-level winner quality upgrade policy (#146)**:
-    1. **Album-level winner**: Upgrades are planned against the edition's selected acquisition plan (`SelectedAcquisitionPlans`) only. No selected plan (unmonitored edition, no plan yet) means no upgrade; the earlier fallback cascade was removed in PO review.
-    2. **Spatial library**: Tracks that winning plan only has in stereo (interludes) stay in that album and are not re-queued to Atmos while the plan has no Atmos version.
-    3. **Stereo-only track later gains Atmos**: Upgraded once Atmos becomes available in the winning plan.
-    4. **Stereo library, Atmos-only file**: Replaced as soon as a real stereo version exists in the winning plan into the stereo slot.
-    5. **Genuine stereo upgrade in spatial album**: Stereo tracks in spatial albums can receive genuine better stereo upgrades within the winning plan.
-    6. **Review fixes**:
-       - Stereo fallback loop prevention: falls back to album-level stereo only when winning track has no variants at all (`variants.length === 0`), never when it has a spatial variant.
-       - No provider mixing inside albums: standalone per-track upgrades never mix providers or releases with existing files; whole-album replacement cleanly replaces when album threshold (>=50% or >=3 tracks) is met.
-       - Strict cross-edition scoping: `resolveWinningTrack` strictly confines resolution inside `providerEditionItemId` when known.
-       - PO review: a downconvert is decided by the audio quality setting alone, before any plan lookup; a provider offer below the file never triggers one.
-       - PO review (Robert, 21 Nov): missing first. A scheduled `CheckUpgrades` pass skips while any non-upgrade download still waits (`pendingDownloadCounts`).
-  - **Tests**:
-    - Kept all #149 tests passing unchanged in `upgrader-canonical.test.ts` and `import-operation-identity.test.ts` (28/28 tests passing).
-    - Kept all canonical tests from PR #147 passing (27/27 tests in `upgrader-canonical.test.ts`).
-    - Added test `checkUpgrades album upgrade enqueued from new winning plan carries that winning plan's trackOffers` verifying that when a new provider wins, the queued payload's `trackOffers` come from the new winner.
+  - Resolved `RecordingRelations`, `LibraryVideos`, and `ProviderVideoMatches` uniqueness conflicts during canonical recording redirect reconciliation in `api/src/services/catalog/catalog-recording-reconciliation.ts`:
+    - `ProviderVideoMatches`: drops duplicate matches where `provider_video_item_id` is already present on the surviving recording.
+    - `LibraryVideos`: drops duplicate video selections where `library_id` already exists on the surviving recording.
+    - `RecordingRelations`: drops collapsed self-relations (where source and target resolve to the survivor) and duplicate relations where the surviving recording already has a relation with the same peer and type (as either source or target).
+    - Preserves remaining non-colliding owner rows, moving them onto the surviving recording.
+  - Verified genuine presentation-identity conflicts (`is_video` / conflicting YouTube video IDs) still roll back and leave `content_hash` unstamped without deleting file rows.
+  - Added unit tests in `catalog-recording-reconciliation.test.ts` and `servarr-metadata.test.ts` verifying that recording merges sharing relations, video matches, or library video selections commit cleanly, preserve survivor rows, and stamp `content_hash`. Verified that tests fail on `main` before fix.
+  - Full `yarn ci` passed cleanly (lint, typecheck, api test suite with 0 failures, app tests, and production builds).
 - **What is half-done**:
   - None.
-- **What was verified against running container**:
-  - Active SQLite schema fixture matching production schema 46; verified queries use index lookups without full table scans.
+- **What was live-verified**:
+  - Tested against the active SQLite runtime schema fixture matching production schema 46. (Container live verification not applicable in cloud agent environment without NAS/LAN access).
 - **Open questions for PO**:
-  - None. Rebase and conflict resolution complete, all #148/#149 behaviors preserved, full `yarn ci` clean.
+  - None.

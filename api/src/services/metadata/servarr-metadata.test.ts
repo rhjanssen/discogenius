@@ -827,6 +827,36 @@ test("catalog refresh relocates video artwork on a recording redirect and commit
   assert.notEqual((db.prepare("SELECT content_hash FROM Albums WHERE mbid='rg-skip'").get() as { content_hash: string | null }).content_hash, null);
 });
 
+test("catalog refresh resolves colliding relations, matches, and video selections and stamps content_hash", async () => {
+  resetCatalog();
+  const { db, payload } = redirectFixture();
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  const original = payload.Releases[0].Tracks[0].RecordingId;
+  const source = db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original) as { id: number };
+  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid) VALUES ('other-rec', 'Other', 'artist-mbid')").run();
+  const other = db.prepare("SELECT id FROM Recordings WHERE mbid = 'other-rec'").get() as { id: number };
+  db.prepare("INSERT INTO Recordings (mbid, title, artist_mbid) VALUES ('redirect-target', 'Redirect Target', 'artist-mbid')").run();
+  const target = db.prepare("SELECT id FROM Recordings WHERE mbid = 'redirect-target'").get() as { id: number };
+  db.prepare(`INSERT INTO RecordingRelations (source_recording_id, target_recording_id, source_foreign_recording_id, target_foreign_recording_id, relation_type)
+    VALUES (?, ?, ?, 'other-rec', 'version'), (?, ?, 'redirect-target', 'other-rec', 'version')`).run(source.id, other.id, original, target.id, other.id);
+  db.prepare("UPDATE Recordings SET is_video=1 WHERE id IN (?, ?)").run(source.id, target.id);
+  db.prepare("INSERT INTO ProviderItems (id, provider, entity_type, provider_id) VALUES (50, 'tidal', 'video', 'vid-collision')").run();
+  db.prepare(`INSERT INTO ProviderVideoMatches (provider_video_item_id, recording_id, match_state, decision_source, confidence, method, matcher_version)
+    VALUES (50, ?, 'accepted', 'manual', 1, 'test', 1), (50, ?, 'accepted', 'automatic', 1, 'test', 1)`).run(source.id, target.id);
+  const videoLib = db.prepare("SELECT id FROM Libraries WHERE name = 'Video'").get() as { id: number };
+  db.prepare(`INSERT INTO LibraryVideos (library_id, video_recording_id, selection_mode, placement_mode, placement_selection_mode)
+    VALUES (?, ?, 'auto', 'separated', 'auto'), (?, ?, 'auto', 'separated', 'auto')`).run(videoLib.id, source.id, videoLib.id, target.id);
+  Object.assign(payload.Releases[0].Tracks[0], { RecordingId: "redirect-target", OldRecordingIds: [original] });
+  fetchReturning(payload);
+  await servarrMetadataModule.servarrMetadata.syncReleaseGroup("rg-skip", "artist-mbid");
+  assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid = ?").get(original), undefined);
+  assert.equal((db.prepare("SELECT recording_mbid FROM Tracks WHERE mbid='trk-1'").get() as { recording_mbid: string }).recording_mbid, "redirect-target");
+  assert.equal((db.prepare("SELECT count(*) as count FROM RecordingRelations WHERE relation_type='version'").get() as { count: number }).count, 1);
+  assert.equal((db.prepare("SELECT count(*) as count FROM ProviderVideoMatches WHERE provider_video_item_id=50").get() as { count: number }).count, 1);
+  assert.equal((db.prepare("SELECT count(*) as count FROM LibraryVideos WHERE library_id=?").get(videoLib.id) as { count: number }).count, 1);
+  assert.notEqual((db.prepare("SELECT content_hash FROM Albums WHERE mbid='rg-skip'").get() as { content_hash: string | null }).content_hash, null);
+});
+
 test("differing derived recording credits do not block a MusicBrainz recording merge", async () => {
   resetCatalog();
   const { db, payload } = redirectFixture();

@@ -138,6 +138,43 @@ export function reconcileRecordingRedirects(db:Database.Database, tracks:readonl
             // row for a shared work wins; the rest of the source works move.
             db.prepare(`DELETE FROM RecordingWorks WHERE recording_id=? AND work_mbid IN (
                 SELECT work_mbid FROM RecordingWorks WHERE recording_id=?)`).run(old.id, target.id);
+            // ProviderVideoMatches is keyed by (provider_video_item_id, recording_id).
+            // The target's match wins; the rest of the source matches move.
+            db.prepare(`DELETE FROM ProviderVideoMatches WHERE recording_id=? AND provider_video_item_id IN (
+                SELECT provider_video_item_id FROM ProviderVideoMatches WHERE recording_id=?)`).run(old.id, target.id);
+            // LibraryVideos is keyed by (library_id, video_recording_id).
+            // The target's video selection wins; the rest of the source selections move.
+            db.prepare(`DELETE FROM LibraryVideos WHERE video_recording_id=? AND library_id IN (
+                SELECT library_id FROM LibraryVideos WHERE video_recording_id=?)`).run(old.id, target.id);
+            // RecordingRelations is keyed by (source, target, relation_type). Drop
+            // collapsed self-relations and colliding relations where the target already
+            // has a relation with the same peer and type; the rest of the source relations move.
+            db.prepare(`DELETE FROM RecordingRelations WHERE
+                ((source_recording_id IN (?,?) OR source_foreign_recording_id IN (?,?))
+                 AND (target_recording_id IN (?,?) OR target_foreign_recording_id IN (?,?))
+                 AND (source_recording_id=? OR source_foreign_recording_id=? OR target_recording_id=? OR target_foreign_recording_id=?))`).run(
+                old.id, target.id, oldMbid, newMbid,
+                old.id, target.id, oldMbid, newMbid,
+                old.id, oldMbid, old.id, oldMbid,
+            );
+            db.prepare(`DELETE FROM RecordingRelations WHERE (source_recording_id=? OR source_foreign_recording_id=?) AND EXISTS (
+                SELECT 1 FROM RecordingRelations existing WHERE (existing.source_recording_id=? OR existing.source_foreign_recording_id=?)
+                  AND (
+                    (existing.target_recording_id IS NOT NULL AND existing.target_recording_id = RecordingRelations.target_recording_id)
+                    OR (existing.target_foreign_recording_id IS NOT NULL AND existing.target_foreign_recording_id = RecordingRelations.target_foreign_recording_id)
+                  )
+                  AND existing.relation_type = RecordingRelations.relation_type
+                  AND existing.id != RecordingRelations.id
+            )`).run(old.id, oldMbid, target.id, newMbid);
+            db.prepare(`DELETE FROM RecordingRelations WHERE (target_recording_id=? OR target_foreign_recording_id=?) AND EXISTS (
+                SELECT 1 FROM RecordingRelations existing WHERE (existing.target_recording_id=? OR existing.target_foreign_recording_id=?)
+                  AND (
+                    (existing.source_recording_id IS NOT NULL AND existing.source_recording_id = RecordingRelations.source_recording_id)
+                    OR (existing.source_foreign_recording_id IS NOT NULL AND existing.source_foreign_recording_id = RecordingRelations.source_foreign_recording_id)
+                  )
+                  AND existing.relation_type = RecordingRelations.relation_type
+                  AND existing.id != RecordingRelations.id
+            )`).run(old.id, oldMbid, target.id, newMbid);
             for(const [table,column] of RECORDING_OWNERS){
                 if(table==='Tracks') continue;
                 db.prepare(`UPDATE "${table}" SET "${column}"=? WHERE "${column}"=?`).run(target.id,old.id);
