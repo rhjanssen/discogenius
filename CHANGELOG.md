@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.9] - 2026-11-21
+
+### Fixed
+
+- Missing music now downloads before waiting upgrades: a newly found missing album is queued ahead of the first waiting upgrade instead of behind all of them (#161).
+- Starting a library scan for one artist no longer fails with "database is locked" while a curation or refresh pass is running; the request waits for its turn to write (#162).
+
 ## [2.26.8] - 2026-11-21
 
 ### Fixed
