@@ -77,8 +77,6 @@ export interface DownloadWaitRow {
 }
 
 const QUEUE_RANK_STEP = 1024;
-/** Room made in front of waiting upgrades when missing downloads fill the gap. */
-const QUEUE_RANK_SHIFT = QUEUE_RANK_STEP * 1024;
 const QUEUE_REBALANCE_WINDOW = 64;
 const CUTOVER_NOTIFY = true;
 
@@ -1003,10 +1001,7 @@ export class DownloadWaitQueue {
   }
 
   /** Missing music always downloads before upgrades: a new missing download
-   * lands just ahead of the first waiting upgrade instead of behind it. When
-   * there is no room left before that upgrade, the waiting rows from there on
-   * move back as one block, so their order is kept (runs in enqueue's
-   * transaction). */
+   * lands just ahead of the first waiting upgrade instead of behind it. */
   private static nextMissingRank(): number {
     const firstUpgrade = db.prepare(`
       SELECT MIN(queue_order) AS queue_order FROM DownloadQueue
@@ -1016,13 +1011,8 @@ export class DownloadWaitQueue {
     const previous = db.prepare(`
       SELECT MAX(queue_order) AS queue_order FROM DownloadQueue WHERE queue_order < ?
     `).get(firstUpgrade.queue_order) as { queue_order?: number | null } | undefined;
-    const rank = (previous?.queue_order ?? firstUpgrade.queue_order - 2 * QUEUE_RANK_STEP) + QUEUE_RANK_STEP;
-    if (rank < firstUpgrade.queue_order) return rank;
-    db.prepare(`
-      UPDATE DownloadQueue SET queue_order = queue_order + ?
-      WHERE command_id IS NULL AND queue_order >= ?
-    `).run(QUEUE_RANK_SHIFT, firstUpgrade.queue_order);
-    return rank;
+    return allocateFractionalQueueRanks(previous?.queue_order ?? null, firstUpgrade.queue_order, 1)?.[0]
+      ?? this.nextAppendRank();
   }
 
   private static nextFrontRank(): number {
