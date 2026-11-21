@@ -505,6 +505,48 @@ test("scan re-measures a hi-res ALAC file stored as 16-bit / 1 Hz", {
   `).get() as { id: number };
   const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = 'track-1'")
     .get() as { id: number; recording_id: number };
+  const insert = db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, library_id, track_id, recording_id,
+      file_path, relative_path, library_root, filename, extension, file_type, file_class,
+      quality, imported_quality, source_quality, codec, bit_depth, sample_rate, channels,
+      provider_item_id, source_audio_variant_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'm4a', 'track', 'audio', 'LOSSLESS', 'LOSSLESS', 'LOSSLESS', 'ALAC', 16, 1, 2, ?, ?)
+  `);
+  const item = Number(db.prepare("INSERT INTO ProviderItems(provider,entity_type,provider_id,title) VALUES('apple-music','track','apple-hires','Track One')").run().lastInsertRowid);
+  // The misread also marked the Apple hi-res variant as delivering only lossless.
+  const variant = Number(db.prepare(`
+    INSERT INTO ProviderItemAudioVariants (provider_item_id, variant_key, quality_class, provider_quality_label, availability, delivered_quality_class)
+    VALUES (?, 'hires-lossless', 'hires-lossless', 'HIRES_LOSSLESS', 'available', 'lossless')
+  `).run(item).lastInsertRowid);
+  insert.run(artist.id, library.id, track.id, track.recording_id, filePath, path.basename(filePath), tempDir, path.basename(filePath), item, variant);
+
+  const scan = DiskScanService as unknown as { backfillMissingAudioFacts(id: string): Promise<{ updated: number }> };
+  assert.equal((await scan.backfillMissingAudioFacts(String(artist.id))).updated, 1);
+  const row = db.prepare("SELECT quality, imported_quality, source_quality, sample_rate, bit_depth FROM TrackFiles WHERE file_path = ?")
+    .get(filePath) as Record<string, unknown>;
+  assert.deepEqual(row, {
+    quality: "HIRES_LOSSLESS", imported_quality: "HIRES_LOSSLESS", source_quality: "HIRES_LOSSLESS",
+    sample_rate: 96_000, bit_depth: 24,
+  });
+  const delivered = db.prepare("SELECT delivered_quality_class AS c FROM ProviderItemAudioVariants WHERE id = ?").get(variant) as { c: string };
+  assert.equal(delivered.c, "hires-lossless");
+  assert.equal((await scan.backfillMissingAudioFacts(String(artist.id))).updated, 0, "a healed file is left alone on the next scan");
+});
+
+test("scan drops an impossible sample rate it cannot re-measure instead of re-reading it every scan", async () => {
+  seedCanonicalArtistGraph();
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
+    .get() as { id: number };
+  const filePath = path.join(tempDir, "unreadable.m4a");
+  fs.writeFileSync(filePath, "not audio");
+  const library = db.prepare(`
+    SELECT library_id AS id FROM LibraryAlbums
+    WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'release-group-1')
+    LIMIT 1
+  `).get() as { id: number };
+  const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = 'track-1'")
+    .get() as { id: number; recording_id: number };
   db.prepare(`
     INSERT INTO TrackFiles (
       artist_metadata_id, library_id, track_id, recording_id,
@@ -513,13 +555,11 @@ test("scan re-measures a hi-res ALAC file stored as 16-bit / 1 Hz", {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'm4a', 'track', 'audio', 'LOSSLESS', 'LOSSLESS', 'ALAC', 16, 1, 2)
   `).run(artist.id, library.id, track.id, track.recording_id, filePath, path.basename(filePath), tempDir, path.basename(filePath));
 
-  const result = await (DiskScanService as any).backfillMissingAudioFacts(String(artist.id));
-  assert.equal(result.updated, 1);
-  const row = db.prepare("SELECT quality, sample_rate, bit_depth FROM TrackFiles WHERE file_path = ?")
-    .get(filePath) as Record<string, unknown>;
-  assert.equal(row.quality, "HIRES_LOSSLESS");
-  assert.equal(row.sample_rate, 96_000);
-  assert.equal(row.bit_depth, 24);
+  const scan = DiskScanService as unknown as { backfillMissingAudioFacts(id: string): Promise<{ updated: number }> };
+  assert.equal((await scan.backfillMissingAudioFacts(String(artist.id))).updated, 1);
+  const row = db.prepare("SELECT quality, sample_rate FROM TrackFiles WHERE file_path = ?").get(filePath) as Record<string, unknown>;
+  assert.deepEqual(row, { quality: "LOSSLESS", sample_rate: null });
+  assert.equal((await scan.backfillMissingAudioFacts(String(artist.id))).updated, 0);
 });
 
 test("orphan reconciliation awaits writer admission without blocking its release", async () => {

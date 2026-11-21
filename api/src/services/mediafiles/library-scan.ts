@@ -6,6 +6,7 @@ import { Config, getConfigSection } from "../config/config.js";
 import { resolveArtistFolderFromRecord } from "../config/naming.js";
 import { ensureEmptyArtistFoldersIfEnabled } from "../music/artist-paths.js";
 import { ImportService } from "./import-service.js";
+import { recordDeliveredQuality } from "./downloaded-tracks-import-service.js";
 import { isUnmappedFileCheckCurrent } from "./unmapped-files.js";
 import { getUnmappedMediaMetrics } from "../music/library-media-metrics.js";
 import { persistRootReviewCandidates } from "./library-scan-root-review.js";
@@ -685,7 +686,7 @@ export class DiskScanService {
 
     private static async backfillMissingAudioFacts(artistId: string): Promise<{ updated: number }> {
         const rows = db.prepare(`
-            SELECT id, file_path, relative_path, library_root
+            SELECT id, file_path, relative_path, library_root, sample_rate, source_audio_variant_id
             FROM TrackFiles
             WHERE artist_metadata_id = ?
               AND file_type = 'track'
@@ -701,17 +702,26 @@ export class DiskScanService {
             file_path: string;
             relative_path: string | null;
             library_root: string;
+            sample_rate: number | null;
+            source_audio_variant_id: number | null;
         }>;
 
+        // A sub-8 kHz rate is a misread (Apple hi-res ALAC read as 16-bit / 1 Hz).
+        // When the new measurement is real, it replaces every quality derived from
+        // the misread; when it is not, the impossible rate is dropped so the row is
+        // not re-selected on every scan.
+        const healed = "(sample_rate < 8000 AND COALESCE(@sampleRate, 0) >= 8000)";
         const update = db.prepare(`
             UPDATE TrackFiles
-            -- A sub-8 kHz rate is a misread (Apple hi-res ALAC read as 16-bit / 1 Hz),
-            -- so the quality derived from it is wrong too: replace both.
-            SET quality = CASE WHEN sample_rate < 8000 THEN COALESCE(@quality, quality)
+            SET quality = CASE WHEN ${healed} THEN COALESCE(@quality, quality)
                                ELSE COALESCE(NULLIF(TRIM(quality), ''), @quality) END,
-                imported_quality = COALESCE(NULLIF(TRIM(imported_quality), ''), @quality),
+                imported_quality = CASE WHEN ${healed} THEN COALESCE(@quality, imported_quality)
+                                        ELSE COALESCE(NULLIF(TRIM(imported_quality), ''), @quality) END,
+                source_quality = CASE WHEN ${healed} AND NULLIF(TRIM(source_quality), '') IS NOT NULL
+                                      THEN COALESCE(@quality, source_quality) ELSE source_quality END,
                 bit_depth = COALESCE(@bitDepth, bit_depth),
-                sample_rate = COALESCE(@sampleRate, sample_rate),
+                sample_rate = CASE WHEN COALESCE(@sampleRate, sample_rate) < 8000 THEN NULL
+                                   ELSE COALESCE(@sampleRate, sample_rate) END,
                 bitrate = COALESCE(@bitrate, bitrate),
                 codec = COALESCE(NULLIF(TRIM(@codec), ''), codec),
                 channels = COALESCE(@channels, channels),
@@ -754,6 +764,11 @@ export class DiskScanService {
                 duration: metrics.duration ?? null,
             }), "scan:backfill-audio-facts");
             if (result.changes > 0) updated += 1;
+            // The misread also recorded the variant as delivering only lossless.
+            if (result.changes > 0 && row.source_audio_variant_id != null
+                && (row.sample_rate ?? 8000) < 8000 && (metrics.sampleRate ?? 0) >= 8000) {
+                await withSqliteWriteGate(() => recordDeliveredQuality(row.id, row.source_audio_variant_id!), "scan:backfill-delivered-quality");
+            }
             if ((index + 1) % 10 === 0) await yieldToEventLoop();
         }
         return { updated };
