@@ -401,6 +401,22 @@ test("history retry by command id re-enqueues a wait row after finishClaimed", a
   assert.equal(live.items[0]?.provider, "tidal");
 });
 
+test("a retry that cannot be queued says why instead of answering not found", async () => {
+  const retryModule = await import("./download-queue-retry.js");
+  const failedId = Number(dbModule.db.prepare(`
+    INSERT INTO commands (name, payload, status) VALUES ('DownloadAlbum', ?, 'failed')
+  `).run(JSON.stringify({ type: "album", title: "No provider id" })).lastInsertRowid);
+
+  const unqueueable = retryModule.retryDownloadQueueItem(failedId, "history");
+  assert.equal(unqueueable.status, 422);
+  assert.match(String(unqueueable.body.message), /missing the media type or provider ID/);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
+
+  const gone = retryModule.retryDownloadQueueItem(failedId, "queue");
+  assert.equal(gone.status, 404);
+  assert.match(String(gone.body.message), new RegExp(`Queue item ${failedId}`));
+});
+
 test("recoverOrphanClaims drops wait rows whose command already failed", () => {
   enqueueTrack("fail-orphan", "Stuck Album");
   const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;

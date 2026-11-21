@@ -377,7 +377,7 @@ router.post('/:id/retry', async (req: Request, res: Response) => {
     return res.status(result.status).json(result.body);
   } catch (error: any) {
     console.error('[QUEUE-API] Error retrying job:', error);
-    res.status(500).json({ error: 'Failed to retry job', message: error.message });
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to retry job', message: error.message });
   }
 });
 

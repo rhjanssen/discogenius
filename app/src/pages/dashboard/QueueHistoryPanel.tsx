@@ -230,7 +230,8 @@ export type QueueHistoryPanelProps = {
     hasRefreshError: boolean;
     refreshErrorMessage?: string | null;
     onRetryFeeds: () => void | Promise<void>;
-    onRetryItem: (id: number) => void;
+    /** History rows are finished commands, so their ids are command ids. */
+    onRetryItem: (id: number, source: "history") => void;
     filters: QueueHistoryFilters;
     onFiltersChange: (next: QueueHistoryFilters) => void;
 };
@@ -363,7 +364,7 @@ export function QueueHistoryPanel({
                                 </div>
                                 {isFailed ? (
                                     <div className={styles.downloadActions} data-queue-control="true">
-                                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => onRetryItem(item.id)} title="Retry" aria-label={`Retry ${row.title}`} />
+                                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => onRetryItem(item.id, "history")} title="Retry" aria-label={`Retry ${row.title}`} />
                                     </div>
                                 ) : null}
                                 {row.error ? (
