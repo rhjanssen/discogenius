@@ -237,9 +237,43 @@ test('a target without credits inherits the merged recording credits',()=>fixtur
     reconcileRecordingRedirects(db,incoming);
     assert.deepEqual(db.prepare('SELECT recording_id,artist_id,ordinal,credited_name FROM RecordingArtistCredits').all(),[{recording_id:2,artist_id:1,ordinal:0,credited_name:'Artist'}]);
 }));
-test('a uniqueness collision rolls back earlier owner transfers even when caught by caller',()=>fixture(()=>{
-    db.exec("INSERT INTO RecordingRelations(source_recording_id,target_recording_id,source_foreign_recording_id,target_foreign_recording_id,relation_type) VALUES(2,3,'new','other','version')");
-    const before=snapshot();assert.throws(()=>reconcileRecordingRedirects(db,incoming),/UNIQUE/);assert.equal(snapshot(),before);
+test('merge two recordings that already share a RecordingRelations commits and keeps one relation',()=>fixture(()=>{
+    db.exec(`INSERT INTO Recordings(id,mbid,title) VALUES(4,'four','Four');
+        INSERT INTO RecordingRelations(source_recording_id,target_recording_id,source_foreign_recording_id,target_foreign_recording_id,relation_type)
+        VALUES(2,3,'new','other','version'),
+              (3,1,'other','old','remix'),(3,2,'other','new','remix'),
+              (1,2,'old','new','sample'),
+              (1,4,'old','four','live_of');`);
+    assert.equal(reconcileRecordingRedirects(db,incoming),1);
+    assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid='old'").get(),undefined);
+    assert.deepEqual(db.prepare("SELECT recording_id,recording_mbid FROM Tracks WHERE id=1").get(),{recording_id:2,recording_mbid:'new'});
+    assert.deepEqual(db.prepare("SELECT source_recording_id,target_recording_id,source_foreign_recording_id,target_foreign_recording_id,relation_type FROM RecordingRelations ORDER BY relation_type").all(),[
+        {source_recording_id:2,target_recording_id:4,source_foreign_recording_id:'new',target_foreign_recording_id:'four',relation_type:'live_of'},
+        {source_recording_id:3,target_recording_id:2,source_foreign_recording_id:'other',target_foreign_recording_id:'new',relation_type:'remix'},
+        {source_recording_id:2,target_recording_id:3,source_foreign_recording_id:'new',target_foreign_recording_id:'other',relation_type:'version'},
+    ]);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+test('merge two recordings that already share a ProviderVideoMatches row commits and keeps one match',()=>fixture(()=>{
+    db.exec("DELETE FROM ProviderTrackMatches; UPDATE Recordings SET is_video=1 WHERE id IN (1,2); INSERT INTO ProviderItems(id,provider,entity_type,provider_id) VALUES(3,'tidal','video','video'); INSERT INTO ProviderVideoMatches(id,provider_video_item_id,recording_id,match_state,decision_source,confidence,method,matcher_version) VALUES(1,3,1,'accepted','manual',1,'test',1),(2,3,2,'accepted','automatic',1,'test',1)");
+    assert.equal(reconcileRecordingRedirects(db,incoming),1);
+    assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid='old'").get(),undefined);
+    assert.deepEqual(db.prepare("SELECT recording_id,recording_mbid FROM Tracks WHERE id=1").get(),{recording_id:2,recording_mbid:'new'});
+    assert.deepEqual(db.prepare("SELECT provider_video_item_id,recording_id FROM ProviderVideoMatches").all(),[
+        {provider_video_item_id:3,recording_id:2},
+    ]);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+}));
+test('merge two recordings that already share a LibraryVideos row commits and keeps one selection',()=>fixture(()=>{
+    db.exec("DELETE FROM ProviderTrackMatches; UPDATE Recordings SET is_video=1 WHERE id IN (1,2)");
+    db.prepare("INSERT INTO LibraryVideos(id,library_id,video_recording_id,preferred_offer_key,selection_mode,placement_mode,placement_selection_mode) VALUES(1,?,1,'[\"tidal\",\"video\"]','auto','separated','auto'),(2,?,2,'[\"tidal\",\"video\"]','auto','separated','auto')").run(library,library);
+    assert.equal(reconcileRecordingRedirects(db,incoming),1);
+    assert.equal(db.prepare("SELECT id FROM Recordings WHERE mbid='old'").get(),undefined);
+    assert.deepEqual(db.prepare("SELECT recording_id,recording_mbid FROM Tracks WHERE id=1").get(),{recording_id:2,recording_mbid:'new'});
+    assert.deepEqual(db.prepare("SELECT library_id,video_recording_id FROM LibraryVideos").all(),[
+        {library_id:library,video_recording_id:2},
+    ]);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
 }));
 test('standalone waiting intent and inconsistent file identities are preserved for reconciliation',()=>fixture(()=>{
     db.exec("INSERT INTO DownloadQueue(ref_key,media_kind,command_name,payload,queue_order) VALUES('standalone','track','DownloadTrack','{\"canonicalRecordingMbid\":\"old\"}',1)");
