@@ -485,6 +485,43 @@ test("scan backfills file-derived quality and technical facts on relinked librar
   assert.equal(row.duration, 1);
 });
 
+test("scan re-measures a hi-res ALAC file stored as 16-bit / 1 Hz", {
+  skip: !hasFfmpeg,
+}, async () => {
+  seedCanonicalArtistGraph();
+  const artist = db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = 'artist-mbid'")
+    .get() as { id: number };
+  const filePath = path.join(tempDir, "apple-hires.m4a");
+  const generated = spawnSync("ffmpeg", [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=96000:duration=0.5",
+    "-ac", "2", "-c:a", "alac", "-sample_fmt", "s32p", filePath,
+  ], { windowsHide: true });
+  assert.equal(generated.status, 0, String(generated.stderr || ""));
+  const library = db.prepare(`
+    SELECT library_id AS id FROM LibraryAlbums
+    WHERE release_group_id = (SELECT id FROM Albums WHERE mbid = 'release-group-1')
+    LIMIT 1
+  `).get() as { id: number };
+  const track = db.prepare("SELECT id, recording_id FROM Tracks WHERE mbid = 'track-1'")
+    .get() as { id: number; recording_id: number };
+  db.prepare(`
+    INSERT INTO TrackFiles (
+      artist_metadata_id, library_id, track_id, recording_id,
+      file_path, relative_path, library_root, filename, extension, file_type, file_class,
+      quality, imported_quality, codec, bit_depth, sample_rate, channels
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'm4a', 'track', 'audio', 'LOSSLESS', 'LOSSLESS', 'ALAC', 16, 1, 2)
+  `).run(artist.id, library.id, track.id, track.recording_id, filePath, path.basename(filePath), tempDir, path.basename(filePath));
+
+  const result = await (DiskScanService as any).backfillMissingAudioFacts(String(artist.id));
+  assert.equal(result.updated, 1);
+  const row = db.prepare("SELECT quality, sample_rate, bit_depth FROM TrackFiles WHERE file_path = ?")
+    .get(filePath) as Record<string, unknown>;
+  assert.equal(row.quality, "HIRES_LOSSLESS");
+  assert.equal(row.sample_rate, 96_000);
+  assert.equal(row.bit_depth, 24);
+});
+
 test("orphan reconciliation awaits writer admission without blocking its release", async () => {
   seedCanonicalArtistGraph();
   insertMissingTrackFile("track-1", "recording-1", "missing-under-contention.flac", null);

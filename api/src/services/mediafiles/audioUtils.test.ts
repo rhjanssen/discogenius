@@ -36,6 +36,9 @@ test("MP4 audio metrics prefer ffprobe over implausible music-metadata values", 
 
     assert.equal(shouldProbeAudioMetrics("album/track.m4a", { sampleRate: 1, channels: 2 }), true);
     assert.equal(shouldProbeAudioMetrics("album/track.m4a", { sampleRate: 48000, channels: 2, duration: 1 }), true);
+    // Apple Music hi-res ALAC as music-metadata reports it.
+    assert.equal(shouldProbeAudioMetrics("album/track.m4a", { codec: "ALAC", sampleRate: 1, channels: 2, duration: 121 }), true);
+    assert.equal(shouldProbeAudioMetrics("album/track.m4a", { codec: "ALAC", sampleRate: 44_100, channels: 2, duration: 121 }), true);
     assert.equal(merged.sampleRate, 96_000);
     assert.equal(merged.bitDepth, 24);
 });

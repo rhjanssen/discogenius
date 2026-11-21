@@ -202,9 +202,13 @@ export function shouldProbeAudioMetrics(
     if (normalizedPath.includes("/spatial-music/") || normalizedPath.includes("/spatial/")) {
         return true;
     }
+    // ALAC is always probed: music-metadata reads the MP4 sample entry, which
+    // Apple's fragmented hi-res files fill with placeholders (16-bit / 1 Hz for
+    // a 24/96 stream). Only the ALAC magic cookie that ffprobe reads is right.
     if (extension === ".m4a") {
         const codecUpper = String(metrics.codec ?? "").toUpperCase();
-        if ((codecUpper === "AAC" || codecUpper === "ALAC") && channels === 2 && (metrics.duration ?? 0) > 0) {
+        if (codecUpper === "ALAC") return true;
+        if (codecUpper === "AAC" && channels === 2 && (metrics.duration ?? 0) > 0) {
             return false;
         }
     }
