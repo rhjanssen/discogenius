@@ -271,3 +271,45 @@ test("production command-worker execution keeps deep PRAGMAs off the main thread
   assert.equal(snapshot.subsystems.database.lastDeepResult?.persisted, true);
   assert.equal(queueModule.CommandQueueManager.get(commandId)?.status, "completed");
 });
+
+test("health does not mark command queue warning only because many RefreshArtist jobs are queued and age > 30m while busy and heartbeats fresh (#152)", async () => {
+  for (let i = 1; i <= 10; i++) {
+    dbModule.db.prepare(`
+      INSERT INTO commands (name, payload, status, priority, created_at, updated_at)
+      VALUES ('RefreshArtist', '{"artistId":"${i}"}', 'queued', 0, datetime('now', '-2 hours'), CURRENT_TIMESTAMP)
+    `).run();
+  }
+
+  for (let i = 101; i <= 102; i++) {
+    dbModule.db.prepare(`
+      INSERT INTO commands (name, payload, status, priority, created_at, started_at, last_progress_at, updated_at)
+      VALUES ('RefreshArtist', '{"artistId":"${i}"}', 'started', 0, datetime('now', '-2 hours'), datetime('now', '-10 minutes'), datetime('now', '-1 minute'), CURRENT_TIMESTAMP)
+    `).run();
+  }
+
+  workerPoolModule.CommandWorkerPool.start();
+  const poolSnapshot = workerPoolModule.CommandWorkerPool.getSnapshot();
+  const worker1 = (workerPoolModule.CommandWorkerPool as any).workers[0];
+  const worker2 = (workerPoolModule.CommandWorkerPool as any).workers[1];
+  if (worker1) {
+    worker1.busy = true;
+    worker1.lastSeenAt = Date.now();
+  }
+  if (worker2) {
+    worker2.busy = true;
+    worker2.lastSeenAt = Date.now();
+  }
+
+  const snapshot = healthModule.collectHealthDiagnosticsSnapshot();
+  assert.equal(snapshot.subsystems.commandQueue.status, "ok");
+
+  // A truly stuck command of another type should still raise warning
+  dbModule.db.prepare(`
+    INSERT INTO commands (name, payload, status, priority, created_at, updated_at)
+    VALUES ('CheckHealth', '{}', 'queued', 0, datetime('now', '-2 hours'), CURRENT_TIMESTAMP)
+  `).run();
+
+  const stuckSnapshot = healthModule.collectHealthDiagnosticsSnapshot();
+  assert.equal(stuckSnapshot.subsystems.commandQueue.status, "warning");
+});
+
