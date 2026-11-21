@@ -138,13 +138,13 @@ router.post("/", async (req, res) => {
 /**
  * Manage → Delete library files for a video (disk + TrackFiles). Keeps catalog Recording.
  */
-router.delete("/:videoId/files", (req, res) => {
+router.delete("/:videoId/files", async (req, res) => {
   try {
     const scope = deletionScopeFromRequest({
       libraryId: req.query.libraryId,
       allLibraries: req.query.allLibraries,
     });
-    const result = deleteVideoLibraryFiles(req.params.videoId, scopeToOptions(scope));
+    const result = await withDbWrite(() => deleteVideoLibraryFiles(req.params.videoId, scopeToOptions(scope)));
     res.json({ success: true, ...result });
   } catch (error: any) {
     if (error?.status === 400) {
@@ -213,7 +213,7 @@ router.patch("/:videoId", async (req, res) => {
     // another. `monitored_lock` is the user saying "I chose this one", which is
     // recorded as a manual selection so curation leaves it alone.
     const videoLibraryIds = resolveVideoLibraryIds(db);
-    const applied = db.transaction(() => {
+    const applied = await withDbWrite(() => db.transaction(() => {
       for (const libraryId of videoLibraryIds) {
         const existing = db.prepare(`
           SELECT selection_mode FROM LibraryVideos
@@ -253,7 +253,7 @@ router.patch("/:videoId", async (req, res) => {
         return applyManualVideoPlacement(db, recording.id, placementInput);
       }
       return null;
-    })();
+    })());
     const renameArtistId = applied?.artistId;
     if (renameArtistId) {
       await withDbWrite(

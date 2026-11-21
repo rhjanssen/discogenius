@@ -381,7 +381,7 @@ router.patch("/:albumId", async (req, res) => {
  * Query: libraryId=N or allLibraries=true (required when several libraries are
  * configured), slot=stereo|spatial (optional), unmonitor=true (optional).
  */
-router.delete("/:albumId/files", (req, res) => {
+router.delete("/:albumId/files", async (req, res) => {
   try {
     const albumId = req.params.albumId;
     const slotRaw = typeof req.query.slot === "string" ? req.query.slot.trim().toLowerCase() : "";
@@ -391,11 +391,11 @@ router.delete("/:albumId/files", (req, res) => {
       libraryId: req.query.libraryId,
       allLibraries: req.query.allLibraries,
     });
-    const result = deleteReleaseGroupLibraryFiles(albumId, {
+    const result = await withDbWrite(() => deleteReleaseGroupLibraryFiles(albumId, {
       ...scopeToOptions(scope),
       slot,
       unmonitor,
-    });
+    }));
     res.json({ success: true, ...result });
   } catch (error: any) {
     if (error?.status === 400) {

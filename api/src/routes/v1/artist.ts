@@ -404,7 +404,7 @@ router.post("/:artistId/scan", async (req, res) => {
   }
 });
 
-router.post("/:artistId/path", (req, res) => {
+router.post("/:artistId/path", async (req, res) => {
   try {
     const artistId = req.params.artistId;
     const body = getObjectBody(req.body);
@@ -413,12 +413,12 @@ router.post("/:artistId/path", (req, res) => {
     const applyNamingTemplate = getOptionalBoolean(body, "applyNamingTemplate") ?? false;
     rejectUnknownKeys(body, ["path", "moveFiles", "applyNamingTemplate"], "Artist path update");
 
-    const result = MoveArtistService.moveArtist({
+    const result = await withDbWrite(() => MoveArtistService.moveArtist({
       artistId,
       path: requestedPath,
       moveFiles,
       applyNamingTemplate,
-    });
+    }));
 
     if (!result) {
       return res.status(404).json({ detail: "Artist not found" });
@@ -564,7 +564,7 @@ router.patch("/:artistId", async (req, res) => {
   }
 });
 
-router.delete("/:artistId/files", (req, res) => {
+router.delete("/:artistId/files", async (req, res) => {
   try {
     const body = getObjectBody(req.body ?? {});
     rejectUnknownKeys(body, ["unmonitor", "libraryId", "allLibraries"], "Artist delete files");
@@ -574,10 +574,10 @@ router.delete("/:artistId/files", (req, res) => {
       libraryId: body.libraryId ?? req.query.libraryId,
       allLibraries: body.allLibraries ?? req.query.allLibraries,
     });
-    const result = deleteArtistLibraryFiles(req.params.artistId, {
+    const result = await withDbWrite(() => deleteArtistLibraryFiles(req.params.artistId, {
       ...scopeToOptions(scope),
       unmonitor,
-    });
+    }));
     res.json({ success: true, ...result });
   } catch (error: any) {
     if (isRequestValidationError(error)) {

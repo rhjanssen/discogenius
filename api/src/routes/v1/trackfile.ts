@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withDbWrite } from "../../database.js";
 import { deleteLibraryFilesByIds } from "../../services/mediafiles/library-file-delete-service.js";
 import {
   deletionScopeFromRequest,
@@ -12,7 +13,7 @@ const router = Router();
  * A track-level delete removes every file of that recording; this route does not.
  * Query: libraryId=N or allLibraries=true when several libraries are configured.
  */
-router.delete("/:fileId", (req, res) => {
+router.delete("/:fileId", async (req, res) => {
   try {
     const fileId = Number(req.params.fileId);
     if (!Number.isInteger(fileId) || fileId <= 0) {
@@ -23,7 +24,7 @@ router.delete("/:fileId", (req, res) => {
       libraryId: req.query.libraryId,
       allLibraries: req.query.allLibraries,
     });
-    const result = deleteLibraryFilesByIds([fileId], scopeToOptions(scope));
+    const result = await withDbWrite(() => deleteLibraryFilesByIds([fileId], scopeToOptions(scope)));
     const accounted = result.deleted + result.missing + result.errors + result.skippedOutsideRoot;
     if (accounted === 0) {
       return res.status(404).json({ detail: "Track file not found" });
