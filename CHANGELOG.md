@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.26.6] - 2026-11-21
+
+### Fixed
+
+- Apple Music: the decryption wrapper no longer deadlocks after a few days of uptime. The wrapper keeps thread ids in 16 bits, so it hung once its container's PID namespace passed 65535, which looked like a crash loop or an expired session. The supervisor no longer forks while idle, and it exits before the namespace gets close to that limit so Docker restarts the container with a fresh namespace. The session is kept (entrypoint v12, #153).
+- Apple Music hi-res ALAC files are now measured with ffprobe instead of being stored as 16-bit / 1 Hz. The misread made every Apple hi-res album look like an upgrade candidate, so the same albums were downloaded again each day. Existing files with an impossible sample rate are re-measured on the next library scan (#155).
+- Quality upgrades are planned only from the album's selected acquisition plan. A file from another edition or provider is no longer counted or queued as an upgrade, and a hi-res file is kept when the winning plan only offers lossless (#146).
+
+### Changed
+
+- Scheduled upgrade checks wait until all missing music has been downloaded. Missing downloads always come before upgrades (#146).
+
 ## [2.26.5] - 2026-11-18
 
 ### Fixed
