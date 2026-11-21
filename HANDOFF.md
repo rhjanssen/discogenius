@@ -1,13 +1,30 @@
 # Session Handoff
 
-- **Branch**: `agent/issue-163` (Issue #163)
-- **What is done**:
-  - Updated `DownloadWaitQueue.nextMissingRank()` in `api/src/services/download/download-wait-queue.ts` to allocate missing ranks in `QUEUE_RANK_STEP` (1024) steps before the first unclaimed upgrade (using `WHERE command_id IS NULL AND queue_order < ?` for `previous`) and, when the gap before the first unclaimed upgrade is exhausted, shift all unclaimed rows at or after `firstUpgrade.queue_order` forward by `QUEUE_RANK_SHIFT` (`1024 * 1024`) inside `enqueue()`'s transaction.
-  - Added regression tests in `api/src/services/download/download-wait-queue.test.ts` verifying 200 missing enqueues behind waiting upgrades stay ahead of all upgrades in FIFO order with `missing-0` claimed first, and verifying repeated shifts (>1024 missing rows) leave claimed rows untouched while preserving `front` enqueue and manual `reorder`. Both tests failed before the fix and pass after.
-  - Verified full `yarn ci` passes cleanly (lint, typecheck, api test suite, app tests, and production builds).
-- **What is half-done**:
-  - None.
-- **What was live-verified**:
-  - Not live-verified (cloud agent environment has no LAN/container access); verified against the active SQLite runtime schema (schema 46) via `download-wait-queue.test.ts` and full `yarn ci`.
+- **Branch**: `claude/sweet-hypatia-nywmuu` (audit of 2.26.11 + live report from Primula, 21 Nov ~21:00 CET)
+- **What is done** (each has a test that fails on `main` and passes here):
+  - **Retry of a failed download 404'd (live bug 1).** `QueueHistoryPanel` called `retryItem(id)`, which defaulted to `source=queue`, but history ids are `commands.id`. It now sends `source=history`. The server no longer turns every history-retry error into 404: a job missing its media type/provider id answers 422 with the reason, other errors (e.g. a locked DB) reach the route as 503/500 with their message, and 404s carry a `message`. The API client also shows a body's `error` field, so toasts no longer say just "Request failed". Tests: `QueueHistoryPanel.test.tsx`, `download-wait-queue.test.ts` ("a retry that cannot be queued says why…").
+  - **HTTP routes writing outside the write gate.** On the HTTP thread a bare write throws `database is locked` immediately whenever a worker holds the writer (e.g. during the hour-long ApplyCuration). The five "delete files" routes (`trackfile/:id`, `track/:id/files`, `album/:id/files`, `artist/:id/files`, `video/:id/files`) unlinked the file first and then failed the row delete, which left `TrackFiles` rows pointing at deleted files. These routes, video monitoring `PATCH /video/:id`, `POST /artist/:id/path` and the CheckUpgrades queued by `POST /config/quality` now go through `withDbWrite`. Test: `routes/v1/trackfile.test.ts` (500 + orphaned row on `main`, 200 here).
+  - **#167**: `CheckUpgrades` (scheduled or manual) skips while an `ApplyCuration` / `DownloadMissing` / `DownloadMissingForce` is queued or started. Test in `upgrader-canonical.test.ts`.
+  - **#159**: streamrip output showing Deezer will not deliver the resource (API error 800 `DataException`, "Error getting downloadable data for track", "no media URL for this track"), with no files produced and no transport/auth/config error, now throws `ProviderUnavailableError`. The job takes no same-offer retries, the Deezer release is marked `unavailable`, and planning is made stale, so the next missing pass replans instead of requeueing it. WrongLicense ("…with your subscription") is excluded. The streamrip child now runs with `COLUMNS=400`: rich wrapped log records at 80 columns, which split one error over several lines (that is why the live third shape read "unavailable: no media URL"). A failed run's error text now leads with the Python exception line (`APIError: {...}`) instead of the traceback frame. Tests: `deezer-provider.test.ts`, `download-deezer-unavailable.test.ts`.
+- **What is half-done / not done**:
+  - Route write-gate sweep: the handlers above were confirmed and fixed. A static scan also flagged these mutating handlers with no gate call in their own body. They were **not** reviewed; some delegate to gated helpers or services. List: `auth.ts` (device-login, credentials, downloader-login, logout), `providers.ts` (PUT /priority, logout), `system-status.ts` (unmatched-artists match/ignore, backups), `unmapped.ts` (acoustid, action, identify, auto-import, bulk-*), `v1/album.ts` POST /, `v1/artist.ts` (monitor, PATCH, PUT, DELETE, import), `v1/command.ts` DELETE, `v1/queue.ts` pause/resume, DELETE /tasks/:id, `monitoring.ts` start/stop.
+  - Open PRs `rhjanssen/discogenius#164` (#156) and `rhjanssen/discogenius#160` (#152) are under PO review with Gemini; not touched here.
+- **How it was verified**: `yarn lint` and `yarn typecheck` exit 0. `yarn test:app`: 51 files, 202 tests passed. `yarn build` passed. `yarn test:api`: 2792 tests, 2782 pass, 6 skipped (the same skips as `main`), 4 fail. None of the failures is newly failing against a `main` baseline (failure names compared):
+  - 3 fail in this cloud sandbox on `main` too. "local search answers on an empty catalog" and "artist album upsert stores allowed provider supplements…" need DNS for `api.lidarr.audio`. "a read-only album directory reports the permission cause" cannot fail as root.
+  - The 4th, `edition-monitoring-contract.test.ts`, was the known "Unable to deserialize cloned data" flake and passes 22/22 in isolation.
+  - Each new test was run against the pre-fix code and failed there.
+- **What was live-verified**: nothing. Cloud session, no LAN access. Not live-verified.
+- **Live checks after deploy** (Bastille / Bakermat where relevant):
+  1. Retry a failed album from Queue → History: a new wait row appears; an unqueueable one shows its reason in the toast.
+  2. During an ApplyCuration, "Delete files" on a track/album succeeds (it may take a moment) and leaves no `TrackFiles` row for the deleted path.
+  3. Scheduled CheckUpgrades during a curation/missing pass ends "Skipped: missing-music pass still running".
+  4. A delisted Deezer album (e.g. 113031) fails once, then its Deezer release shows `availability = 'unavailable'` and the next pass does not queue it.
 - **Open questions for PO**:
-  - None.
+  - Live `CheckUpgrades` "sqlite busy" at 02:02–03:03 on 21 Nov: workers wait up to 15 s for the writer mutex, so something held the writer longer than that. The logs from before the 20:21 restart are gone. Please capture `[write-profile]` lines the next time it happens.
+  - #42288 "Canonical audio tags were not applied … 1 file(s) missing": the imported `TrackFiles` id or its file was gone by tag time. It needs the live rows for that album to trace.
+  - API auth is disabled (no admin password) while port 3737 is open on all interfaces. That needs a product decision, so it is not changed here.
+- **Draft CHANGELOG lines**:
+  - Retrying a failed download from the queue history works again, and a retry that cannot run now says why instead of "Request failed".
+  - Deleting files no longer fails, or leaves a library entry for a deleted file, while a curation or refresh is running. Toggling video monitoring, changing an artist path and changing quality settings also wait for their turn to write.
+  - Upgrade checks wait until a running curation or missing-music pass has queued its albums (#167).
+  - Deezer albums that Deezer no longer delivers are marked unavailable and replanned instead of retried every pass; Deezer errors show the actual exception (#159).
