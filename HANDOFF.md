@@ -1,18 +1,23 @@
 # Session Handoff
 
-- **Branch**: `agent/issue-151` (Issue #151)
+- **Branch**: `agent/issue-156` (PR #164 / Issue #156)
 - **What is done**:
-  - Resolved `RecordingRelations`, `LibraryVideos`, and `ProviderVideoMatches` uniqueness conflicts during canonical recording redirect reconciliation in `api/src/services/catalog/catalog-recording-reconciliation.ts`:
-    - `ProviderVideoMatches`: drops duplicate matches where `provider_video_item_id` is already present on the surviving recording.
-    - `LibraryVideos`: drops duplicate video selections where `library_id` already exists on the surviving recording.
-    - `RecordingRelations`: drops collapsed self-relations (where source and target resolve to the survivor) and duplicate relations where the surviving recording already has a relation with the same peer and type (as either source or target).
-    - Preserves remaining non-colliding owner rows, moving them onto the surviving recording.
-  - Verified genuine presentation-identity conflicts (`is_video` / conflicting YouTube video IDs) still roll back and leave `content_hash` unstamped without deleting file rows.
-  - Added unit tests in `catalog-recording-reconciliation.test.ts` and `servarr-metadata.test.ts` verifying that recording merges sharing relations, video matches, or library video selections commit cleanly, preserve survivor rows, and stamp `content_hash`. Verified that tests fail on `main` before fix.
-  - Full `yarn ci` passed cleanly (lint, typecheck, api test suite with 0 failures, app tests, and production builds).
+  - Exported shared constant `TIDAL_SESSION_WAIT_MESSAGE` in `api/src/services/providers/provider-auth-error.ts` (re-exported by `tidal-auth.ts`, `tidal.ts`, and `provider-auth-state.ts`), unifying the error default, auth classifier, and UI copy under a single definition.
+  - Defined `TidalSessionUnavailableError` in `api/src/services/providers/tidal/tidal-auth.ts` extending `ProviderAuthError` (`provider: "tidal"`, `code: "session_unavailable"`, `status: 401`, default message `TIDAL_SESSION_WAIT_MESSAGE`).
+  - Threw `TidalSessionUnavailableError` from `prepareTidalTokenForDownloader()` when a TIDAL token is within the tiddl handoff margin.
+  - Cleaned up classifier patterns in `AUTH_FAILURE_TEXT`: dropped generic unanchored `waiting for (?:a )?token refresh` and matched `TIDAL_SESSION_WAIT_MESSAGE` explicitly. In `providerAuthCopy()`, dropped dead `session is temporarily unavailable` pattern and formatted TIDAL session wait banner and queue message using `TIDAL_SESSION_WAIT_MESSAGE`.
+  - Fixed `queueHoldMessage()` to fall back to the stored `last_error` from `ProviderAuthState` (mirroring `authHoldRecord()`), ensuring download processor reauth guards keep `"Waiting for Tidal token refresh"` instead of forcing `"Waiting for Tidal login"`.
+  - Fixed `recordProviderAuthFailure()` for TIDAL: prevented session waits from downgrading an existing hard login failure (`"Tidal login expired (token has expired)."`), while permitting escalation from session wait to a real expired login.
+  - Removed narrating comments in `download-tidal-session-hold.test.ts`.
+  - Added unit tests in `provider-auth-state.test.ts` verifying:
+    - Session wait cannot downgrade a real expired login.
+    - Session wait escalates to a real expired login.
+    - `queueHoldMessage()` falls back to stored `last_error` and reauth guard hold does not overwrite session wait.
+  - Verified tests in `download-tidal-session-hold.test.ts`, `download-failure-policy.test.ts`, and `provider-auth-state.test.ts`.
 - **What is half-done**:
   - None.
 - **What was live-verified**:
-  - Tested against the active SQLite runtime schema fixture matching production schema 46. (Container live verification not applicable in cloud agent environment without NAS/LAN access).
+  - Tested against the active SQLite runtime schema fixture matching production schema 46.
+  - Cloud agent note for LAN verification: Over a token refresh, TIDAL jobs for Bastille/Bakermat should show "Waiting for Tidal token refresh" (not "Sign in to Tidal again"), there should be no `falling back from tidal` log lines, and the jobs should resume on TIDAL after the refresh.
 - **Open questions for PO**:
   - None.
