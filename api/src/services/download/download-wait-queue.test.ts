@@ -417,6 +417,22 @@ test("a retry that cannot be queued says why instead of answering not found", as
   assert.match(String(gone.body.message), new RegExp(`Queue item ${failedId}`));
 });
 
+test("history items explain a stored failure instead of only echoing it", () => {
+  const queued = enqueueTrack("explained-1", "Pompeii");
+  const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id)!;
+  const raw = "TIDAL track explained-1 is not streamable in the configured region";
+  queueModule.CommandQueueManager.fail(claimed.commandId, raw);
+  waitQueueModule.DownloadWaitQueue.finishClaimed(claimed.commandId);
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();
+
+  const item = queryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 }).items
+    .find((entry) => entry.id === claimed.commandId);
+  assert.equal(item?.error, raw);
+  assert.equal(item?.failure?.category, "unavailable");
+  assert.equal(item?.failure?.summary, "Not available in your region on TIDAL");
+  assert.equal(item?.failure?.detail, raw);
+});
+
 test("recoverOrphanClaims drops wait rows whose command already failed", () => {
   enqueueTrack("fail-orphan", "Stuck Album");
   const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;

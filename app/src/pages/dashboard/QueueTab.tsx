@@ -17,7 +17,6 @@ import {
     Subtitle2,
     Spinner,
     Text,
-    tokens,
 } from "@fluentui/react-components";
 import {
   ArrowClockwise24Regular,
@@ -53,6 +52,7 @@ import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticSt
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { FailureNotice } from "@/components/ui/FailureNotice";
 import { QueueListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { queueProviderOffers } from "@/utils/queueProviderOffers";
@@ -1477,7 +1477,11 @@ const QueueTab = () => {
                                                 />
                                             </div>
                                             {isFailed && groupError ? (
-                                                <Text className={styles.downloadErrorText}>{groupError}</Text>
+                                                <FailureNotice
+                                                    failure={firstItem?.error ? firstItem.failure : null}
+                                                    fallbackText={groupError}
+                                                    className={styles.queueFailureNotice}
+                                                />
                                             ) : null}
                                         </div>
 
@@ -1539,9 +1543,10 @@ const QueueTab = () => {
                                                             <Text className={mergeClasses(styles.downloadTitle, styles.downloadSubtleText)} truncate>{item.title || "Unknown Track"}</Text>
                                                         )}
                                                         {isItemFailed && itemErrorMessage && (
-                                                            <Text className={styles.downloadMeta} style={{ color: tokens.colorPaletteRedForeground1 }}>
-                                                                {itemErrorMessage}
-                                                            </Text>
+                                                            <FailureNotice
+                                                                failure={item.error ? item.failure : null}
+                                                                fallbackText={itemErrorMessage}
+                                                            />
                                                         )}
                                                     </div>
                                                     <div className={styles.downloadActions} data-queue-control="true">

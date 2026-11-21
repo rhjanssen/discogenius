@@ -33,6 +33,7 @@ import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticSt
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { FailureNotice } from "@/components/ui/FailureNotice";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { queueProviderOffers } from "@/utils/queueProviderOffers";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
@@ -368,7 +369,11 @@ export function QueueHistoryPanel({
                                     </div>
                                 ) : null}
                                 {row.error ? (
-                                    <Text className={styles.queueHistoryErrorText}>{row.error}</Text>
+                                    <FailureNotice
+                                        failure={item.failure}
+                                        fallbackText={row.error}
+                                        className={styles.queueFailureNotice}
+                                    />
                                 ) : item.outcome === "completedWithWarning" && item.warningMessage ? (
                                     <Text className={styles.queueHistoryErrorText}>{item.warningMessage}</Text>
                                 ) : null}

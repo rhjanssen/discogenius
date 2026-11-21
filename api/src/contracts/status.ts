@@ -27,6 +27,30 @@ export type DownloadContentTypeContract = "track" | "video" | "album";
 
 export type DownloadTrackImportStatusContract = "imported" | "missing" | "failed";
 
+export type FailureCategoryContract =
+  | "unavailable"
+  | "account"
+  | "quality"
+  | "rate-limit"
+  | "network"
+  | "interrupted"
+  | "import"
+  | "storage"
+  | "unknown";
+
+/** A failure as a person should read it. The server derives it once from the
+ * stored error text; `detail` keeps that text for diagnosis. */
+export interface FailureNoticeContract {
+  category: FailureCategoryContract;
+  /** One sentence, short enough for a card. */
+  summary: string;
+  /** What the person can do next, when there is something useful to do. */
+  hint: string | null;
+  /** An in-app place that fixes the cause, e.g. the provider sign-in page. */
+  action: { label: string; href: string } | null;
+  detail: string;
+}
+
 export interface DownloadTrackProgressContract {
   title: string;
   trackNum?: number;
@@ -60,6 +84,7 @@ export interface QueueItemContract {
   status: QueueItemStatusContract;
   progress: number;
   error: string | null;
+  failure?: FailureNoticeContract | null;
   created_at: string;
   updated_at: string;
   started_at?: string | null;
@@ -178,6 +203,7 @@ export interface ActivityJobContract {
   status?: string;
   statusMessage?: string;
   error?: string;
+  failure?: FailureNoticeContract | null;
   trigger?: number;
   payload?: unknown;
   /** Soft-success warning (e.g. provider fallback) — completed, not failed. */
@@ -233,6 +259,35 @@ export interface StatusOverviewContract {
   commandStats: CommandStatsContract;
   runningCommands?: RunningCommandContract[];
   rateLimitMetrics?: RateLimitMetricsContract;
+}
+
+const FAILURE_CATEGORIES: readonly FailureCategoryContract[] = [
+  "unavailable", "account", "quality", "rate-limit", "network", "interrupted", "import", "storage", "unknown",
+];
+
+function parseFailureNoticeContract(value: unknown, label: string): FailureNoticeContract | null | undefined {
+  if (value === undefined || value === null) return value;
+  const record = expectRecord(value, label);
+  const category = expectString(record.category, `${label}.category`);
+  if (!FAILURE_CATEGORIES.includes(category as FailureCategoryContract)) {
+    throw new Error(`${label}.category must be a known failure category`);
+  }
+  const action = record.action === null || record.action === undefined
+    ? null
+    : (() => {
+      const actionRecord = expectRecord(record.action, `${label}.action`);
+      return {
+        label: expectString(actionRecord.label, `${label}.action.label`),
+        href: expectString(actionRecord.href, `${label}.action.href`),
+      };
+    })();
+  return {
+    category: category as FailureCategoryContract,
+    summary: expectString(record.summary, `${label}.summary`),
+    hint: expectNullableString(record.hint, `${label}.hint`) ?? null,
+    action,
+    detail: expectString(record.detail, `${label}.detail`),
+  };
 }
 
 function parseDownloadTrackProgressContract(value: unknown, index: number, label: string): DownloadTrackProgressContract {
@@ -291,6 +346,7 @@ function parseQueueItemContract(value: unknown, index: number): QueueItemContrac
     status: status as QueueItemStatusContract,
     progress: expectNumber(record.progress, `${label}.progress`),
     error: expectNullableString(record.error, `${label}.error`) ?? null,
+    failure: parseFailureNoticeContract(record.failure, `${label}.failure`),
     created_at: expectString(record.created_at, `${label}.created_at`),
     updated_at: expectString(record.updated_at, `${label}.updated_at`),
     started_at: expectNullableString(record.started_at, `${label}.started_at`),
@@ -348,6 +404,7 @@ function parseActivityJobContract(value: unknown, index: number, label: string):
     status: expectOptionalString(record.status, `${itemLabel}.status`),
     statusMessage: expectOptionalString(record.statusMessage, `${itemLabel}.statusMessage`),
     error: expectOptionalString(record.error, `${itemLabel}.error`),
+    failure: parseFailureNoticeContract(record.failure, `${itemLabel}.failure`),
     trigger: expectOptionalNumber(record.trigger, `${itemLabel}.trigger`),
     payload: record.payload,
     outcome: (() => {

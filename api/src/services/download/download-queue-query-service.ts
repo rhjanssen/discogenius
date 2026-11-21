@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { presentFailure } from "../commands/failure-presentation.js";
 import { db } from "../../database.js";
 import { DB_PATH } from "../config/bootstrap.js";
 import {
@@ -1470,6 +1471,7 @@ export class DownloadQueueQueryService {
         ? downloadState.progress
         : (typeof job.progress === "number" && Number.isFinite(job.progress) ? job.progress : 0),
       error: getOptionalString(job.error) ?? null,
+      failure: presentFailure(job.error, { provider: getOptionalString(job.payload?.provider) }),
       created_at: job.created_at || new Date().toISOString(),
       updated_at: job.updated_at || job.created_at || new Date().toISOString(),
       started_at: job.started_at ?? null,
