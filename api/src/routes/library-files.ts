@@ -443,7 +443,7 @@ router.get("/stream/:id", async (req, res) => {
  * Trigger a library scan for a specific artist.
  * Queues the local scan/import phase only.
  */
-router.post("/scan/:artistId", (req, res) => {
+router.post("/scan/:artistId", async (req, res) => {
   try {
     const { artistId } = req.params;
     const artist = db.prepare("SELECT id, name FROM ArtistMetadata WHERE id = ?").get(artistId) as any;
@@ -451,12 +451,14 @@ router.post("/scan/:artistId", (req, res) => {
       return res.status(404).json({ detail: `Artist ${artistId} not found` });
     }
 
-    const commandId = queueArtistWorkflow({
+    // Through the write gate: a bare write failed with "database is locked"
+    // whenever a curation or refresh pass held the writer.
+    const commandId = await withDbWrite(() => queueArtistWorkflow({
       artistId,
       artistName: artist.name,
       workflow: "library-scan",
       trigger: CommandTrigger.Manual,
-    });
+    }));
 
     res.json({ success: true, commandId, message: `Library scan queued for ${artist.name}` });
   } catch (error: any) {
