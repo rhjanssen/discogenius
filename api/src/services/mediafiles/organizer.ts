@@ -1,4 +1,5 @@
 import { isSpatialAudioQuality } from '../../utils/spatial-audio.js';
+import { captureLinkedExtras, releaseExtrasOfReplacedTrackFiles } from "../extras/files/extra-file-deletion.js";
 import { validateExecutionManifest } from '../download/execution-manifest.js';
 import fs from "fs";
 import path from "path";
@@ -2447,6 +2448,8 @@ export class OrganizerService {
             removedSiblings: this.unlinkSiblingMediaVariants(destFile),
           }),
         );
+        // Read before the TrackFiles rows go: the extras' link is ON DELETE SET NULL.
+        const retiredExtras = captureLinkedExtras(retiredReleaseTracks.map((row) => row.id));
 
         // Batch all per-track DB writes in a single transaction.
         // This reduces ~5-6 auto-commits per track to 1 committed batch.
@@ -2502,6 +2505,15 @@ export class OrganizerService {
           forgetRetiredLibraryFileRows(retiredReleaseTracks, destFile, "track");
           this.forgetSiblingMediaVariantRows(removedSiblings, destFile, "track");
         })(), "import:media-commit");
+        if (retiredExtras.length > 0 && raw.libraryId != null) {
+          const libraryId = raw.libraryId;
+          await withSqliteWriteGate(() => releaseExtrasOfReplacedTrackFiles({
+            scope: { kind: "library", libraryId },
+            replacedTrackFileIds: retiredReleaseTracks.map((row) => row.id),
+            linkedExtras: retiredExtras,
+            replacementPath: destFile,
+          }), "import:replaced-track-extras");
+        }
         });
 
         if (metadataConfig.save_lyrics && trackId) {

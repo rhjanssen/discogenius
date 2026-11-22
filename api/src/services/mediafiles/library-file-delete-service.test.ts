@@ -857,3 +857,49 @@ test("a failed physical deletion leaves the linked extras alone too", () => {
   assert.equal(fs.existsSync(lyrics.filePath), true, "the sidecar follows its file, not the attempt");
   assert.equal(countTrackFiles(), 1);
 });
+
+function seedLinkedLyric(relativePath: string, trackFileId: number, libraryId: number): string {
+  const { db } = dbModule;
+  const filePath = path.join(musicRoot, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, "[00:01.00] lyrics");
+  const row = db.prepare(`
+    INSERT INTO LyricFiles (artist_id, track_file_id, relative_path, file_path, library_root, extension)
+    VALUES (?, ?, ?, ?, 'music', 'lrc')
+    RETURNING id
+  `).get(ARTIST_ID, trackFileId, relativePath, filePath) as { id: number };
+  db.prepare("INSERT INTO LyricFileLibraries (lyric_file_id, library_id) VALUES (?, ?)").run(row.id, libraryId);
+  return filePath;
+}
+
+test("an upgrade to a new file name releases the old lyrics and keeps the new file's", async () => {
+  const { captureLinkedExtras, releaseExtrasOfReplacedTrackFiles } = await import("../extras/files/extra-file-deletion.js");
+  seedArtist();
+  seedAlbum("rg-liverpool");
+  const trackId = seedTrack("track-liverpool-7", "rg-liverpool");
+  const libraryId = fixtures.seedTestLibrary(dbModule.db, { name: "Lossless", rootPath: musicRoot });
+  const folder = path.join("Racoon", "Liverpool Rain (2011)");
+  const replaced = seedTrackFile({
+    libraryId,
+    relativePath: path.join(folder, "07 - Don't Hold Me Down.m4a"),
+    releaseGroupMbid: "rg-liverpool",
+    trackMbid: "track-liverpool-7",
+    trackId,
+  });
+  const oldLyrics = seedLinkedLyric(path.join(folder, "07 - Don't Hold Me Down.lrc"), replaced.id, libraryId);
+  const newLyrics = seedLinkedLyric(path.join(folder, "07 - Don’t Hold Me Down.lrc"), replaced.id, libraryId);
+
+  const linkedExtras = captureLinkedExtras([replaced.id]);
+  dbModule.db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(replaced.id);
+  releaseExtrasOfReplacedTrackFiles({
+    scope: { kind: "library", libraryId },
+    replacedTrackFileIds: [replaced.id],
+    linkedExtras,
+    replacementPath: path.join(musicRoot, folder, "07 - Don’t Hold Me Down.m4a"),
+  });
+
+  assert.equal(fs.existsSync(oldLyrics), false, "the replaced track's lyrics stay behind");
+  assert.equal(fs.existsSync(newLyrics), true, "the replacement's lyrics were deleted");
+  const remaining = dbModule.db.prepare("SELECT file_path FROM LyricFiles ORDER BY id").all() as Array<{ file_path: string }>;
+  assert.deepEqual(remaining.map((row) => row.file_path), [newLyrics]);
+});
