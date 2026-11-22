@@ -935,3 +935,74 @@ test("an old lyric that is the new file's lyric under another spelling stays", a
 
   assert.equal(fs.existsSync(lyric), true, "the replacement's own lyrics were deleted");
 });
+
+test("releaseExtrasOfReplacedTrackFiles keeps case-only renamed lyrics on a case-insensitive root and removes renumbered ones", async () => {
+  const { captureLinkedExtras, releaseExtrasOfReplacedTrackFiles } = await import("../extras/files/extra-file-deletion.js");
+  const { setCaseSensitivityOverride, clearCaseSensitivityCache } = await import("./path-utils.js");
+  seedArtist();
+  seedAlbum("rg-kinks");
+  const trackId = seedTrack("track-kinks-1", "rg-kinks");
+  const libraryId = fixtures.seedTestLibrary(dbModule.db, { name: "Lossless", rootPath: musicRoot });
+  const folder = path.join("The Kinks", "Show-Biz (2020)");
+  const replaced = seedTrackFile({
+    libraryId,
+    relativePath: path.join(folder, "101 - Here Comes Yet Another Day.flac"),
+    releaseGroupMbid: "rg-kinks",
+    trackMbid: "track-kinks-1",
+    trackId,
+  });
+  const oldRenumbered = seedLinkedLyric(path.join(folder, "101 - Here Comes Yet Another Day.txt"), replaced.id, libraryId);
+  const caseOnlyLyric = seedLinkedLyric(path.join(folder, "01 - here comes yet another day.lrc"), replaced.id, libraryId);
+
+  setCaseSensitivityOverride(musicRoot, true);
+  try {
+    const linkedExtras = captureLinkedExtras([replaced.id]);
+    dbModule.db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(replaced.id);
+    releaseExtrasOfReplacedTrackFiles({
+      scope: { kind: "library", libraryId },
+      replacedTrackFileIds: [replaced.id],
+      linkedExtras,
+      replacementPath: path.join(musicRoot, folder, "01 - Here Comes Yet Another Day.m4a"),
+    });
+  } finally {
+    clearCaseSensitivityCache();
+  }
+
+  assert.equal(fs.existsSync(oldRenumbered), false, "renumbered pre-upgrade sidecar must be released");
+  assert.equal(fs.existsSync(caseOnlyLyric), true, "case-only sidecar on case-insensitive root must stay");
+});
+
+test("OrganizerService.releaseRetiredTrackExtras releases linked extras even when job omits libraryId", async () => {
+  const { captureLinkedExtras } = await import("../extras/files/extra-file-deletion.js");
+  const { listPreviousReleaseTrackFiles } = await import("./release-track-replacement.js");
+  const { OrganizerService } = await import("./organizer.js");
+  seedArtist();
+  seedAlbum("rg-single-upgrade");
+  const trackId = seedTrack("track-single-1", "rg-single-upgrade");
+  const libraryId = fixtures.seedTestLibrary(dbModule.db, { name: "Lossless", rootPath: musicRoot });
+  const folder = path.join("The Kinks", "Show-Biz (2020)");
+  const replaced = seedTrackFile({
+    libraryId,
+    relativePath: path.join(folder, "102 - Maximum Consumption.flac"),
+    releaseGroupMbid: "rg-single-upgrade",
+    trackMbid: "track-single-1",
+    trackId,
+  });
+  const oldLyric = seedLinkedLyric(path.join(folder, "102 - Maximum Consumption.lrc"), replaced.id, libraryId);
+  const replacementPath = path.join(musicRoot, folder, "02 - Maximum Consumption.m4a");
+
+  const retired = listPreviousReleaseTrackFiles({
+    trackId,
+    librarySlot: "stereo",
+    newFilePath: replacementPath,
+  });
+  assert.equal(retired.length, 1);
+  assert.equal(retired[0].libraryId, libraryId);
+
+  const linkedExtras = captureLinkedExtras(retired.map((row) => row.id));
+  dbModule.db.prepare("DELETE FROM TrackFiles WHERE id = ?").run(replaced.id);
+  await (OrganizerService as any).releaseRetiredTrackExtras(retired, linkedExtras, replacementPath, undefined);
+
+  assert.equal(fs.existsSync(oldLyric), false, "old lyric must be removed using the retired track's library_id");
+  assert.equal((dbModule.db.prepare("SELECT COUNT(*) AS n FROM LyricFiles").get() as { n: number }).n, 0);
+});

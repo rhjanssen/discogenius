@@ -216,6 +216,14 @@ export const COMMAND_DEFINITIONS = {
     isExclusive: true,
     isLongRunning: true,
   },
+  [CommandNames.CleanupOrphanSidecars]: {
+    type: CommandNames.CleanupOrphanSidecars,
+    name: "Clean Orphan Sidecars",
+    requiresDiskAccess: true,
+    isTypeExclusive: true,
+    isExclusive: false,
+    isLongRunning: true,
+  },
   [CommandNames.UpdateLibraryMetadata]: {
     type: CommandNames.UpdateLibraryMetadata,
     name: "Update Library Metadata",

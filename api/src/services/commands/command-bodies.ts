@@ -407,6 +407,15 @@ export interface CleanupLibraryCommand extends CommandBodyCommon {
   cleanupStats?: { deleted:number;protected:number;refused:number;alreadyRemoved:number;pruned:number };
 }
 
+export interface CleanupOrphanSidecarsCommand extends CommandBodyCommon {
+  confirm: true;
+  confirmationToken: string;
+  libraryRoot?: string;
+  artistId?: string;
+  pruneEmptyFolders?: boolean;
+  filePaths?: string[];
+}
+
 export type UpdateLibraryMetadataCommand = CommandBodyCommon;
 
 export interface ImportProviderArtistsCommand extends CommandBodyCommon {
