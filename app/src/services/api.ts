@@ -477,7 +477,7 @@ class ApiClient {
       let errorMessage = 'Request failed';
       try {
         const error = await response.json();
-        errorMessage = error?.detail || error?.message || errorMessage;
+        errorMessage = error?.detail || error?.message || error?.error || `Request failed with status ${response.status}`;
       } catch (e) {
         // Response body is not JSON
         errorMessage = `Request failed with status ${response.status}`;

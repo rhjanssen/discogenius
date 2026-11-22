@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { withDbWrite } from "../../database.js";
 import {
   deletionScopeFromRequest,
   scopeToOptions,
@@ -97,13 +98,13 @@ router.get("/:trackId/files", (req, res) => {
 /**
  * Manage → Delete files for a track (disk + TrackFiles). Keeps catalog rows.
  */
-router.delete("/:trackId/files", (req, res) => {
+router.delete("/:trackId/files", async (req, res) => {
   try {
     const scope = deletionScopeFromRequest({
       libraryId: req.query.libraryId,
       allLibraries: req.query.allLibraries,
     });
-    const result = deleteTrackLibraryFiles(req.params.trackId, scopeToOptions(scope));
+    const result = await withDbWrite(() => deleteTrackLibraryFiles(req.params.trackId, scopeToOptions(scope)));
     res.json({ success: true, ...result });
   } catch (error: any) {
     if (error?.status === 400) {

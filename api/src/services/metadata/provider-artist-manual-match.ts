@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withDbWrite } from "../../database.js";
 import type { LidarrArtist } from "./servarr-metadata.js";
 import { catalogProviderRegistry } from "../catalog/index.js";
 import {
@@ -207,7 +207,8 @@ export async function applyManualArtistMatch(provider: string, providerId: strin
     throw new Error(`Could not create the local artist for ${artistName} (${mbid})`);
   }
 
-  ProviderArtistIdentityService.store(provider, {
+  const localArtistId = result.localArtistId;
+  await withDbWrite(() => ProviderArtistIdentityService.store(provider, {
     providerId,
     name: artistName,
     picture: stored.picture,
@@ -219,11 +220,11 @@ export async function applyManualArtistMatch(provider: string, providerId: strin
     status: "verified",
     confidence: 1,
     method: "manual",
-  }, result.localArtistId);
+  }, localArtistId));
 
   let intakeQueued = false;
   try {
-    intakeQueued = queueArtistMonitoringIntake({ artistId: result.localArtistId, artistName }) !== -1;
+    intakeQueued = await withDbWrite(() => queueArtistMonitoringIntake({ artistId: localArtistId, artistName })) !== -1;
   } catch (error) {
     console.warn(`[ManualMatch] Could not queue intake for ${artistName}:`, error);
   }

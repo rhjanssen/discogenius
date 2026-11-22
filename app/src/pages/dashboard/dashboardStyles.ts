@@ -69,6 +69,14 @@ export const useDashboardStyles = makeStyles({
             alignItems: "start",
         },
     },
+    queueColumnsSingle: {
+        "@media (min-width: 960px)": {
+            gridTemplateColumns: "1fr",
+        },
+    },
+    queueEmptyLine: {
+        color: tokens.colorNeutralForeground3,
+    },
     queueSection: {
         display: "flex",
         flexDirection: "column",
@@ -430,21 +438,6 @@ export const useDashboardStyles = makeStyles({
         lineHeight: tokens.lineHeightBase100,
         minHeight: tokens.lineHeightBase100,
     },
-    downloadErrorText: {
-        fontSize: tokens.fontSizeBase100,
-        color: tokens.colorPaletteRedForeground1,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        display: "-webkit-box",
-        WebkitLineClamp: 2,
-        WebkitBoxOrient: "vertical",
-        whiteSpace: "normal",
-        maxWidth: "100%",
-        lineHeight: tokens.lineHeightBase100,
-        flexBasis: "100%",
-        order: 10,
-        marginTop: tokens.spacingVerticalXXS,
-    },
     downloadActions: {
         display: "flex",
         gap: tokens.spacingHorizontalXS,
@@ -484,6 +477,12 @@ export const useDashboardStyles = makeStyles({
         fontSize: tokens.fontSizeBase200,
         color: tokens.colorNeutralForeground3,
         whiteSpace: "nowrap",
+    },
+    queueFailureNotice: {
+        flexBasis: "100%",
+        order: 10,
+        marginTop: tokens.spacingVerticalXXS,
+        minWidth: 0,
     },
     queueHistoryErrorText: {
         fontSize: tokens.fontSizeBase100,

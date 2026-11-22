@@ -31,6 +31,8 @@ const {
   runStreamripCommand,
   syncDeezerStreamripConfig,
 } = await import("./streamrip-backend.js");
+const { ProviderUnavailableError } = await import("../../download/provider-unavailable-error.js");
+const { classifyDownloadFailure } = await import("../../download/download-failure-policy.js");
 
 const artist = {
   id: 1352097,
@@ -354,6 +356,158 @@ test("Streamrip keeps partial album output and reports mixed file formats", asyn
     onProgress: (update) => progress.push(update.statusMessage || ""),
   });
   assert.ok(progress.some((message) => /skipped items/u.test(message)));
+});
+
+// Streamrip 2.1 output as rich prints it without a TTY (80 columns).
+const DELISTED_ALBUM_TRACEBACK = `
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /opt/streamrip-venv/lib/python3.13/site-packages/deezer/api.py:54 in         │
+│ api_call                                                                     │
+│                                                                              │
+│ ❱ 54 │   │   │   │   if result_json['error']['code'] == 800: raise DataExcep │
+╰──────────────────────────────────────────────────────────────────────────────╯
+DataException: DataException: album/113031 no data`;
+const NO_DOWNLOADABLE_DATA = `
+[03:12:44] ERROR    Error getting downloadable data for          track.py:153
+                    track 1 [323121]: The requested track is
+                    not available. This may be due to your
+                    country/location.
+[03:12:45] ERROR    Error getting downloadable data for          track.py:153
+                    track 2 [323122]: The requested track is
+                    not available. This may be due to your
+                    country/location.`;
+const NO_MEDIA_URL = `
+[03:12:44] ERROR    Error getting downloadable data for          track.py:153
+                    track 1 [112718]: Deezer requested quality
+                    unavailable: no media URL for this track;
+                    legacy 128 kbps fallback disabled.`;
+
+function deezerRunner(exitCode: number, outputTail: string, calls: { count: number }) {
+  return async (): Promise<StreamripRunResult> => {
+    calls.count += 1;
+    return { exitCode, outputTail, classifiedErrors: classifyStreamripOutput(outputTail), producedFiles: [] };
+  };
+}
+
+test("Deezer content it will not deliver ends as an unavailable offer, not a retryable failure", async () => {
+  saveDeezerCredentials({ arl: "e".repeat(192) });
+  for (const [exitCode, outputTail, providerId] of [
+    [1, DELISTED_ALBUM_TRACEBACK, "113031"],
+    [0, NO_DOWNLOADABLE_DATA, "323120"],
+    [0, NO_MEDIA_URL, "112717"],
+  ] as const) {
+    const calls = { count: 0 };
+    const backend = new StreamripDeezerBackend(deezerRunner(exitCode, outputTail, calls));
+    const error = await backend.download({
+      provider: "deezer",
+      entityType: "album",
+      providerId,
+      downloadPath: path.join(tempDir, `unavailable-${providerId}`),
+    }, { onProgress: () => undefined }).then(() => null, (failure: unknown) => failure);
+    assert.ok(error instanceof ProviderUnavailableError, `album ${providerId}: ${String(error)}`);
+    assert.equal(error.provider, "deezer");
+    assert.equal(error.entityType, "album");
+    assert.equal(error.providerId, providerId);
+    assert.equal(classifyDownloadFailure(error), "permanent");
+  }
+});
+
+// Live #41462 (Regional at Best): the bridge's own NonStreamableError escaped
+// as a traceback whose source excerpt mentions "e-cdns-proxy hosts".
+const NON_STREAMABLE_TRACEBACK = `
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /app/api/src/services/providers/deezer/streamrip-bridge.py:40 in             │
+│ _reject_legacy_low_quality_fallback                                          │
+│                                                                              │
+│   37 │   # format. Its legacy fallback forces MP3_128 even for a FLAC request, │
+│   38 │   # uses retired e-cdns-proxy hosts. Preserve the acquisition quality │
+│ ❱ 40 │   raise NonStreamableError(                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NonStreamableError: Deezer requested quality unavailable: no media URL for this track; legacy 128 kbps fallback disabled.`;
+
+test("a traceback's source excerpt does not make Deezer unavailability look transient", async () => {
+  assert.deepEqual(
+    classifyStreamripOutput(NON_STREAMABLE_TRACEBACK).map((error) => error.kind),
+    ["quality"],
+  );
+  saveDeezerCredentials({ arl: "h".repeat(192) });
+  const backend = new StreamripDeezerBackend(deezerRunner(1, NON_STREAMABLE_TRACEBACK, { count: 0 }));
+  const error = await backend.download({
+    provider: "deezer",
+    entityType: "track",
+    providerId: "41462",
+    downloadPath: path.join(tempDir, "non-streamable"),
+  }, { onProgress: () => undefined }).then(() => null, (failure: unknown) => failure);
+  assert.ok(error instanceof ProviderUnavailableError, String(error));
+  assert.equal(error.entityType, "track");
+});
+
+test("a crash after a file was written still fails the track", async () => {
+  saveDeezerCredentials({ arl: "i".repeat(192) });
+  const downloadPath = path.join(tempDir, "crashed-track");
+  fs.mkdirSync(downloadPath, { recursive: true });
+  const written = path.join(downloadPath, "7.flac");
+  fs.writeFileSync(written, "fixture");
+  const outputTail = "╭── Traceback (most recent call last) ──╮\n│ ❱ 12 │ tag(file) │\n╰───────────╯\nTypeError: 'NoneType' object is not subscriptable";
+  const backend = new StreamripDeezerBackend(async () => ({
+    exitCode: 1,
+    outputTail,
+    classifiedErrors: classifyStreamripOutput(outputTail),
+    producedFiles: [written],
+  }));
+  await assert.rejects(
+    backend.download({ provider: "deezer", entityType: "track", providerId: "7", downloadPath }, { onProgress: () => undefined }),
+    /item failure: unknown: TypeError/u,
+  );
+});
+
+test("Deezer account limits and transport failures are not offer unavailability", async () => {
+  saveDeezerCredentials({ arl: "f".repeat(192) });
+  for (const outputTail of [
+    "ERROR Error getting downloadable data for track 1 [1]: The requested quality is not available with your subscription. Deezer HiFi is required for quality 2.",
+    "ERROR Error getting downloadable data for track 1 [1]: no media URL for this track\nERROR Track 2 not available for stream on deezer: Connection pool is full",
+  ]) {
+    const backend = new StreamripDeezerBackend(deezerRunner(0, outputTail, { count: 0 }));
+    const error = await backend.download({
+      provider: "deezer",
+      entityType: "album",
+      providerId: "1",
+      downloadPath: path.join(tempDir, "not-unavailable"),
+    }, { onProgress: () => undefined }).then(() => null, (failure: unknown) => failure);
+    assert.ok(error instanceof Error);
+    assert.equal(error instanceof ProviderUnavailableError, false, outputTail);
+  }
+});
+
+test("a Deezer API traceback fails with its exception, not the traceback frame", async () => {
+  saveDeezerCredentials({ arl: "g".repeat(192) });
+  const outputTail = `
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /opt/streamrip-venv/lib/python3.13/site-packages/deezer/api.py:56 in         │
+│ api_call                                                                     │
+│                                                                              │
+│ ❱ 56 │   │   │   raise APIError(json.dumps(result_json['error']))            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+APIError: {"type": "Exception", "message": "Quota limit exceeded", "code": 4}`;
+  const backend = new StreamripDeezerBackend(deezerRunner(1, outputTail, { count: 0 }));
+  await assert.rejects(
+    backend.download({
+      provider: "deezer",
+      entityType: "album",
+      providerId: "2",
+      downloadPath: path.join(tempDir, "api-error"),
+    }, { onProgress: () => undefined }),
+    { message: 'Streamrip exited with 1: APIError: {"type": "Exception", "message": "Quota limit exceeded", "code": 4}' },
+  );
+});
+
+test("Streamrip runner keeps a long rich log record on one line", async () => {
+  const result = await runStreamripCommand(
+    process.execPath,
+    ["-e", "process.stdout.write(String(process.env.COLUMNS))"],
+    { cwd: tempDir, onLine: () => undefined },
+  );
+  assert.ok(Number(result.outputTail) >= 200, `COLUMNS=${result.outputTail}`);
 });
 
 test("Streamrip redacts ARL and token-shaped secrets from diagnostics", () => {

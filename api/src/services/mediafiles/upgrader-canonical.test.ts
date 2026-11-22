@@ -364,6 +364,52 @@ test("CheckUpgrades, scheduled or manual, waits while missing music is still que
   assert.equal(JSON.parse(queued[0].payload).reason, "upgrade");
 });
 
+test("CheckUpgrades, scheduled or manual, waits while a missing-music pass has yet to queue its albums", async () => {
+  const { handleCheckUpgrades } = await import("../commands/handlers/curation-handlers.js");
+  const { CommandQueueManager } = await import("../commands/command-queue-manager.js");
+  seedArtistAndRelease();
+  const tidalRelease = providerItem("tidal", "release", "album-provider-1", "Canonical Album");
+  const tidalTrack = providerItem("tidal", "track", "track-provider-1", "Track One");
+  addReleaseMember(tidalRelease, tidalTrack);
+  seedAcceptedTrackEdge({ releaseItemId: tidalRelease, memberItemId: tidalTrack, canonicalReleaseMbid: "release-1", canonicalTrackMbid: "track-1" });
+  seedWinningPlan({ editionMbid: "release-1", provider: "tidal", providerReleaseId: "album-provider-1" });
+  insertTrackFile({
+    canonical_artist_mbid: "artist-mbid",
+    canonical_release_group_mbid: "release-group-1",
+    canonical_release_mbid: "release-1",
+    canonical_track_mbid: "track-1",
+    canonical_recording_mbid: "recording-1",
+    track_id: canonicalTrackId("track-1"),
+    provider: "tidal",
+    provider_entity_type: "track",
+    provider_id: "track-provider-1",
+  });
+  const descriptions: string[] = [];
+  const ctx = { updateCommandDescription: (_job: unknown, update: { description?: string }) => { descriptions.push(String(update.description)); } };
+  const { updateConfig, getConfigSection } = await import("../config/config.js");
+  const previous = getConfigSection("quality").upgrade_existing_files;
+  updateConfig("quality", { upgrade_existing_files: true });
+  try {
+    for (const name of [CommandNames.ApplyCuration, CommandNames.DownloadMissing]) {
+      const passId = CommandQueueManager.push(name, {}, `missing-pass-${name}`);
+      db.prepare("UPDATE commands SET status = 'started' WHERE id = ?").run(passId);
+      await handleCheckUpgrades({ id: 1, payload: { mode: "scheduled" } } as never, ctx as never);
+      assert.deepEqual(listDownloadJobs(), [], `scheduled check during ${name}`);
+      assert.equal(descriptions.at(-1), "Skipped: missing-music pass still running");
+      await handleCheckUpgrades({ id: 2, payload: { mode: "manual" } } as never, ctx as never);
+      assert.deepEqual(listDownloadJobs(), [], `manual check during ${name}`);
+      db.prepare("UPDATE commands SET status = 'completed' WHERE id = ?").run(passId);
+    }
+
+    await handleCheckUpgrades({ id: 3, payload: { mode: "scheduled" } } as never, ctx as never);
+  } finally {
+    updateConfig("quality", { upgrade_existing_files: previous });
+  }
+  const queued = listDownloadJobs();
+  assert.equal(queued.length, 1);
+  assert.equal(JSON.parse(queued[0].payload).reason, "upgrade");
+});
+
 test("checkUpgrades queues canonical video upgrades without provider catalog rows", async () => {
   db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
     .run("artist-mbid", "Canonical Artist");

@@ -17,6 +17,8 @@ import {
 } from "@/components/settings/UnmatchedArtistMatchDialog";
 import {
   CheckmarkCircle16Regular,
+  ChevronDown16Regular,
+  ChevronUp16Regular,
   ErrorCircle16Regular,
   Warning16Regular,
   CheckmarkCircle16Filled,
@@ -185,6 +187,48 @@ function CheckRow({
             </div>
         </div>
     );
+}
+
+/** Problems first; passing checks stay one click away instead of burying them. */
+export function CheckList({ checks }: { checks: HealthCheckResultContract[] }) {
+    const styles = useStyles();
+    const [showPassing, setShowPassing] = useState(false);
+    const problems = checks.filter((check) => check.status !== "ok");
+    const passing = checks.filter((check) => check.status === "ok");
+    const visible = showPassing ? [...problems, ...passing] : problems;
+    return (
+        <div className={styles.card}>
+            {visible.map((check, index) => (
+                <CheckRow
+                    key={check.scope}
+                    check={check}
+                    styles={styles}
+                    last={index === visible.length - 1 && passing.length === 0}
+                />
+            ))}
+            {passing.length > 0 ? (
+                <div className={mergeClasses(styles.row, styles.rowLast)}>
+                    <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={showPassing ? <ChevronUp16Regular /> : <ChevronDown16Regular />}
+                        aria-expanded={showPassing}
+                        onClick={() => setShowPassing((current) => !current)}
+                    >
+                        {showPassing
+                            ? "Hide passing checks"
+                            : `${passing.length} ${passing.length === 1 ? "check" : "checks"} passed`}
+                    </Button>
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
+function overallStatusLabel(status: HealthOverallStatusContract): string {
+    if (status === "healthy") return "All checks passed";
+    if (status === "degraded") return "Needs attention";
+    return "Problems found";
 }
 
 function ProviderRow({
@@ -424,20 +468,11 @@ const StatusPage = () => {
                         description="Paths, tools, and runtime requirements Discogenius depends on."
                         actions={status ? (
                             <Badge appearance="filled" color={overallBadgeColor(status.status)}>
-                                {status.status === "healthy" ? "All checks passed" : status.status}
+                                {overallStatusLabel(status.status)}
                             </Badge>
                         ) : undefined}
                     >
-                        <div className={styles.card}>
-                            {pathChecks.map((check, index) => (
-                                <CheckRow
-                                    key={check.scope}
-                                    check={check}
-                                    styles={styles}
-                                    last={index === pathChecks.length - 1}
-                                />
-                            ))}
-                        </div>
+                        <CheckList checks={pathChecks} />
                     </SettingsSection>
 
                     <SettingsSection
@@ -455,16 +490,7 @@ const StatusPage = () => {
                             </Badge>
                         ) : undefined}
                     >
-                        <div className={styles.card}>
-                            {runtimeChecks.map((check, index) => (
-                                <CheckRow
-                                    key={check.scope}
-                                    check={check}
-                                    styles={styles}
-                                    last={index === runtimeChecks.length - 1}
-                                />
-                            ))}
-                        </div>
+                        <CheckList checks={runtimeChecks} />
                     </SettingsSection>
 
                     <SettingsSection

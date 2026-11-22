@@ -793,6 +793,41 @@ test("yt-dlp backend reports progress and rejects a zero-file success", async ()
   );
 });
 
+function failingYtDlp(stderr: string): InstanceType<typeof YtDlpBackend> {
+  return new YtDlpBackend({
+    spawnImpl: () => {
+      const child = new FakeYtDlpProcess();
+      queueMicrotask(() => {
+        child.stderr.write(stderr);
+        child.emit("close", 1);
+      });
+      return child as unknown as YtDlpProcess;
+    },
+    mediaFileFinder: async () => [],
+  });
+}
+
+test("yt-dlp failures keep their reason and name a removed video", async () => {
+  const { ProviderUnavailableError } = await import("../../download/provider-unavailable-error.js");
+  const request = { ...baseDownloadRequest(path.join(testConfigDir, "failed-job")), entityType: "album" as const, providerId: "MPREb_uCKniDZrvjZ" };
+
+  const bare = await failingYtDlp("WARNING: [youtube] Rd3qeJfZmVE: Requested format is not available\nERROR:\n")
+    .download(request, { onProgress() {} }).then(() => null, (error: unknown) => error);
+  assert.ok(bare instanceof Error);
+  assert.match(bare.message, /Requested format is not available/u);
+
+  const removed = await failingYtDlp("ERROR: [youtube] KLW0TLSmdr4: This video is not available\n")
+    .download(request, { onProgress() {} }).then(() => null, (error: unknown) => error);
+  assert.ok(removed instanceof ProviderUnavailableError, String(removed));
+  assert.equal(removed.provider, "youtube-music");
+  assert.equal(removed.entityType, "track");
+  assert.equal(removed.providerId, "KLW0TLSmdr4");
+
+  const throttled = await failingYtDlp("ERROR: [youtube] KLW0TLSmdr4: Video unavailable. This content isn't available, try again later.\n")
+    .download(request, { onProgress() {} }).then(() => null, (error: unknown) => error);
+  assert.equal(throttled instanceof ProviderUnavailableError, false);
+});
+
 test("yt-dlp backend terminates the child process when a running job is cancelled", async () => {
   const controller = new AbortController();
   let child: FakeYtDlpProcess | null = null;

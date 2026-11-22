@@ -131,44 +131,17 @@ export class LibraryCurationService {
     this.repository = new LibraryCurationRepository(db);
   }
 
-  /**
-   * Curate a library, either whole or for named artists.
-   *
-   * Curation is a *library* decision — selecting one Edition of an album can
-   * make a whole other Release Group redundant — but the optimiser has always
-   * run once per LibraryArtist over that artist's own candidates, so an
-   * artist's decisions never depended on another artist's. Everything before
-   * the optimiser was library-wide anyway: it read every AlbumEdition in the
-   * database and re-planned every one of them.
-   *
-   * That is why "curate this artist" cost the same as curating everything.
-   * Three CurateArtist commands sat at 10% for twenty-five minutes with the
-   * oldest heartbeat 294s into a 300s lease, and one of them was a
-   * single-album artist. The work was never proportional to the artist.
-   *
-   * `scope` narrows the inputs to the same set the optimiser was going to use.
-   * Unscoped is unchanged: every monitored artist in the library, which is what
-   * ApplyCuration and the settings-change rebuild still want.
-   */
-  curateLibrary(input: {
-    libraryId: number;
-    providerPriority: string[];
-    acquisitionPlannerVersion: number;
-    curationVersion: number;
-    /** Curate only these LibraryArtists. Omit for the whole library. */
-    scope?: { libraryArtistIds: readonly number[] };
-  }): LibraryCurationResult {
-    const library = this.db.prepare(`
-      SELECT library.id, quality.allowed_source_formats
-      FROM Libraries library
-      LEFT JOIN quality_profiles quality ON quality.id = library.quality_profile_id
-      WHERE library.id = ?
-    `).get(input.libraryId) as LibraryPolicyRow | undefined;
-    if (!library) throw new Error(`Library ${input.libraryId} does not exist`);
-    const timer = createCurationPhaseTimer();
-
-    const filtering = getConfigSection("filtering");
-    const requireProviderAvailability = filtering.require_provider_availability !== false;
+  /** The editions this pass evaluates: every candidate edition of the scoped
+   * library artists whose release type the filtering settings include. */
+  private selectCandidateEditions(
+    input: { libraryId: number; scope?: { libraryArtistIds: readonly number[] } },
+    filtering: ReturnType<typeof getConfigSection<"filtering">>,
+  ): {
+    scopedArtistIds: number[] | null;
+    libraryArtists: LibraryArtistRow[];
+    candidateScopes: Map<number, LibraryReleaseScopeInput[]>;
+    evaluatedEditions: ReleaseRow[];
+  } | null {
     const releaseIncluded = (release: ReleaseRow): boolean => {
       const decision = getMusicBrainzReleaseGroupIncludeDecision(
         { primary_type: release.primary_type, secondary_types: release.secondary_types },
@@ -181,7 +154,7 @@ export class LibraryCurationService {
       ? [...new Set(input.scope.libraryArtistIds)].sort((a, b) => a - b)
       : null;
     if (scopedArtistIds && scopedArtistIds.length === 0) {
-      return emptyCurationResult();
+      return null;
     }
     const artistFilterSql = scopedArtistIds
       ? ` AND library_artist.id IN (${scopedArtistIds.map(() => "?").join(",")})`
@@ -198,54 +171,6 @@ export class LibraryCurationService {
       WHERE library_artist.library_id = ?${artistFilterSql}
       ORDER BY library_artist.id
     `).all(input.libraryId, ...artistFilterParams) as LibraryArtistRow[];
-
-    const preferExplicit = filtering.prefer_explicit !== false;
-
-    const protectionRows = this.db.prepare(`
-      SELECT
-        monitored_edition.edition_id,
-        edition.release_group_id,
-        COALESCE(library_album.locked, 0) AS locked,
-        monitored_edition.selection_mode,
-        monitored_edition.representative
-      FROM LibraryEditions monitored_edition
-      JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
-      LEFT JOIN LibraryAlbums library_album
-        ON library_album.library_id = monitored_edition.library_id
-       AND library_album.release_group_id = edition.release_group_id
-      WHERE monitored_edition.library_id = ?
-        AND (COALESCE(library_album.locked, 0) = 1
-             OR monitored_edition.selection_mode = 'manual')
-    `).all(input.libraryId) as Array<{
-      edition_id: number;
-      release_group_id: number;
-      locked: number;
-      selection_mode: string;
-      representative: number;
-    }>;
-
-    // The album lock protects the album row. Only a manual edition is frozen.
-    const lockedEditionIds = new Set<number>();
-    const manualEditionIds = new Set(
-      protectionRows.filter((row) => row.selection_mode === "manual").map((row) => row.edition_id),
-    );
-    const existingRepresentativeEditionIdByReleaseGroup = new Map<number, number>();
-    for (const row of protectionRows) {
-      if (row.representative === 1) {
-        existingRepresentativeEditionIdByReleaseGroup.set(row.release_group_id, row.edition_id);
-      }
-    }
-
-    for (const row of this.db.prepare(`
-      SELECT edition.release_group_id AS release_group_id, monitored.edition_id AS edition_id
-      FROM LibraryEditions monitored
-      JOIN AlbumEditions edition ON edition.id = monitored.edition_id
-      WHERE monitored.library_id = ? AND monitored.representative = 1
-    `).all(input.libraryId) as Array<{ release_group_id: number; edition_id: number }>) {
-      if (!existingRepresentativeEditionIdByReleaseGroup.has(row.release_group_id)) {
-        existingRepresentativeEditionIdByReleaseGroup.set(row.release_group_id, row.edition_id);
-      }
-    }
 
     const candidateScopes = new Map<number, LibraryReleaseScopeInput[]>();
     if (libraryArtists.length > 0) {
@@ -348,8 +273,111 @@ export class LibraryCurationService {
           left.release_group_id - right.release_group_id || left.edition_id - right.edition_id);
 
     const evaluatedEditions = releases.filter(releaseIncluded);
+    return { scopedArtistIds, libraryArtists, candidateScopes, evaluatedEditions };
+  }
 
-    for (const release of evaluatedEditions) {
+  /**
+   * Curate a library, either whole or for named artists.
+   *
+   * Curation is a *library* decision — selecting one Edition of an album can
+   * make a whole other Release Group redundant — but the optimiser has always
+   * run once per LibraryArtist over that artist's own candidates, so an
+   * artist's decisions never depended on another artist's. Everything before
+   * the optimiser was library-wide anyway: it read every AlbumEdition in the
+   * database and re-planned every one of them.
+   *
+   * That is why "curate this artist" cost the same as curating everything.
+   * Three CurateArtist commands sat at 10% for twenty-five minutes with the
+   * oldest heartbeat 294s into a 300s lease, and one of them was a
+   * single-album artist. The work was never proportional to the artist.
+   *
+   * `scope` narrows the inputs to the same set the optimiser was going to use.
+   * Unscoped is unchanged: every monitored artist in the library, which is what
+   * ApplyCuration and the settings-change rebuild still want.
+   */
+  curateLibrary(input: {
+    libraryId: number;
+    providerPriority: string[];
+    acquisitionPlannerVersion: number;
+    curationVersion: number;
+    /** Curate only these LibraryArtists. Omit for the whole library. */
+    scope?: { libraryArtistIds: readonly number[] };
+    /**
+     * "caller": the caller has computed every `candidateEditionIds` plan and
+     * replans `selectedEditionIds` afterwards, each under its own short write
+     * gate. This call then only decides and persists, so the gate it runs in
+     * is not held across hundreds of per-edition plan computations.
+     */
+    planning?: "inline" | "caller";
+  }): LibraryCurationResult {
+    const library = this.db.prepare(`
+      SELECT library.id, quality.allowed_source_formats
+      FROM Libraries library
+      LEFT JOIN quality_profiles quality ON quality.id = library.quality_profile_id
+      WHERE library.id = ?
+    `).get(input.libraryId) as LibraryPolicyRow | undefined;
+    if (!library) throw new Error(`Library ${input.libraryId} does not exist`);
+    const timer = createCurationPhaseTimer();
+
+    const filtering = getConfigSection("filtering");
+    const requireProviderAvailability = filtering.require_provider_availability !== false;
+    const selection = this.selectCandidateEditions(input, filtering);
+    if (!selection) {
+      return emptyCurationResult();
+    }
+    const { scopedArtistIds, libraryArtists, candidateScopes, evaluatedEditions } = selection;
+
+    const preferExplicit = filtering.prefer_explicit !== false;
+
+    const protectionRows = this.db.prepare(`
+      SELECT
+        monitored_edition.edition_id,
+        edition.release_group_id,
+        COALESCE(library_album.locked, 0) AS locked,
+        monitored_edition.selection_mode,
+        monitored_edition.representative
+      FROM LibraryEditions monitored_edition
+      JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+      LEFT JOIN LibraryAlbums library_album
+        ON library_album.library_id = monitored_edition.library_id
+       AND library_album.release_group_id = edition.release_group_id
+      WHERE monitored_edition.library_id = ?
+        AND (COALESCE(library_album.locked, 0) = 1
+             OR monitored_edition.selection_mode = 'manual')
+    `).all(input.libraryId) as Array<{
+      edition_id: number;
+      release_group_id: number;
+      locked: number;
+      selection_mode: string;
+      representative: number;
+    }>;
+
+    // The album lock protects the album row. Only a manual edition is frozen.
+    const lockedEditionIds = new Set<number>();
+    const manualEditionIds = new Set(
+      protectionRows.filter((row) => row.selection_mode === "manual").map((row) => row.edition_id),
+    );
+    const existingRepresentativeEditionIdByReleaseGroup = new Map<number, number>();
+    for (const row of protectionRows) {
+      if (row.representative === 1) {
+        existingRepresentativeEditionIdByReleaseGroup.set(row.release_group_id, row.edition_id);
+      }
+    }
+
+    for (const row of this.db.prepare(`
+      SELECT edition.release_group_id AS release_group_id, monitored.edition_id AS edition_id
+      FROM LibraryEditions monitored
+      JOIN AlbumEditions edition ON edition.id = monitored.edition_id
+      WHERE monitored.library_id = ? AND monitored.representative = 1
+    `).all(input.libraryId) as Array<{ release_group_id: number; edition_id: number }>) {
+      if (!existingRepresentativeEditionIdByReleaseGroup.has(row.release_group_id)) {
+        existingRepresentativeEditionIdByReleaseGroup.set(row.release_group_id, row.edition_id);
+      }
+    }
+
+
+    const planInline = input.planning !== "caller";
+    for (const release of planInline ? evaluatedEditions : []) {
       timer.phase(`acquisition-plan[lib${input.libraryId}/ed${release.edition_id}]`, () => this.acquisitionPlanning.compute({
         libraryId: input.libraryId,
         editionId: release.edition_id,
@@ -843,6 +871,9 @@ export class LibraryCurationService {
       );
     }
 
+    timer.report(`library ${input.libraryId}: ${evaluatedEditions.length} edition(s)`);
+    if (!planInline) return combinedResult;
+
     for (const editionId of combinedResult.selectedEditionIds) {
       timer.phase("replan-selected", () => this.acquisitionPlanning.compute({
         libraryId: input.libraryId,
@@ -851,7 +882,6 @@ export class LibraryCurationService {
         plannerVersion: input.acquisitionPlannerVersion,
       }));
     }
-    timer.report(`library ${input.libraryId}: ${evaluatedEditions.length} edition(s)`);
 
     emitLibraryUpdated({
       reason: "library-curated",
@@ -859,6 +889,12 @@ export class LibraryCurationService {
     });
 
     return combinedResult;
+  }
+
+  /** The editions a `curateLibrary` call with the same library and scope evaluates. */
+  candidateEditionIds(input: { libraryId: number; scope?: { libraryArtistIds: readonly number[] } }): number[] {
+    const selection = this.selectCandidateEditions(input, getConfigSection("filtering"));
+    return selection ? selection.evaluatedEditions.map((release) => release.edition_id) : [];
   }
 
   /** Canonical recordings per edition; `editionIds` omitted means every edition. */

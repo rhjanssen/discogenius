@@ -1,6 +1,6 @@
 import { CommandTrigger } from "../commands/command-trigger.js";
 import { emitLibraryUpdated } from "../commands/app-events.js";
-import { db } from "../../database.js";
+import { db, withDbWrite } from "../../database.js";
 import { invalidateReleaseGroupDownloadStatus, updateArtistDownloadStatus } from "../download/download-state.js";
 import {
     addArtistToLibraries,
@@ -278,7 +278,7 @@ export async function updateArtistLibraryState(options: {
                 detail: "Artist is not in the library; monitor before setting policy",
             };
         }
-        applyArtistPolicyState(artistId, policy, options.libraryIds);
+        await withDbWrite(() => applyArtistPolicyState(artistId, policy, options.libraryIds));
     }
 
     const artist = loadArtistWithEffectiveMonitor(artistId);
@@ -338,11 +338,11 @@ async function ensurePendingMusicBrainzArtist(artistId: string, artistName?: str
         return String(existing.id);
     }
 
-    db.prepare(`
+    await withDbWrite(() => db.prepare(`
         INSERT INTO ArtistMetadata (mbid, name, sort_name, updated_at)
         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(mbid) DO NOTHING
-    `).run(artistId, resolvedName, resolvedName);
+    `).run(artistId, resolvedName, resolvedName));
     return artistId;
 }
 
@@ -370,16 +370,19 @@ export async function monitorArtistAndQueueIntake(options: {
 
     const libraryIds = options.libraryIds
         ?? listDefaultArtistMonitoringLibraries().map((library) => library.id);
-    const changes = applyArtistMonitoringState(artistId, true, libraryIds);
-    if (changes === 0) {
-        throw new Error(`Artist ${artistId} not found`);
-    }
-
-    const commandId = queueArtistMonitoringIntake({
-        artistId,
-        artistName: options.artistName,
-        priority: options.priority,
-        trigger: options.trigger,
+    // These calls run on the HTTP thread, where a bare write fails at once
+    // while any worker holds the writer (a curation pass, for minutes).
+    const commandId = await withDbWrite(() => {
+        const changes = applyArtistMonitoringState(artistId, true, libraryIds);
+        if (changes === 0) {
+            throw new Error(`Artist ${artistId} not found`);
+        }
+        return queueArtistMonitoringIntake({
+            artistId,
+            artistName: options.artistName,
+            priority: options.priority,
+            trigger: options.trigger,
+        });
     });
 
     return {
@@ -412,7 +415,7 @@ export async function setArtistMonitoredState(options: {
         };
     }
 
-    const changes = applyArtistMonitoringState(options.artistId, false, options.libraryIds);
+    const changes = await withDbWrite(() => applyArtistMonitoringState(options.artistId, false, options.libraryIds));
     if (changes === 0) {
         return null;
     }

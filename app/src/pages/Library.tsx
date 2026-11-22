@@ -69,6 +69,7 @@ import {
   dispatchActivityRefresh,
   dispatchLibraryUpdated,
   dispatchMonitorStateChanged,
+  dispatchOpenSearch,
 } from "@/utils/appEvents";
 import { formatDurationSeconds } from "@/utils/format";
 import { CardGridSkeleton, DataGridSkeleton } from "@/components/ui/LoadingSkeletons";
@@ -845,14 +846,19 @@ const Library = () => {
   }, []);
 
   const renderEmptyLibraryAction = () => (
-    <Button
-      appearance="secondary"
-      icon={importProvider ? <ArrowImport24 /> : undefined}
-      onClick={() => (importProvider ? setImportModalOpen(true) : navigate("/settings"))}
-      title={importProvider ? "Import artists from a connected service" : "Connect a provider to import artists"}
-    >
-      {importProvider ? "Import artists" : "Connect Provider"}
-    </Button>
+    <>
+      <Button appearance="primary" onClick={dispatchOpenSearch}>
+        Add an artist
+      </Button>
+      <Button
+        appearance="secondary"
+        icon={importProvider ? <ArrowImport24 /> : undefined}
+        onClick={() => (importProvider ? setImportModalOpen(true) : navigate("/settings"))}
+        title={importProvider ? "Import artists from a connected service" : "Connect a provider to import artists"}
+      >
+        {importProvider ? "Import artists" : "Connect a provider"}
+      </Button>
+    </>
   );
 
   // Render a single artist card
@@ -1239,7 +1245,7 @@ const Library = () => {
         <h1 className="visually-hidden">Library</h1>
         <EmptyState
           title="Your library is empty"
-          description="Add an artist from MusicBrainz, or import followed artists from a connected provider."
+          description="Search MusicBrainz for an artist to add, or import the artists you follow on a connected provider."
           icon={<MusicNote224 />}
           minHeight="320px"
           actions={renderEmptyLibraryAction()}

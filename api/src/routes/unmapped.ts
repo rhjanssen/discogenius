@@ -216,17 +216,17 @@ router.post("/:id/action", async (req, res) => {
 
         switch (action) {
             case "ignore":
-                unmappedFilesService.setIgnored(id, true);
+                await withDbWrite(() => unmappedFilesService.setIgnored(id, true));
                 res.json({ success: true, message: "File ignored" });
                 break;
 
             case "unignore":
-                unmappedFilesService.setIgnored(id, false);
+                await withDbWrite(() => unmappedFilesService.setIgnored(id, false));
                 res.json({ success: true, message: "File restored" });
                 break;
 
             case "delete":
-                unmappedFilesService.deleteFile(id);
+                await withDbWrite(() => unmappedFilesService.deleteFile(id));
                 res.json({ success: true, message: "File deleted" });
                 break;
 
@@ -347,17 +347,17 @@ router.post("/bulk-action", async (req, res) => {
 
         switch (action) {
             case "ignore": {
-                const affected = unmappedFilesService.setIgnoredBulk(ids, true);
+                const affected = await withDbWrite(() => unmappedFilesService.setIgnoredBulk(ids, true));
                 res.json({ success: true, message: `Ignored ${affected} file${affected === 1 ? "" : "s"}` });
                 return;
             }
             case "unignore": {
-                const affected = unmappedFilesService.setIgnoredBulk(ids, false);
+                const affected = await withDbWrite(() => unmappedFilesService.setIgnoredBulk(ids, false));
                 res.json({ success: true, message: `Restored ${affected} file${affected === 1 ? "" : "s"}` });
                 return;
             }
             case "delete": {
-                const affected = unmappedFilesService.deleteFiles(ids);
+                const affected = await withDbWrite(() => unmappedFilesService.deleteFiles(ids));
                 res.json({ success: true, message: `Deleted ${affected} file${affected === 1 ? "" : "s"}` });
                 return;
             }

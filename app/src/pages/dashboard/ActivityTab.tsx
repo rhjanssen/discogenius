@@ -16,6 +16,7 @@ import {
   bundleIcon
 } from "@fluentui/react-icons";
 import { EmptyState } from "@/components/ui/ContentState";
+import { FailureNotice } from "@/components/ui/FailureNotice";
 import { CancelledStatusIcon, QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { ActivityListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { useActivityFeed } from "@/hooks/useActivityFeed";
@@ -308,9 +309,13 @@ const ActivityTab = ({
                                     {description}
                                 </Text>
                             ) : null}
-                            {currentError ? <Text size={200} className={styles.activityErrorText}>Error: {currentError}</Text> : null}
+                            {currentError ? (
+                                <FailureNotice failure={job.failure} fallbackText={currentError} className={styles.activityErrorText} />
+                            ) : null}
                             {!currentError && job.error ? (
-                                <Text size={200} className={styles.activityInlineDescription}>Previous attempt: {job.error}</Text>
+                                <Text size={200} className={styles.activityInlineDescription}>
+                                    Previous attempt: {job.failure?.summary ?? job.error}
+                                </Text>
                             ) : null}
                             {!job.error && completedWithWarning ? (
                                 <Text size={200} className={styles.activityInlineDescription}>

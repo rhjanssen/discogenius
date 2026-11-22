@@ -1,4 +1,5 @@
 import { CommandTrigger } from "./command-trigger.js";
+import { presentFailure } from "./failure-presentation.js";
 import { db } from "../../database.js";
 import {
     getCommandTypesForQueueCategory,
@@ -664,6 +665,11 @@ export const mapJob = (job: CommandModel, options: { queuePosition?: number; des
                 ? "Waiting for download or import to finish"
                 : undefined,
         error: job.error,
+        failure: presentFailure(job.error, {
+            provider: typeof downloadState?.fallbackProvider === "string"
+                ? downloadState.fallbackProvider
+                : typeof job.payload?.provider === "string" ? job.payload.provider : null,
+        }),
         trigger: job.trigger ?? CommandTrigger.Unspecified,
         queuePosition: options.queuePosition,
         outcome,

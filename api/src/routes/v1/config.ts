@@ -187,7 +187,7 @@ router.post("/quality", async (req, res) => {
     // never as inline work on the request.
     const finalConfig = getConfigSection("quality");
     if (finalConfig.audio_quality !== previous.audio_quality || finalConfig.video_quality !== previous.video_quality) {
-      queueCheckUpgradesPass({ trigger: CommandTrigger.Manual, mode: "settings" });
+      await runConfigUserWrite(() => queueCheckUpgradesPass({ trigger: CommandTrigger.Manual, mode: "settings" }));
     }
 
     res.json({ success: true });

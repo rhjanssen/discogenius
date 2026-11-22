@@ -1,4 +1,5 @@
 import { isSpatialAudioQuality } from '../../utils/spatial-audio.js';
+import { captureLinkedExtras, releaseExtrasOfReplacedTrackFiles } from "../extras/files/extra-file-deletion.js";
 import { validateExecutionManifest } from '../download/execution-manifest.js';
 import fs from "fs";
 import path from "path";
@@ -1266,7 +1267,7 @@ export class OrganizerService {
         continue;
       }
 
-      if (normalizedResolvedPath === normalizedExpectedPath) {
+      if (normalizedResolvedPath === normalizedExpectedPath || this.isSameFile(resolvedFilePath, expectedPath)) {
         hasExpectedSidecar = true;
         continue;
       }
@@ -1427,7 +1428,7 @@ export class OrganizerService {
         continue;
       }
 
-      if (normalizedResolvedPath === normalizedExpectedPath) {
+      if (normalizedResolvedPath === normalizedExpectedPath || this.isSameFile(resolvedFilePath, params.expectedPath)) {
         hasExpectedSidecar = true;
         continue;
       }
@@ -1774,6 +1775,17 @@ export class OrganizerService {
       return `path component too long (${Buffer.byteLength(name, "utf8")} bytes): ${name}`;
     }
     return message;
+  }
+
+  /** Two spellings of one file: case-insensitive datasets (live: HDDs/Music), links. */
+  private static isSameFile(left: string, right: string): boolean {
+    try {
+      const a = fs.statSync(left);
+      const b = fs.statSync(right);
+      return a.ino === b.ino && a.dev === b.dev;
+    } catch {
+      return false;
+    }
   }
 
   private static moveFileBytes(sourcePath: string, destPath: string): void {
@@ -2447,6 +2459,8 @@ export class OrganizerService {
             removedSiblings: this.unlinkSiblingMediaVariants(destFile),
           }),
         );
+        // Read before the TrackFiles rows go: the extras' link is ON DELETE SET NULL.
+        const retiredExtras = captureLinkedExtras(retiredReleaseTracks.map((row) => row.id));
 
         // Batch all per-track DB writes in a single transaction.
         // This reduces ~5-6 auto-commits per track to 1 committed batch.
@@ -2502,6 +2516,15 @@ export class OrganizerService {
           forgetRetiredLibraryFileRows(retiredReleaseTracks, destFile, "track");
           this.forgetSiblingMediaVariantRows(removedSiblings, destFile, "track");
         })(), "import:media-commit");
+        if (retiredExtras.length > 0 && raw.libraryId != null) {
+          const libraryId = raw.libraryId;
+          await withSqliteWriteGate(() => releaseExtrasOfReplacedTrackFiles({
+            scope: { kind: "library", libraryId },
+            replacedTrackFileIds: retiredReleaseTracks.map((row) => row.id),
+            linkedExtras: retiredExtras,
+            replacementPath: destFile,
+          }), "import:replaced-track-extras");
+        }
         });
 
         if (metadataConfig.save_lyrics && trackId) {

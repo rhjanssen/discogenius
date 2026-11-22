@@ -2841,6 +2841,11 @@ export class DownloadProcessor {
                     await this.recordUnavailableProviderResource(error);
                     const next = this.nextDownloadOffer(rankedAlternates, triedOffers);
                     if (!next) {
+                        // The error is the last provider's; without this the
+                        // failed job names only the provider it started on.
+                        if (usedFallback && fallbackProvider) {
+                            this.persistDownloadState(commandId, { primaryProvider, fallbackProvider });
+                        }
                         throw error;
                     }
                     console.warn(

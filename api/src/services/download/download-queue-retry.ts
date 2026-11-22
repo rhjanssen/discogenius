@@ -13,7 +13,7 @@ import { buildStreamingMediaUrl } from "./download-routing.js";
 import type { ImportDownloadCommand } from "../commands/command-bodies.js";
 
 export type DownloadRetryResult = {
-  status: 200 | 404 | 409;
+  status: 200 | 404 | 409 | 422;
   body: Record<string, unknown>;
 };
 
@@ -54,7 +54,7 @@ function hasFailedDownloadState(job: CommandModel): boolean {
   return downloadState.state === "failed" || downloadState.state === "importFailed";
 }
 
-function enqueueWaitFromJob(job: CommandModel, position: "front" | "back" = "front") {
+function enqueueWaitFromJob(job: CommandModel, position: "front" | "back" = "front"): DownloadRetryResult {
   const payload = asRecord(job.payload);
   const resolved = asRecord(payload.resolved);
   const kind = mediaKindFromJob(job);
@@ -62,7 +62,13 @@ function enqueueWaitFromJob(job: CommandModel, position: "front" | "back" = "fro
     ?? optionalString(job.ref_id)
     ?? optionalString(resolved.providerId);
   if (!kind || !providerId) {
-    throw new Error("Retry is missing the media type or provider ID needed to queue a download.");
+    return {
+      status: 422,
+      body: {
+        error: "Job cannot be retried",
+        message: `Job ${job.id} is missing the media type or provider ID needed to queue a download.`,
+      },
+    };
   }
 
   const retryPayload = {
@@ -102,17 +108,20 @@ function enqueueWaitFromJob(job: CommandModel, position: "front" | "back" = "fro
   });
 
   return {
-    action: job.name === CommandNames.ImportDownload ? "queue-redownload" : "retry-download",
-    message: queued.created
-      ? (job.name === CommandNames.ImportDownload
-        ? "Re-download queued to recover the failed import"
-        : "Download queued")
-      : (queued.commandId
-        ? "Download already in progress for this item"
-        : "Download already queued for this item"),
-    jobId: queued.id,
-    commandId: queued.id,
-    sourceJobId: job.id,
+    status: 200,
+    body: {
+      action: job.name === CommandNames.ImportDownload ? "queue-redownload" : "retry-download",
+      message: queued.created
+        ? (job.name === CommandNames.ImportDownload
+          ? "Re-download queued to recover the failed import"
+          : "Download queued")
+        : (queued.commandId
+          ? "Download already in progress for this item"
+          : "Download already queued for this item"),
+      jobId: queued.id,
+      commandId: queued.id,
+      sourceJobId: job.id,
+    },
   };
 }
 
@@ -134,7 +143,7 @@ function retryExistingWait(waitId: number, commandId: number | null): DownloadRe
   const job = CommandQueueManager.get(commandId);
   if (!job) {
     DownloadWaitQueue.remove(waitId);
-    return { status: 404, body: { error: "Job not found" } };
+    return { status: 404, body: { error: "Job not found", message: `Download job ${commandId} no longer exists.` } };
   }
 
   if (job.status === "started" && !hasFailedDownloadState(job) && downloadProcessor.isActivelyProcessingJob(commandId)) {
@@ -149,10 +158,7 @@ function retryExistingWait(waitId: number, commandId: number | null): DownloadRe
 
   if (shouldQueueRedownloadForFailedImport(job)) {
     DownloadWaitQueue.remove(waitId);
-    return {
-      status: 200,
-      body: enqueueWaitFromJob(job),
-    };
+    return enqueueWaitFromJob(job);
   }
 
   CommandQueueManager.retry(commandId);
@@ -180,22 +186,14 @@ export function retryDownloadQueueItem(id: number, source: "queue" | "history" =
     return retryExistingWait(wait.id, wait.command_id);
   }
 
-  if (source === "queue") return { status: 404, body: { error: "Queue item not found" } };
+  if (source === "queue") {
+    return { status: 404, body: { error: "Queue item not found", message: `Queue item ${id} is no longer waiting.` } };
+  }
 
   const job = CommandQueueManager.get(id);
   if (!job || !isDownloadOrImportJobType(job.name as CommandName)) {
-    return { status: 404, body: { error: "Job not found" } };
+    return { status: 404, body: { error: "Job not found", message: `Download job ${id} no longer exists.` } };
   }
 
-  try {
-    return { status: 200, body: enqueueWaitFromJob(job) };
-  } catch (error) {
-    return {
-      status: 404,
-      body: {
-        error: "Job not found",
-        message: error instanceof Error ? error.message : String(error),
-      },
-    };
-  }
+  return enqueueWaitFromJob(job);
 }

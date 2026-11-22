@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.27.0] - 2026-11-22
+
+### Fixed
+
+- An upgrade that renamed a file only by upper/lower case deleted the new file on case-insensitive disks (such as many ZFS/SMB datasets), leaving a library entry without a file. Lyrics and thumbnails had the same problem. A library scan now drops such entries so the missing tracks download again.
+- Retrying a failed download from the queue history works again; a retry that cannot run now says why.
+- Curation no longer holds the database for up to a minute per large artist, which made other actions fail with "database is locked" and slowed the whole app.
+- Deleting files, monitoring or unmonitoring artists, reordering or disconnecting providers, matching unmatched artists and cancelling tasks no longer fail with "database is locked" while curation or a refresh is running. Deleting files can no longer leave library entries for files that are gone.
+- Changing the provider order now always rebuilds download plans; before, it could save the order without replanning.
+- Upgrade checks wait until a running curation or missing-music pass has queued its albums (#167).
+- Deezer albums that Deezer no longer delivers, and YouTube videos that were removed, are marked unavailable and replanned instead of failing every pass (#159).
+- A refresh stuck on a rate-limited provider now says which provider and step it is waiting on.
+- An upgrade that renames a track removes the old track's own lyrics file.
+- A failed fallback download names the provider that actually failed.
+
+### Changed
+
+- Failed downloads and tasks show the cause and what to do next instead of raw tool output; the original error is one click away under Details.
+- Navigation has text labels and a System entry; paused downloads show an explanation; the System status page lists problems first; an empty library offers "Add an artist".
+
 ## [2.26.11] - 2026-11-21
 
 ### Fixed

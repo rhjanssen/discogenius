@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { withDbWrite } from "../database.js";
 import path from "node:path";
 import { Router } from "express";
 import { collectHealthDiagnosticsSnapshot } from "../services/commands/health.js";
@@ -57,9 +58,9 @@ router.post("/unmatched-artists/:provider/:providerId/match", async (req, res) =
   }
 });
 
-router.post("/unmatched-artists/:provider/:providerId/ignore", (req, res) => {
+router.post("/unmatched-artists/:provider/:providerId/ignore", async (req, res) => {
   try {
-    res.json(ignoreProviderArtist(String(req.params.provider), String(req.params.providerId)));
+    res.json(await withDbWrite(() => ignoreProviderArtist(String(req.params.provider), String(req.params.providerId))));
   } catch (error: any) {
     res.status(error?.message?.startsWith("Unknown or already matched") ? 404 : 500).json({ detail: error.message });
   }

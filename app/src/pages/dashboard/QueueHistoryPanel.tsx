@@ -33,6 +33,7 @@ import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticSt
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
 import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { FailureNotice } from "@/components/ui/FailureNotice";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
 import { queueProviderOffers } from "@/utils/queueProviderOffers";
 import { glassButtonStyles } from "@/components/ui/glassButtonStyles";
@@ -230,7 +231,8 @@ export type QueueHistoryPanelProps = {
     hasRefreshError: boolean;
     refreshErrorMessage?: string | null;
     onRetryFeeds: () => void | Promise<void>;
-    onRetryItem: (id: number) => void;
+    /** History rows are finished commands, so their ids are command ids. */
+    onRetryItem: (id: number, source: "history") => void;
     filters: QueueHistoryFilters;
     onFiltersChange: (next: QueueHistoryFilters) => void;
 };
@@ -363,11 +365,15 @@ export function QueueHistoryPanel({
                                 </div>
                                 {isFailed ? (
                                     <div className={styles.downloadActions} data-queue-control="true">
-                                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => onRetryItem(item.id)} title="Retry" aria-label={`Retry ${row.title}`} />
+                                        <Button size="small" appearance="subtle" icon={<ArrowClockwise24 />} onClick={() => onRetryItem(item.id, "history")} title="Retry" aria-label={`Retry ${row.title}`} />
                                     </div>
                                 ) : null}
                                 {row.error ? (
-                                    <Text className={styles.queueHistoryErrorText}>{row.error}</Text>
+                                    <FailureNotice
+                                        failure={item.failure}
+                                        fallbackText={row.error}
+                                        className={styles.queueFailureNotice}
+                                    />
                                 ) : item.outcome === "completedWithWarning" && item.warningMessage ? (
                                     <Text className={styles.queueHistoryErrorText}>{item.warningMessage}</Text>
                                 ) : null}

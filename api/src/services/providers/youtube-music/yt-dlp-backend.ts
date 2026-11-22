@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { DownloadBackend, DownloadProgress, DownloadRequest } from "../../download/download-backend.js";
+import { ProviderUnavailableError } from "../../download/provider-unavailable-error.js";
 import { Config, configuredAudioQuality } from "../../config/config.js";
 import { configuredVideoMaxHeight } from "../provider-quality.js";
 import {
@@ -220,6 +221,17 @@ function abortError(): Error {
   return error;
 }
 
+/** YouTube removed or never published this video. "Video unavailable … try
+ * again later" is YouTube throttling the session, not the video. */
+const YT_DLP_VIDEO_UNAVAILABLE = /^ERROR:\s*\[youtube\]\s*([\w-]{11}):\s*(?:This video is (?:not|no longer) available|Video unavailable(?!.*try again later))/iu;
+
+/** The last ERROR line, or the surrounding stderr when yt-dlp printed a bare
+ * "ERROR:" and put its reason on other lines. */
+function ytDlpFailureDetail(fatalError: string | undefined, errorLines: readonly string[]): string | undefined {
+  if (fatalError && /^ERROR:\s*\S/iu.test(fatalError)) return fatalError;
+  return errorLines.join(" | ").slice(0, 1000) || undefined;
+}
+
 export class YtDlpBackend implements DownloadBackend {
   readonly id = "yt-dlp";
   readonly supportedProviders = ["youtube-music"];
@@ -382,8 +394,17 @@ export class YtDlpBackend implements DownloadBackend {
           return;
         }
         if (code !== 0) {
-          const detail = fatalError || errorLines.at(-1);
-          finish(() => reject(new Error(`yt-dlp exited with code ${code ?? "signal"}${detail ? `: ${detail}` : ""}`)));
+          const detail = ytDlpFailureDetail(fatalError, errorLines);
+          const message = `yt-dlp exited with code ${code ?? "signal"}${detail ? `: ${detail}` : ""}`;
+          const unavailableVideoId = fatalError?.match(YT_DLP_VIDEO_UNAVAILABLE)?.[1];
+          finish(() => reject(unavailableVideoId
+            ? new ProviderUnavailableError(
+              request.provider,
+              request.entityType === "video" ? "video" : "track",
+              unavailableVideoId,
+              message,
+            )
+            : new Error(message)));
           return;
         }
         void (async () => {

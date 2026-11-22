@@ -535,6 +535,7 @@ export class RefreshArtistService {
         provider: StreamingProvider,
         artistMbid: string | null,
         forceUpdate: boolean,
+        reportPhase?: (message: string) => void,
     ): Promise<{ albums: any[]; matches: Map<string, ProviderReleaseGroupMatch> }> {
         if (!artistMbid || !provider.searchReleaseGroup) {
             return { albums: [], matches: new Map() };
@@ -597,11 +598,12 @@ export class RefreshArtistService {
         const albumsByProviderId = new Map<string, any>();
         const matches = new Map<string, ProviderReleaseGroupMatch>();
 
-        for (const target of targets) {
+        for (const [targetIndex, target] of targets.entries()) {
             const releaseGroup = cachedReleaseGroups.get(target.mbid) as MusicBrainzReleaseGroupForMatching | undefined;
             if (!releaseGroup) {
                 continue;
             }
+            reportPhase?.(`${provider.name}: searching collaborations (${targetIndex + 1}/${targets.length})`);
 
             for (const slot of slots) {
                 try {
@@ -1391,12 +1393,23 @@ export class RefreshArtistService {
 
         // Run connected providers in parallel so adding Apple/YouTube/etc. does
         // not serialize wall-clock matching time against TIDAL.
-        await Promise.all(connectedProviders.map(async (provider) => {
+        // Each provider reports its own silent phases, and whoever finishes says
+        // which providers are still running. The providers run concurrently, and
+        // the fastest one's last message used to be all a watchdog-killed
+        // refresh showed while a rate-limited provider was the one stuck.
+        const runningPhases = new Map<string, string>();
+        const matchOneProvider = async (provider: StreamingProvider) => {
+            const reportPhase = (message: string) => {
+                runningPhases.set(provider.name, message.replace(`${provider.name}: `, ""));
+                options.progress?.({ kind: "provider_phase", message });
+            };
+            reportPhase(`${provider.name}: finding the artist`);
             const providerArtistIds = await resolveProviderArtistIds(provider, artistId, artistMbid);
             const collaborationOffers = await this.searchCanonicalCollaborationOffers(
                 provider,
                 artistMbid,
                 options.forceUpdate === true,
+                reportPhase,
             );
             if (providerArtistIds.length === 0 && collaborationOffers.albums.length === 0) {
                 console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
@@ -1405,6 +1418,7 @@ export class RefreshArtistService {
 
             if (providerArtistIds.length > 0 && !isCoreVideoCatalogProvider(provider.id)) {
                 try {
+                    reportPhase(`${provider.name}: fetching videos`);
                     await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
                 } catch (err) {
                     console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
@@ -1418,6 +1432,7 @@ export class RefreshArtistService {
                 const providerAlbums: ProviderAlbum[] = [];
                 const seenProviderAlbumIds = new Set<string>();
                 for (const providerArtistId of providerArtistIds) {
+                    reportPhase(`${provider.name}: listing releases`);
                     const identityAlbums = provider.listArtistReleaseOffers
                         ? await provider.listArtistReleaseOffers(providerArtistId)
                         : await provider.getArtistAlbums(providerArtistId);
@@ -1555,6 +1570,7 @@ export class RefreshArtistService {
                     // supports it (TIDAL v2: ~2×ceil(albums/20) calls instead of one per
                     // album — the provider-matching N+1 killer). Falls back to per-album
                     // getAlbumTracks for any album the batch didn't return.
+                    reportPhase(`${provider.name}: fetching tracklists`);
                     let bulkTracks: Map<string, any> | null = null;
                     if (provider.getAlbumTracksBulk) {
                         try {
@@ -1622,6 +1638,7 @@ export class RefreshArtistService {
                 const { RefreshAlbumService: RefreshAlbumSvc, providerTrackToTrackMetadataRow: toTrackRow } =
                     await import("./refresh-album-service.js");
                 let rematchedReleases = 0;
+                reportPhase(`${provider.name}: matching releases`);
                 const yieldIngest = createMatchingYield();
                 const ingestTotal = Math.max(albums.length, 1);
                 for (const [albumIndex, album] of albums.entries()) {
@@ -1800,6 +1817,17 @@ export class RefreshArtistService {
                 }
             } catch (error) {
                 console.warn(`[RefreshArtistService] Failed to fetch albums on ${provider.name} for ${artistId}:`, error);
+            }
+        };
+        await Promise.all(connectedProviders.map(async (provider) => {
+            try {
+                await matchOneProvider(provider);
+            } finally {
+                runningPhases.delete(provider.name);
+                if (runningPhases.size > 0) {
+                    const waitingOn = [...runningPhases].map(([name, phase]) => `${name} (${phase})`).join(", ");
+                    options.progress?.({ kind: "provider_phase", message: `waiting for ${waitingOn}` });
+                }
             }
         }));
 

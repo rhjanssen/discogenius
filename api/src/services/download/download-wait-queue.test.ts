@@ -401,6 +401,59 @@ test("history retry by command id re-enqueues a wait row after finishClaimed", a
   assert.equal(live.items[0]?.provider, "tidal");
 });
 
+test("a retry that cannot be queued says why instead of answering not found", async () => {
+  const retryModule = await import("./download-queue-retry.js");
+  const failedId = Number(dbModule.db.prepare(`
+    INSERT INTO commands (name, payload, status) VALUES ('DownloadAlbum', ?, 'failed')
+  `).run(JSON.stringify({ type: "album", title: "No provider id" })).lastInsertRowid);
+
+  const unqueueable = retryModule.retryDownloadQueueItem(failedId, "history");
+  assert.equal(unqueueable.status, 422);
+  assert.match(String(unqueueable.body.message), /missing the media type or provider ID/);
+  assert.equal(waitQueueModule.DownloadWaitQueue.count(), 0);
+
+  const gone = retryModule.retryDownloadQueueItem(failedId, "queue");
+  assert.equal(gone.status, 404);
+  assert.match(String(gone.body.message), new RegExp(`Queue item ${failedId}`));
+});
+
+test("history items explain a stored failure instead of only echoing it", () => {
+  const queued = enqueueTrack("explained-1", "Pompeii");
+  const claimed = waitQueueModule.DownloadWaitQueue.claim(queued.id)!;
+  const raw = "TIDAL track explained-1 is not streamable in the configured region";
+  queueModule.CommandQueueManager.fail(claimed.commandId, raw);
+  waitQueueModule.DownloadWaitQueue.finishClaimed(claimed.commandId);
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();
+
+  const item = queryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 }).items
+    .find((entry) => entry.id === claimed.commandId);
+  assert.equal(item?.error, raw);
+  assert.equal(item?.failure?.category, "unavailable");
+  assert.equal(item?.failure?.summary, "Not available in your region on TIDAL");
+  assert.equal(item?.failure?.detail, raw);
+});
+
+test("a failed fallback is explained in terms of the provider that failed", () => {
+  const commandId = Number(dbModule.db.prepare(`
+    INSERT INTO commands (name, payload, status, error, ref_id)
+    VALUES ('DownloadAlbum', ?, 'failed', ?, '674064561')
+  `).run(
+    JSON.stringify({
+      type: "album",
+      provider: "deezer",
+      providerId: "674064561",
+      title: "Christmas",
+      downloadState: { state: "failed", primaryProvider: "deezer", fallbackProvider: "apple-music" },
+    }),
+    "apple-music-downloader exited with code 0: Failed to get album response.",
+  ).lastInsertRowid);
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();
+
+  const item = queryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 }).items
+    .find((entry) => entry.id === commandId);
+  assert.equal(item?.failure?.summary, "Apple Music didn't return this album");
+});
+
 test("recoverOrphanClaims drops wait rows whose command already failed", () => {
   enqueueTrack("fail-orphan", "Stuck Album");
   const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
