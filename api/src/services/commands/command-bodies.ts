@@ -407,6 +407,18 @@ export interface CleanupLibraryCommand extends CommandBodyCommon {
   cleanupStats?: { deleted:number;protected:number;refused:number;alreadyRemoved:number;pruned:number };
 }
 
+export interface CleanupOrphanSidecarsCommand extends CommandBodyCommon {
+  dryRun?: boolean;
+  confirm?: boolean;
+  confirmationToken?: string;
+  previewCommandId?: number;
+  libraryRoot?: string;
+  artistId?: string;
+  pruneEmptyFolders?: boolean;
+  filePaths?: string[];
+  previewReport?: import("../mediafiles/orphan-sidecar-cleanup.js").OrphanSidecarPreviewReport;
+}
+
 export type UpdateLibraryMetadataCommand = CommandBodyCommon;
 
 export interface ImportProviderArtistsCommand extends CommandBodyCommon {

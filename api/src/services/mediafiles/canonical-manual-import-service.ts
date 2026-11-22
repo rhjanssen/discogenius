@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import type { ManualImportSummary } from "./manual-import-service.js";
 import fs from "fs";
 import { moveTrackFileToUnmapped } from "./track-file-unmap.js";
-import { normalizeResolvedPath } from "./path-utils.js";
+import { normalizeResolvedPath, sameDirectoryEntry } from "./path-utils.js";
 import {
   verifyAudioFileRecording,
   type RecordingVerificationResult,
@@ -457,7 +457,10 @@ export class CanonicalManualImportService {
       const now = current.all(old.recordingId, old.libraryId, old.releaseGroupId) as Array<{ filePath: string }>;
       if (now.length === 0) continue; // not replaced: stays in Unmapped
       const row = unmapped.get(old.filePath) as { id: number } | undefined;
-      const overwritten = now.some((file) => normalizeResolvedPath(file.filePath) === normalizeResolvedPath(old.filePath));
+      const overwritten = now.some((file) =>
+        normalizeResolvedPath(file.filePath) === normalizeResolvedPath(old.filePath)
+        || sameDirectoryEntry(file.filePath, old.filePath),
+      );
       if (!overwritten && fs.existsSync(old.filePath)) fs.unlinkSync(old.filePath);
       if (row) dropUnmapped.run(row.id);
       console.log(`[Manual Import] Replaced ${old.filePath}${overwritten ? " (overwritten in place)" : " (deleted)"}`);

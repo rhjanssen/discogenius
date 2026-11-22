@@ -17,6 +17,11 @@ import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTransc
 import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
 import { isRequestValidationError, parseBoundedQueryInteger, RequestValidationError, getObjectBody, getRequiredInteger, getOptionalBoolean, rejectUnknownKeys } from "../utils/request-validation.js";
 import { previewLibraryCleanup } from "../services/mediafiles/library-cleanup-plan.js";
+import {
+  OrphanSidecarConflictError,
+  loadOrphanSidecarPreviewCommand,
+  validateOrphanSidecarArtistScope,
+} from "../services/mediafiles/orphan-sidecar-cleanup.js";
 import { parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
 
 import { parseFileSelectionIds } from "../services/mediafiles/file-selection.js";
@@ -90,6 +95,97 @@ router.post("/cleanup/apply",async(req,res)=>{
     res.status(202).json({commandId});
   } catch(error) {
     res.status(isRequestValidationError(error) ? 400 : 409).json({detail:error instanceof Error ? error.message : String(error)});
+  }
+});
+
+router.post("/orphan-sidecars/preview", async (req, res) => {
+  try {
+    const body = getObjectBody(req.body ?? {});
+    rejectUnknownKeys(body, ["libraryRoot", "artistId"]);
+    const libraryRoot = typeof body.libraryRoot === "string" && body.libraryRoot.trim() ? body.libraryRoot.trim() : undefined;
+    const artistId = typeof body.artistId === "string" && body.artistId.trim() ? body.artistId.trim() : undefined;
+    validateOrphanSidecarArtistScope(artistId);
+    const commandId = await withDbWrite(() => CommandQueueManager.push(
+      CommandNames.CleanupOrphanSidecars,
+      { dryRun: true, confirm: false, ...(libraryRoot ? { libraryRoot } : {}), ...(artistId ? { artistId } : {}), title: "Preview Orphan Sidecars" },
+      `preview-orphan-sidecars:${libraryRoot ?? "all"}:${artistId ?? "all"}`,
+      CommandPriority.Interactive,
+      CommandTrigger.Manual,
+    ));
+    res.status(202).json({ commandId, dryRun: true });
+  } catch (error) {
+    res.status(isRequestValidationError(error) ? 400 : 500).json({ detail: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.get("/orphan-sidecars/preview", (req, res) => {
+  try {
+    const commandId = req.query.commandId !== undefined ? parseBoundedQueryInteger(req.query.commandId, 0, { min: 1 }) : undefined;
+    const limit = parseBoundedQueryInteger(req.query.limit, 200, { min: 1, max: 500 });
+    const offset = parseBoundedQueryInteger(req.query.offset, 0, { min: 0 });
+    const record = loadOrphanSidecarPreviewCommand({ commandId });
+    if (!record) return res.status(404).json({ detail: "No orphan sidecar preview found; start one with POST /api/v1/files/orphan-sidecars/preview" });
+    if (record.status === "queued" || record.status === "started") {
+      return res.status(202).json({ commandId: record.commandId, status: record.status, dryRun: true, progress: record.progress, description: record.description, report: null });
+    }
+    if (record.status !== "completed" || !record.report) {
+      return res.status(409).json({ commandId: record.commandId, status: record.status, detail: record.error || "Orphan sidecar preview did not complete" });
+    }
+    const entries = record.report.entries.slice(offset, offset + limit);
+    res.json({
+      commandId: record.commandId, status: record.status, ...record.report, entries, offset, limit,
+      truncated: offset + entries.length < record.report.entries.length || record.report.scanTruncated,
+    });
+  } catch (error) {
+    res.status(isRequestValidationError(error) ? 400 : 500).json({ detail: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post("/orphan-sidecars/apply", async (req, res) => {
+  try {
+    const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["confirm", "confirmationToken", "previewCommandId", "pruneEmptyFolders", "filePaths"]);
+    if (body.confirm !== true) throw new RequestValidationError("confirm: true is required after running orphan-sidecars preview");
+    const confirmationToken = typeof body.confirmationToken === "string" ? body.confirmationToken.trim() : "";
+    if (!confirmationToken) throw new RequestValidationError("confirmationToken from orphan-sidecars preview is required");
+    const previewCommandId = body.previewCommandId !== undefined ? getRequiredInteger(body, "previewCommandId") : undefined;
+    if (previewCommandId !== undefined && previewCommandId < 1) throw new RequestValidationError("previewCommandId must be a positive integer");
+    const pruneEmptyFolders = getOptionalBoolean(body, "pruneEmptyFolders") ?? false;
+    const filePaths = body.filePaths === undefined ? undefined : (() => {
+      if (!Array.isArray(body.filePaths) || body.filePaths.length === 0 || body.filePaths.some((p) => typeof p !== "string" || !p.trim())) {
+        throw new RequestValidationError("filePaths must be a non-empty array of file path strings");
+      }
+      return body.filePaths.map((p) => p.trim());
+    })();
+
+    const record = loadOrphanSidecarPreviewCommand({ commandId: previewCommandId, requireCompleted: true });
+    if (!record?.report || record.report.confirmationToken !== confirmationToken) {
+      throw new OrphanSidecarConflictError("Confirmation token does not match a completed dry-run preview; run preview again before applying");
+    }
+    if (filePaths) {
+      const eligible = new Set(record.report.entries.map((e) => path.resolve(e.filePath)));
+      for (const p of filePaths) {
+        if (!eligible.has(path.resolve(p))) throw new OrphanSidecarConflictError(`Requested path is not an eligible orphan sidecar in the confirmed preview: ${p}`);
+      }
+    }
+    const targetCount = filePaths ? filePaths.length : record.report.orphanCount;
+    if (targetCount === 0) {
+      return res.json({ commandId: null, previewCommandId: record.commandId, orphanCount: 0, confirmationToken, message: "No orphan sidecars to remove" });
+    }
+    const commandId = await withDbWrite(() => CommandQueueManager.push(
+      CommandNames.CleanupOrphanSidecars,
+      {
+        dryRun: false, confirm: true, confirmationToken, previewCommandId: record.commandId, pruneEmptyFolders,
+        ...(filePaths ? { filePaths } : {}), title: "Clean Orphan Sidecars", description: `Removing ${targetCount} confirmed orphan sidecar(s)`,
+      },
+      `cleanup-orphan-sidecars:${confirmationToken.slice(0, 16)}`,
+      CommandPriority.Interactive,
+      CommandTrigger.Manual,
+    ));
+    res.status(202).json({ commandId, previewCommandId: record.commandId, orphanCount: targetCount, confirmationToken });
+  } catch (error) {
+    const status = isRequestValidationError(error) ? 400 : error instanceof OrphanSidecarConflictError ? 409 : 500;
+    res.status(status).json({ detail: error instanceof Error ? error.message : String(error) });
   }
 });
 

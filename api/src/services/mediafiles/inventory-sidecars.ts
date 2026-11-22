@@ -7,6 +7,7 @@ import { LyricFileService } from "../extras/lyrics/lyric-file-service.js";
 import { MetadataFileService, getMetadataType } from "../extras/metadata/files/metadata-file-service.js";
 import { ExtraFileService, type ExtraFileUpsertInput } from "../extras/files/extra-file-service.js";
 import { SUPPORTED_IMPORT_EXTENSIONS, extractNamingMbid } from "./import-discovery.js";
+import { isCaseInsensitivePath } from "./path-utils.js";
 
 type Owner = {
     id: number; library_id: number; library_slot: string; file_path: string; file_type: string; root_path: string;
@@ -95,9 +96,12 @@ export function inspectInventorySidecar(file: string, root: string, siblings: st
     const artistScope = artistAsset ? artistFolderScope(file,root) : undefined;
     if (artistScope && artistScope.status !== "identified") return artistScope;
     if (name === "artist.nfo" && !artistScope) return { status: "unresolved" };
+    const caseInsensitive = isCaseInsensitivePath(root);
+    const stemLower = stem.toLowerCase();
     const candidates = siblings.map(value => path.resolve(value)).filter(value => value !== file
         && path.dirname(value) === path.dirname(file) && SUPPORTED_IMPORT_EXTENSIONS.has(path.extname(value).toLowerCase())
-        && (folderCover || folderNfo || secondaryAlbumImage || path.parse(value).name === stem));
+        && (folderCover || folderNfo || secondaryAlbumImage
+            || (caseInsensitive ? path.parse(value).name.toLowerCase() === stemLower : path.parse(value).name === stem)));
     const review = db.prepare("SELECT 1 FROM UnmappedFiles WHERE file_path=?");
     if (!artistScope && candidates.some(candidate => review.get(candidate))) return { status: "review_sidecar" };
     const lookup = db.prepare(`SELECT f.id,f.library_id,f.library_slot,f.file_path,f.file_type,library.root_path,

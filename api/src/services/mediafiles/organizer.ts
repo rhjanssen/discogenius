@@ -1,5 +1,9 @@
 import { isSpatialAudioQuality } from '../../utils/spatial-audio.js';
-import { captureLinkedExtras, releaseExtrasOfReplacedTrackFiles } from "../extras/files/extra-file-deletion.js";
+import {
+  captureLinkedExtras,
+  releaseExtrasOfReplacedTrackFiles,
+  type LinkedExtraSnapshot,
+} from "../extras/files/extra-file-deletion.js";
 import { validateExecutionManifest } from '../download/execution-manifest.js';
 import fs from "fs";
 import path from "path";
@@ -1072,6 +1076,34 @@ export class OrganizerService {
     });
   }
 
+  private static async releaseRetiredTrackExtras(
+    retiredRows: readonly RetiredLibraryFile[],
+    linkedExtras: LinkedExtraSnapshot,
+    replacementPath: string,
+    preferredLibraryId?: number | null,
+  ): Promise<void> {
+    if (linkedExtras.length === 0 || retiredRows.length === 0) return;
+    const idsByLibrary = new Map<number, number[]>();
+    for (const row of retiredRows) {
+      const libraryId = preferredLibraryId ?? row.libraryId ?? null;
+      if (libraryId == null) continue;
+      const group = idsByLibrary.get(libraryId) ?? [];
+      group.push(row.id);
+      idsByLibrary.set(libraryId, group);
+    }
+    if (idsByLibrary.size === 0) return;
+    await withSqliteWriteGate(() => {
+      for (const [libraryId, replacedTrackFileIds] of idsByLibrary) {
+        releaseExtrasOfReplacedTrackFiles({
+          scope: { kind: "library", libraryId },
+          replacedTrackFileIds,
+          linkedExtras,
+          replacementPath,
+        });
+      }
+    }, "import:replaced-track-extras");
+  }
+
   private static normalizeResolvedPath(filePath: string): string {
     const resolved = path.resolve(filePath);
     return process.platform === "win32" ? resolved.toLowerCase() : resolved;
@@ -1149,6 +1181,7 @@ export class OrganizerService {
         artistId: params.artistId,
         albumId: params.albumId || null,
         mediaId: params.mediaId,
+        trackFileId: params.libraryFileId ?? null,
         filePath: persistentCoverPath,
         libraryRoot: params.libraryRoot,
         fileType: "video_thumbnail",
@@ -1267,7 +1300,7 @@ export class OrganizerService {
         continue;
       }
 
-      if (normalizedResolvedPath === normalizedExpectedPath || this.isSameFile(resolvedFilePath, expectedPath)) {
+      if (normalizedResolvedPath === normalizedExpectedPath || sameDirectoryEntry(resolvedFilePath, expectedPath)) {
         hasExpectedSidecar = true;
         continue;
       }
@@ -1428,7 +1461,7 @@ export class OrganizerService {
         continue;
       }
 
-      if (normalizedResolvedPath === normalizedExpectedPath || this.isSameFile(resolvedFilePath, params.expectedPath)) {
+      if (normalizedResolvedPath === normalizedExpectedPath || sameDirectoryEntry(resolvedFilePath, params.expectedPath)) {
         hasExpectedSidecar = true;
         continue;
       }
@@ -1775,17 +1808,6 @@ export class OrganizerService {
       return `path component too long (${Buffer.byteLength(name, "utf8")} bytes): ${name}`;
     }
     return message;
-  }
-
-  /** Two spellings of one file: case-insensitive datasets (live: HDDs/Music), links. */
-  private static isSameFile(left: string, right: string): boolean {
-    try {
-      const a = fs.statSync(left);
-      const b = fs.statSync(right);
-      return a.ino === b.ino && a.dev === b.dev;
-    } catch {
-      return false;
-    }
   }
 
   private static moveFileBytes(sourcePath: string, destPath: string): void {
@@ -2516,15 +2538,7 @@ export class OrganizerService {
           forgetRetiredLibraryFileRows(retiredReleaseTracks, destFile, "track");
           this.forgetSiblingMediaVariantRows(removedSiblings, destFile, "track");
         })(), "import:media-commit");
-        if (retiredExtras.length > 0 && raw.libraryId != null) {
-          const libraryId = raw.libraryId;
-          await withSqliteWriteGate(() => releaseExtrasOfReplacedTrackFiles({
-            scope: { kind: "library", libraryId },
-            replacedTrackFileIds: retiredReleaseTracks.map((row) => row.id),
-            linkedExtras: retiredExtras,
-            replacementPath: destFile,
-          }), "import:replaced-track-extras");
-        }
+        await this.releaseRetiredTrackExtras(retiredReleaseTracks, retiredExtras, destFile, raw.libraryId);
         });
 
         if (metadataConfig.save_lyrics && trackId) {
@@ -3225,6 +3239,8 @@ export class OrganizerService {
           removedSiblings: this.unlinkSiblingMediaVariants(dest),
         }),
       );
+      // Read before the TrackFiles rows go: the extras' link is ON DELETE SET NULL.
+      const retiredExtras = captureLinkedExtras(retiredReleaseTracks.map((row) => row.id));
       // Batch all per-track DB writes in a single transaction.
       await withSqliteWriteGate(() => db.transaction(() => {
         const libraryFileId = this.persistLibraryFile({
@@ -3279,6 +3295,7 @@ export class OrganizerService {
         forgetRetiredLibraryFileRows(retiredReleaseTracks, dest, "track");
         this.forgetSiblingMediaVariantRows(removedSiblings, dest, "track");
       })(), "import:media-commit");
+      await this.releaseRetiredTrackExtras(retiredReleaseTracks, retiredExtras, dest, raw.libraryId);
       });
 
       if (metadataConfig.save_lyrics) {
@@ -3806,6 +3823,8 @@ export class OrganizerService {
           removedSiblings: this.unlinkSiblingMediaVariants(dest),
         }),
       );
+      // Read before the TrackFiles rows go: the extras' link is ON DELETE SET NULL.
+      const retiredVideoExtras = captureLinkedExtras(retiredVideos.map((row) => row.id));
 
       // Batch all per-video DB writes in a single transaction.
       await withSqliteWriteGate(() => db.transaction(() => {
@@ -3859,6 +3878,7 @@ export class OrganizerService {
         forgetRetiredLibraryFileRows(retiredVideos, dest, "video");
         this.forgetSiblingMediaVariantRows(removedSiblings, dest, "video");
       })(), "import:media-commit");
+      await this.releaseRetiredTrackExtras(retiredVideos, retiredVideoExtras, dest, raw.libraryId);
       });
 
       await this.ensureVideoThumbnailSidecar({
@@ -3883,6 +3903,7 @@ export class OrganizerService {
             libraryId: raw.libraryId,
             albumId: video.album_id ? String(video.album_id) : null,
             mediaId: providerId,
+            trackFileId: libraryFileId,
             filePath: videoNfoPath,
             libraryRoot: organizedVideoRoot,
             fileType: "nfo",

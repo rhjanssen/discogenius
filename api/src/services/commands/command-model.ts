@@ -13,6 +13,7 @@ import type {
     CheckUpgradesCommand,
     CleanupTempFilesCommand,
     CleanupLibraryCommand,
+    CleanupOrphanSidecarsCommand,
     CompactDatabaseCommand,
     ConfigPruneCommand,
     CurateArtistCommand,
@@ -75,6 +76,7 @@ export interface CommandBodyMap {
     [CommandNames.BackupDatabase]: BackupDatabaseCommand;
     [CommandNames.CleanupTempFiles]: CleanupTempFilesCommand;
     [CommandNames.CleanupLibrary]: CleanupLibraryCommand;
+    [CommandNames.CleanupOrphanSidecars]: CleanupOrphanSidecarsCommand;
     [CommandNames.UpdateLibraryMetadata]: UpdateLibraryMetadataCommand;
     [CommandNames.ImportProviderArtists]: ImportProviderArtistsCommand;
     [CommandNames.ImportUnmappedFiles]: ImportUnmappedFilesCommand;
