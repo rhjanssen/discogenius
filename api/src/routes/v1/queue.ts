@@ -813,7 +813,7 @@ router.post('/tasks/:id/retry', async (req: Request, res: Response) => {
  * DELETE /api/v1/queue/tasks/:id
  * Cancel a specific non-download task
  */
-router.delete('/tasks/:id', (req: Request, res: Response) => {
+router.delete('/tasks/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const commandId = parseInt(String(id), 10);
   if (Number.isNaN(commandId)) {
@@ -832,8 +832,12 @@ router.delete('/tasks/:id', (req: Request, res: Response) => {
     return res.status(409).json({ error: 'Task is processing' });
   }
 
-  CommandQueueManager.cancel(commandId);
-  res.json({ message: 'Task cancelled' });
+  try {
+    await runQueueUserWrite(() => CommandQueueManager.cancel(commandId));
+    res.json({ message: 'Task cancelled' });
+  } catch (error: any) {
+    res.status(queueMutationHttpStatus(error)).json({ error: 'Failed to cancel task', message: error.message });
+  }
 });
 
 /**

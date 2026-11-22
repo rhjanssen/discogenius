@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db } from "../database.js";
+import { db, withDbWrite } from "../database.js";
 import { Config, updateConfig } from "../services/config/config.js";
 import { looksLikeMusicBrainzMbid } from "../services/metadata/provider-track-resolver.js";
 import { streamingProviderManager } from "../services/providers/index.js";
@@ -112,7 +112,7 @@ router.get("/", async (_, res) => {
 
 // Persist the user's provider preference order. The first entry becomes the
 // default provider; matching tie-breaks use the full order.
-router.put("/priority", (req, res) => {
+router.put("/priority", async (req, res) => {
   try {
     const body = req.body && typeof req.body === "object" ? req.body as { order?: unknown } : {};
     const raw = Array.isArray(body.order) ? body.order.map((id) => String(id || "").trim()) : [];
@@ -128,7 +128,7 @@ router.put("/priority", (req, res) => {
       default_provider: order[0],
     });
 
-    markAcquisitionPlanningStale();
+    await withDbWrite(() => markAcquisitionPlanningStale());
 
     res.json({
       providerPriority: streamingProviderManager.getProviderPriority(),
@@ -285,7 +285,7 @@ router.post("/:providerId/logout", async (req, res) => {
         provider_priority: repairedPreference.providerPriority,
         default_provider: repairedPreference.defaultProviderId,
       });
-      markAcquisitionPlanningStale();
+      await withDbWrite(() => markAcquisitionPlanningStale());
       plansPendingCuration = true;
     }
 

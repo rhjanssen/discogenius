@@ -408,3 +408,33 @@ test("updateArtistLibraryState separates policy pause from unmonitor", async () 
   `).get(artistMbid) as { n: number };
   assert.ok(membership.n > 0);
 });
+
+test("unmonitoring an artist while a worker holds the writer waits instead of failing", async () => {
+  const { db } = dbModule;
+  const { withSqliteWriteMutexAsync } = await import("../../database/sqlite-write-mutex.js");
+  const artistMbid = "c3d4e5f6-a7b8-4901-c234-56789abcdef0";
+  db.prepare(`INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)`).run(artistMbid, "Bakermat");
+  seedLibraryArtistMonitoring(db, artistMbid);
+
+  let releaseWriter!: () => void;
+  let writerHeld!: () => void;
+  const held = new Promise<void>((resolve) => { writerHeld = resolve; });
+  const worker = withSqliteWriteMutexAsync(
+    () => new Promise<void>((resolve) => { releaseWriter = resolve; writerHeld(); }),
+    "test:busy-worker",
+  );
+  await held;
+
+  const unmonitoring = monitoringModule.setArtistMonitoredState({ artistId: artistMbid, monitored: false });
+  setTimeout(() => releaseWriter(), 50);
+  const result = await unmonitoring;
+  await worker;
+
+  assert.equal(result?.monitored, false);
+  const memberships = db.prepare(`
+    SELECT COUNT(*) AS count FROM LibraryArtists library_artist
+    JOIN ArtistMetadata artist ON artist.id = library_artist.artist_metadata_id
+    WHERE artist.mbid = ?
+  `).get(artistMbid) as { count: number };
+  assert.equal(memberships.count, 0);
+});

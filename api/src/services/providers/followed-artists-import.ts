@@ -1,4 +1,4 @@
-import { db } from "../../database.js";
+import { db, withDbWrite } from "../../database.js";
 import { queueArtistMonitoringIntake } from "../music/artist-monitoring.js";
 import {
     isArtistLibraryMonitored,
@@ -101,21 +101,25 @@ export async function ensureMonitoredArtist(
         artistMbId: artist.mbid,
         existingPath: existing?.path ?? canonicalIdentity?.path ?? null,
     });
-    syncLibraryArtistMonitoring(localArtistId, true);
-    const metadataId = canonicalIdentity?.id ?? Number(localArtistId);
-    if (Number.isFinite(metadataId) && metadataId > 0) {
-        stampArtistLibraryPath(
-            metadataId,
-            resolvedArtistFolder.path,
-            resolvedArtistFolder.shouldReplaceExistingPath,
-        );
-        db.prepare(`
-            UPDATE ArtistMetadata
-            SET picture = COALESCE(picture, ?),
-                popularity = COALESCE(popularity, ?)
-            WHERE id = ?
-        `).run(artist.picture || null, artist.popularity || 0, metadataId);
-    }
+    // Also called from the manual-match route on the HTTP thread, where a bare
+    // write fails at once while a worker holds the writer.
+    await withDbWrite(() => {
+        syncLibraryArtistMonitoring(localArtistId, true);
+        const metadataId = canonicalIdentity?.id ?? Number(localArtistId);
+        if (Number.isFinite(metadataId) && metadataId > 0) {
+            stampArtistLibraryPath(
+                metadataId,
+                resolvedArtistFolder.path,
+                resolvedArtistFolder.shouldReplaceExistingPath,
+            );
+            db.prepare(`
+                UPDATE ArtistMetadata
+                SET picture = COALESCE(picture, ?),
+                    popularity = COALESCE(popularity, ?)
+                WHERE id = ?
+            `).run(artist.picture || null, artist.popularity || 0, metadataId);
+        }
+    });
     return { status, localArtistId };
 }
 

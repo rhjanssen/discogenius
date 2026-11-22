@@ -594,13 +594,13 @@ router.delete("/:artistId/files", async (req, res) => {
   }
 });
 
-router.delete("/:artistId", (req, res) => {
+router.delete("/:artistId", async (req, res) => {
   try {
     const body = getObjectBody(req.body ?? {});
     rejectUnknownKeys(body, ["deleteFiles"], "Artist delete");
     const deleteFiles = getOptionalBoolean(body, "deleteFiles") === true
       || parseOptionalQueryBoolean(req.query.deleteFiles) === true;
-    const result = deleteArtistFromLibrary(req.params.artistId, { deleteFiles });
+    const result = await withDbWrite(() => deleteArtistFromLibrary(req.params.artistId, { deleteFiles }));
     res.json({ success: true, ...result });
   } catch (error: any) {
     if (isRequestValidationError(error)) {
