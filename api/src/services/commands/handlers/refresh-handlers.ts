@@ -99,6 +99,13 @@ export const handleMatchArtistProviders: CommandHandler<"MatchArtistProviders"> 
                     return;
                 }
 
+                if (event.kind === "provider_phase") {
+                    ctx.updateCommandDescription(job, {
+                        description: ctx.formatArtistPhaseDescription(job, event.message),
+                    });
+                    return;
+                }
+
                 if (event.kind === "status") {
                     ctx.updateCommandDescription(job, {
                         progress: 85,
