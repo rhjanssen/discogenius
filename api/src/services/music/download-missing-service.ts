@@ -17,6 +17,7 @@ import { isVideoVariantDownloadAllowed } from "./video-type-filter.js";
 import {
   listStrandedMonitoredEditions,
 } from "./acquisition-planning-service.js";
+import { providerItemAvailableSql } from "../download/offer-availability.js";
 
 export interface DownloadMissingResult {
     albums: number;
@@ -179,6 +180,7 @@ export class DownloadMissingService {
                     WHERE selected_video.video_recording_id = r.id
                   )
                   AND pi.provider_id IS NOT NULL
+                  AND ${providerItemAvailableSql("pi.availability", "pi.provider")}
                   AND NOT ${hasImportedVideoFile('r.id', 'r.mbid', 'pi.provider', 'pi.provider_id')}
             `;
             const videoParams: any[] = [];

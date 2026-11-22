@@ -195,7 +195,7 @@ const RULES: Rule[] = [
     hint: () => "Retry later. This happens during large curation or refresh passes.",
   },
   {
-    test: /timed out|timeout|\bECONNRESET\b|\bECONNREFUSED\b|\bENOTFOUND\b|\bEAI_AGAIN\b|socket hang up|connection pool is full|max retries exceeded|network/iu,
+    test: /timed out|timeout|\bETIMEDOUT\b|\bECONNRESET\b|\bECONNREFUSED\b|\bECONNABORTED\b|\bENETUNREACH\b|\bENOTFOUND\b|\bEAI_AGAIN\b|\b502\b|\b503\b|\b504\b|socket hang up|connection pool is full|max retries exceeded|network/iu,
     category: "network",
     summary: ({ label }) => `Network problem while talking to ${label}`,
     hint: () => "Retry. If it keeps failing, check the server's internet connection.",

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { providerItemAvailableSql } from "../download/offer-availability.js";
 import { emitLibraryUpdated } from "../commands/app-events.js";
 import { ACQUISITION_PLANNER_VERSION, AcquisitionPlanningService, getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
@@ -869,10 +870,7 @@ export class LibraryReleaseSelectionService {
         WHERE match.id = ?
           AND match.edition_id = ?
           AND match.match_state = 'accepted'
-          AND item.availability NOT IN (
-            'unavailable', 'no_longer_available', 'geography_restricted',
-            'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
-          )
+          AND ${providerItemAvailableSql("item.availability", "item.provider")}
       `).get(input.providerEditionMatchId, input.editionId);
       if (!offer) {
         throw new Error("The selected provider offer is not an accepted, available match for this edition");

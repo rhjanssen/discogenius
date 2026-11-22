@@ -80,6 +80,18 @@ export function isAppleUnavailableTrackError(text: string): boolean {
   return /Unavailable/i.test(clean) || /Failed to dl aac-lc/i.test(clean);
 }
 
+export function isAppleMusicVideoFailure(text: string): boolean {
+  const clean = stripAnsi(text || "").trim();
+  if (!clean) return false;
+  return /Failed to dl MV\b|Failed to get MV manifest\b/i.test(clean);
+}
+
+export function isAppleMediaUserTokenError(text: string): boolean {
+  const clean = stripAnsi(text || "").trim();
+  if (!clean) return false;
+  return /media-user-token/i.test(clean);
+}
+
 export function listDownloadedMediaFiles(dirPath: string): Set<string> {
   const files = new Set<string>();
   if (!fs.existsSync(dirPath)) return files;
@@ -165,6 +177,11 @@ export function describeAppleDownloaderFailure(code: number | null, errorDetail:
   const detail = (errorDetail || "").trim();
   if (isAppleTruncatedSegmentError(detail)) {
     return `apple-music-downloader exited with code ${code}${detail ? `: ${detail}` : ""}`;
+  }
+  if (isAppleMediaUserTokenError(detail)) {
+    return "Apple Music download failed because the Apple Music media-user-token is missing or expired. "
+      + "Update your Apple Music media-user-token on the Auth page and retry."
+      + `${detail ? ` [downloader: ${detail}]` : ""}`;
   }
   if (isAppleSessionFailure(detail) || isAppleDecryptFailure(detail)) {
     return "Apple Music decryption failed because the wrapper session expired or Apple rejected it. "
@@ -486,7 +503,7 @@ export function parseAppleDownloaderProgressLine(
     };
   }
 
-  if ((/Unavailable|Invalid media-user-token|Failed|Error|Exception/i.test(cleanLine) || isAppleTruncatedSegmentError(cleanLine)) && !/lyric|lrc/i.test(cleanLine)) {
+  if ((/Unavailable|media-user-token|Failed|Error|Exception/i.test(cleanLine) || isAppleTruncatedSegmentError(cleanLine)) && !/lyric|lrc/i.test(cleanLine)) {
     return {
       currentFileNum: current?.currentFileNum,
       totalFiles: current?.totalFiles,
@@ -658,6 +675,7 @@ export class AppleMusicBackend implements DownloadBackend {
     completedTrackIds?: Set<string>,
     completedTrackIndices?: Set<number>,
     unavailableTracks: Map<string, string> = new Map(),
+    failedMusicVideos: string[] = [],
   ): Promise<{
     code: number | null;
     summaryCompleted?: number;
@@ -696,7 +714,7 @@ export class AppleMusicBackend implements DownloadBackend {
       let stderrBuffer = "";
       let completedTracksCount = 0;
       let summaryCompleted: number | undefined;
-      const current: { currentFileNum?: number; totalFiles?: number; providerTrackId?: string } = {};
+      const current: { currentFileNum?: number; totalFiles?: number; providerTrackId?: string; isMusicVideo?: boolean } = {};
 
       const emitParsedLine = (line: string, source: "stdout" | "stderr") => {
         const cleanLine = stripAnsi(line).trim();
@@ -705,6 +723,11 @@ export class AppleMusicBackend implements DownloadBackend {
         // Upstream notice when exit-on-error triggers after errors; must not be treated as fatal error
         if (/Error detected,\s*(?:exiting|press Enter)/i.test(cleanLine)) {
           return;
+        }
+
+        const trackHeaderMatch = cleanLine.match(/^Track\s+\d+\s+of\s+\d+:\s*(.+)?$/i);
+        if (trackHeaderMatch) {
+          current.isMusicVideo = /^music-videos\b/i.test((trackHeaderMatch[1] || "").trim());
         }
 
         const event = parseAppleDownloaderProgressLine(line, current);
@@ -729,38 +752,37 @@ export class AppleMusicBackend implements DownloadBackend {
           if (current.currentFileNum) completedTrackIndices?.add(current.currentFileNum - 1);
         }
 
+        const classifyErrorLine = (isFromStderr: boolean) => {
+          // A bonus music video bundled inside an album download must not abort
+          // or fail the audio album when MV auth (media-user-token) fails.
+          if (request.entityType === "album" && (isAppleMusicVideoFailure(cleanLine) || current.isMusicVideo)) {
+            failedMusicVideos.push(cleanLine);
+            return;
+          }
+          if (isAppleMediaUserTokenError(cleanLine)) {
+            fatalOtherError = fatalOtherError || event.statusMessage || cleanLine;
+            cp.kill();
+          } else if (isAppleSessionFailure(cleanLine)) {
+            sessionErrorDetail = sessionErrorDetail || cleanLine;
+            cp.kill();
+          } else if (isAppleUnavailableTrackError(cleanLine)) {
+            const trackId = event.currentProviderTrackId
+              || current.providerTrackId
+              || (albumTrackIds && current.currentFileNum ? albumTrackIds[current.currentFileNum - 1] : undefined)
+              || (request.trackIds && current.currentFileNum ? request.trackIds[current.currentFileNum - 1] : undefined)
+              || (request.entityType === "track" ? providerId : undefined);
+            const trackKey = trackId || `file-${current.currentFileNum || (unavailableTracks.size + 1)}`;
+            unavailableTracks.set(trackKey, cleanLine);
+          } else if (!isFromStderr || /error|exception|traceback|failed/i.test(event.statusMessage || cleanLine)) {
+            fatalOtherError = fatalOtherError || event.statusMessage || cleanLine;
+            cp.kill();
+          }
+        };
+
         if (event.isError && !event.summary) {
-          if (isAppleSessionFailure(cleanLine)) {
-            sessionErrorDetail = sessionErrorDetail || cleanLine;
-            cp.kill();
-          } else if (isAppleUnavailableTrackError(cleanLine)) {
-            const trackId = event.currentProviderTrackId
-              || current.providerTrackId
-              || (albumTrackIds && current.currentFileNum ? albumTrackIds[current.currentFileNum - 1] : undefined)
-              || (request.trackIds && current.currentFileNum ? request.trackIds[current.currentFileNum - 1] : undefined)
-              || (request.entityType === "track" ? providerId : undefined);
-            const trackKey = trackId || `file-${current.currentFileNum || (unavailableTracks.size + 1)}`;
-            unavailableTracks.set(trackKey, cleanLine);
-          } else {
-            fatalOtherError = fatalOtherError || event.statusMessage || cleanLine;
-            cp.kill();
-          }
+          classifyErrorLine(false);
         } else if (source === "stderr" && /error|exception|traceback/i.test(event.statusMessage || "")) {
-          if (isAppleSessionFailure(cleanLine)) {
-            sessionErrorDetail = sessionErrorDetail || cleanLine;
-            cp.kill();
-          } else if (isAppleUnavailableTrackError(cleanLine)) {
-            const trackId = event.currentProviderTrackId
-              || current.providerTrackId
-              || (albumTrackIds && current.currentFileNum ? albumTrackIds[current.currentFileNum - 1] : undefined)
-              || (request.trackIds && current.currentFileNum ? request.trackIds[current.currentFileNum - 1] : undefined)
-              || (request.entityType === "track" ? providerId : undefined);
-            const trackKey = trackId || `file-${current.currentFileNum || (unavailableTracks.size + 1)}`;
-            unavailableTracks.set(trackKey, cleanLine);
-          } else {
-            fatalOtherError = fatalOtherError || event.statusMessage || cleanLine;
-            cp.kill();
-          }
+          classifyErrorLine(true);
         }
 
         const totalFiles = event.totalFiles ?? current.totalFiles;
@@ -848,6 +870,7 @@ export class AppleMusicBackend implements DownloadBackend {
     const completedTrackIds = new Set<string>();
     const completedTrackIndices = new Set<number>();
     const unavailableTracks = new Map<string, string>();
+    const failedMusicVideos: string[] = [];
 
     const primaryResult = await this.executeProcess(
       providerId,
@@ -858,10 +881,13 @@ export class AppleMusicBackend implements DownloadBackend {
       completedTrackIds,
       completedTrackIndices,
       unavailableTracks,
+      failedMusicVideos,
     );
 
     const decryptErrorDetail = primaryResult.sessionErrorDetail
-      || (primaryResult.fatalOtherError && (isAppleSessionFailure(primaryResult.fatalOtherError) || isAppleDecryptFailure(primaryResult.fatalOtherError))
+      || (primaryResult.fatalOtherError
+        && !isAppleMediaUserTokenError(primaryResult.fatalOtherError)
+        && (isAppleSessionFailure(primaryResult.fatalOtherError) || isAppleDecryptFailure(primaryResult.fatalOtherError))
         ? primaryResult.fatalOtherError : undefined);
 
     if (decryptErrorDetail) {
@@ -955,6 +981,9 @@ export class AppleMusicBackend implements DownloadBackend {
           `All tracks unavailable: ${Array.from(unavailableTracks.values())[0]}`,
         );
       }
+      if (failedMusicVideos.length > 0) {
+        throw new Error(describeAppleDownloaderFailure(primaryResult.code, failedMusicVideos[0]));
+      }
       throw new Error(describeAppleDownloaderFailure(primaryResult.code, primaryResult.fatalOtherError || "No tracks downloaded"));
     }
 
@@ -986,18 +1015,32 @@ export class AppleMusicBackend implements DownloadBackend {
     if (unavailableCount === 0) {
       await handleAppleDecryptSuccess().catch(() => undefined);
     }
-    const warningMessage = unavailableCount > 0
-      ? `Completed with ${unavailableCount} unavailable track(s) [${Array.from(unavailableTracks.entries()).map(([id, r]) => `${id}: ${r}`).join("; ")}]`
-      : undefined;
+    const warnings: string[] = [];
+    if (unavailableCount > 0) {
+      warnings.push(
+        `Completed with ${unavailableCount} unavailable track(s) [${Array.from(unavailableTracks.entries()).map(([id, r]) => `${id}: ${r}`).join("; ")}]`,
+      );
+    }
+    if (failedMusicVideos.length > 0) {
+      warnings.push(
+        failedMusicVideos.some(isAppleMediaUserTokenError)
+          ? `Skipped ${failedMusicVideos.length} bundled music video(s) because the Apple Music media-user-token is missing or expired (album audio tracks downloaded).`
+          : `Skipped ${failedMusicVideos.length} bundled music video(s) (${failedMusicVideos[0]}); album audio tracks downloaded.`,
+      );
+    }
+    const warningMessage = warnings.length > 0 ? warnings.join(" ") : undefined;
+    const hasWarnings = warnings.length > 0;
 
     options.onProgress({
       progress: Math.round(((span.completed + 1) / span.total) * 100),
       state: "downloading",
       statusMessage: unavailableCount > 0
         ? `Finished album with ${unavailableCount} unavailable track(s)`
-        : `Finished album ${providerId}`,
+        : failedMusicVideos.length > 0
+          ? `Finished album (skipped ${failedMusicVideos.length} failed music video(s))`
+          : `Finished album ${providerId}`,
       warningMessage,
-      ...(unavailableCount > 0 ? { outcome: "completedWithWarning" as const } : {}),
+      ...(hasWarnings ? { outcome: "completedWithWarning" as const } : {}),
     });
   }
 
@@ -1024,7 +1067,9 @@ export class AppleMusicBackend implements DownloadBackend {
     );
 
     const decryptErrorDetail = result.sessionErrorDetail
-      || (result.fatalOtherError && (isAppleSessionFailure(result.fatalOtherError) || isAppleDecryptFailure(result.fatalOtherError))
+      || (result.fatalOtherError
+        && !isAppleMediaUserTokenError(result.fatalOtherError)
+        && (isAppleSessionFailure(result.fatalOtherError) || isAppleDecryptFailure(result.fatalOtherError))
         ? result.fatalOtherError : undefined);
 
     if (decryptErrorDetail) {

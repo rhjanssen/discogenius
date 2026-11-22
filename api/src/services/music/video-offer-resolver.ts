@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { providerItemAvailableSql } from "../download/offer-availability.js";
 import { streamingProviderManager } from "../providers/index.js";
 
 export type ResolvedVideoOffer = {
@@ -30,7 +31,7 @@ function findDirectProviderVideoOffer(
         WHERE item.entity_type = 'video'
           AND item.provider = ?
           AND CAST(item.provider_id AS TEXT) = ?
-          AND LOWER(CAST(item.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
+          AND ${providerItemAvailableSql("item.availability", "item.provider")}
         LIMIT 1
     `).get(String(provider), String(providerId)) as {
         provider: string;
@@ -75,7 +76,7 @@ export function resolveVideoOfferForProvider(provider: string, recordingRef: str
         WHERE item.entity_type = 'video'
           AND item.provider = ?
           AND (CAST(match.recording_id AS TEXT) = ? OR recording.mbid = ?)
-          AND LOWER(CAST(item.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
+          AND ${providerItemAvailableSql("item.availability", "item.provider")}
     `).all(String(provider), key, key) as Array<{
         provider: string;
         provider_id: string;
@@ -225,7 +226,7 @@ export function resolvePreferredVideoOffer(recordingRef: string | null | undefin
         JOIN Recordings recording ON recording.id = match.recording_id
         WHERE item.entity_type = 'video'
           AND (CAST(match.recording_id AS TEXT) = ? OR recording.mbid = ?)
-          AND LOWER(CAST(item.availability AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
+          AND ${providerItemAvailableSql("item.availability", "item.provider")}
     `).all(key, key) as Array<{
         provider: string;
         provider_id: string;

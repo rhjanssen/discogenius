@@ -225,6 +225,9 @@ function abortError(): Error {
  * again later" is YouTube throttling the session, not the video. */
 const YT_DLP_VIDEO_UNAVAILABLE = /^ERROR:\s*\[youtube\]\s*([\w-]{11}):\s*(?:This video is (?:not|no longer) available|Video unavailable(?!.*try again later))/iu;
 
+/** YouTube requires signed-in cookies to confirm age for this video. */
+const YT_DLP_AGE_RESTRICTED = /^ERROR:\s*\[youtube\]\s*([\w-]{11}):\s*Sign in to confirm your age/iu;
+
 /** The last ERROR line, or the surrounding stderr when yt-dlp printed a bare
  * "ERROR:" and put its reason on other lines. */
 function ytDlpFailureDetail(fatalError: string | undefined, errorLines: readonly string[]): string | undefined {
@@ -324,6 +327,7 @@ export class YtDlpBackend implements DownloadBackend {
     if (options.signal?.aborted) throw abortError();
     await fs.promises.mkdir(request.downloadPath, { recursive: true });
     const args = this.buildArgs(request);
+    const hasCookies = args.includes("--cookies");
     const child = (this.options.spawnImpl || defaultSpawn)(
       this.options.binary || getYtDlpBinary(),
       args,
@@ -396,15 +400,28 @@ export class YtDlpBackend implements DownloadBackend {
         if (code !== 0) {
           const detail = ytDlpFailureDetail(fatalError, errorLines);
           const message = `yt-dlp exited with code ${code ?? "signal"}${detail ? `: ${detail}` : ""}`;
+          const entityType = request.entityType === "video" ? "video" : "track";
           const unavailableVideoId = fatalError?.match(YT_DLP_VIDEO_UNAVAILABLE)?.[1];
+          const ageRestrictedVideoId = !hasCookies
+            ? fatalError?.match(YT_DLP_AGE_RESTRICTED)?.[1]
+            : undefined;
           finish(() => reject(unavailableVideoId
             ? new ProviderUnavailableError(
               request.provider,
-              request.entityType === "video" ? "video" : "track",
+              entityType,
               unavailableVideoId,
               message,
+              "unavailable",
             )
-            : new Error(message)));
+            : ageRestrictedVideoId
+              ? new ProviderUnavailableError(
+                request.provider,
+                entityType,
+                ageRestrictedVideoId,
+                message,
+                "needs_cookies",
+              )
+              : new Error(message)));
           return;
         }
         void (async () => {
