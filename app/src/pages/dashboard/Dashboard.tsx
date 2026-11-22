@@ -2,13 +2,16 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     Button,
-    Badge,
     Card,
     Menu,
     MenuItem,
     MenuList,
     MenuPopover,
     MenuTrigger,
+    MessageBar,
+    MessageBarActions,
+    MessageBarBody,
+    MessageBarTitle,
     Text,
     Title1,
     tokens,
@@ -23,7 +26,6 @@ import {
   Filter24Regular,
   ArrowSortDownLines24Regular,
   ArrowDownload24Regular,
-  Warning24Regular,
   ArrowSync24Filled,
   MoreHorizontal24Filled,
   Play24Filled,
@@ -36,7 +38,6 @@ import {
   Filter24Filled,
   ArrowSortDownLines24Filled,
   ArrowDownload24Filled,
-  Warning24Filled,
   Pulse24Regular,
   Pulse24Filled,
   bundleIcon
@@ -68,7 +69,6 @@ import {
     compactDetailActionButtonStyles,
     detailActionGlassButtonStyles,
     detailActionMobileOverflowRowStyles,
-    detailActionPrimaryButtonStyles,
 } from "@/components/media/detailActionStyles";
 import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import { compactPageTopOffset } from "@/components/ui/sharedLayoutStyles";
@@ -81,7 +81,6 @@ const FolderSearch24 = bundleIcon(FolderSearch24Filled, FolderSearch24Regular);
 const Filter24 = bundleIcon(Filter24Filled, Filter24Regular);
 const ArrowSortDownLines24 = bundleIcon(ArrowSortDownLines24Filled, ArrowSortDownLines24Regular);
 const ArrowDownload24 = bundleIcon(ArrowDownload24Filled, ArrowDownload24Regular);
-const Warning24 = bundleIcon(Warning24Filled, Warning24Regular);
 const Pulse24 = bundleIcon(Pulse24Filled, Pulse24Regular);
 
 const useStyles = makeStyles({
@@ -220,46 +219,8 @@ const useStyles = makeStyles({
         fontSize: tokens.fontSizeBase100,
         color: tokens.colorNeutralForeground3,
     },
-    providerNotice: {
-        ...glassSurfaceStyles,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: tokens.spacingHorizontalM,
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-        borderRadius: tokens.borderRadiusMedium,
-        border: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStrokeAlpha2}`,
-        "@media (max-width: 639px)": {
-            alignItems: "stretch",
-            flexDirection: "column",
-        },
-    },
-    providerNoticeMain: {
-        display: "flex",
-        alignItems: "center",
-        gap: tokens.spacingHorizontalS,
-        minWidth: 0,
-    },
-    providerNoticeIcon: {
-        width: "18px",
-        height: "18px",
-        color: tokens.colorPaletteMarigoldForeground2,
-        flexShrink: 0,
-    },
-    providerNoticeText: {
-        color: tokens.colorNeutralForeground2,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        "@media (max-width: 639px)": {
-            whiteSpace: "normal",
-        },
-    },
-    providerNoticeAction: {
-        flexShrink: 0,
-        "@media (max-width: 639px)": {
-            alignSelf: "flex-start",
-        },
+    surfaceNotice: {
+        marginBottom: tokens.spacingVerticalM,
     },
     headerActionButton: {
         ...compactDetailActionButtonStyles,
@@ -327,17 +288,6 @@ const useStyles = makeStyles({
     },
     queueActionButton: {
         ...detailActionGlassButtonStyles,
-        flexShrink: 0,
-        whiteSpace: "nowrap",
-        "@media (max-width: 639px)": {
-            minWidth: "32px",
-            "& .fui-Button__content": {
-                display: "none",
-            },
-        },
-    },
-    queuePrimaryActionButton: {
-        ...detailActionPrimaryButtonStyles,
         flexShrink: 0,
         whiteSpace: "nowrap",
         "@media (max-width: 639px)": {
@@ -622,10 +572,8 @@ const Dashboard = () => {
                                 onClick={action.onClick}
                                 disabled={action.disabled}
                                 className={styles.headerActionButton}
-                                title={action.label}
-                                aria-label={action.label}
                             >
-                                {compactActionLabel(action)}
+                                {action.label}
                             </Button>
                         ))}
                         {desktopOverflowActions.length > 0 ? (
@@ -700,21 +648,14 @@ const Dashboard = () => {
             </div>
 
             {showProviderNotice ? (
-                <div className={styles.providerNotice}>
-                    <div className={styles.providerNoticeMain}>
-                        <Warning24 className={styles.providerNoticeIcon} />
-                        <Text className={styles.providerNoticeText}>{providerNoticeText}</Text>
-                        <Badge appearance="tint" color="warning">Provider</Badge>
-                    </div>
-                    <Button
-                        appearance="subtle"
-                        size="small"
-                        className={styles.providerNoticeAction}
-                        onClick={() => navigate("/settings")}
-                    >
-                        Settings
-                    </Button>
-                </div>
+                <MessageBar intent="warning" layout="multiline" className={styles.surfaceNotice}>
+                    <MessageBarBody>{providerNoticeText}</MessageBarBody>
+                    <MessageBarActions>
+                        <Button appearance="secondary" size="small" onClick={() => navigate("/settings")}>
+                            Open settings
+                        </Button>
+                    </MessageBarActions>
+                </MessageBar>
             ) : null}
 
             <div className={styles.mainCol}>
@@ -729,17 +670,15 @@ const Dashboard = () => {
                             onSelect={(value) => setMobileTab(value as "queue" | "activity" | "manualImport")}
                         />
                     </div>
-                    {mobileTab === "queue" && (
+                    {mobileTab === "queue" && !queueIsPaused && (
                         <Button
-                            className={queueIsPaused ? styles.queuePrimaryActionButton : styles.queueActionButton}
-                            appearance={queueIsPaused ? "primary" : "outline"}
-                            icon={queueIsPaused ? <Play24 /> : <Pause24 />}
+                            className={styles.queueActionButton}
+                            appearance="outline"
+                            icon={<Pause24 />}
                             onClick={handlePauseResume}
                             size="small"
-                            aria-label={queueIsPaused ? "Resume queue" : "Pause queue"}
-                            title={queueIsPaused ? "Resume" : "Pause"}
                         >
-                            {queueIsPaused ? "Resume" : "Pause"}
+                            Pause downloads
                         </Button>
                     )}
                     {mobileTab === "activity" && (
@@ -772,6 +711,19 @@ const Dashboard = () => {
                         aria-labelledby="dashboard-tab-queue"
                         className={styles.tabContentPanel}
                     >
+                        {queueIsPaused ? (
+                            <MessageBar intent="warning" className={styles.surfaceNotice}>
+                                <MessageBarBody>
+                                    <MessageBarTitle>Downloads are paused</MessageBarTitle>
+                                    Waiting downloads stay in the queue and nothing new starts until you resume.
+                                </MessageBarBody>
+                                <MessageBarActions>
+                                    <Button appearance="primary" size="small" icon={<Play24 />} onClick={handlePauseResume}>
+                                        Resume downloads
+                                    </Button>
+                                </MessageBarActions>
+                            </MessageBar>
+                        ) : null}
                         <QueueTab />
                     </div>
                 )}

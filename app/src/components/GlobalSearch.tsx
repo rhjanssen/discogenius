@@ -34,7 +34,7 @@ import { useToast } from "@/hooks/useToast";
 import { navigateToAlbum, navigateToAlbumTrack } from "@/utils/albumNavigation";
 import { navigateToVideo } from "@/utils/videoNavigation";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
-import { dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
+import { OPEN_SEARCH_EVENT, dispatchActivityRefresh, dispatchLibraryUpdated } from "@/utils/appEvents";
 import { AUTOMATIC_ARTIST_LIBRARY_SCOPE } from "@/utils/artistMonitoring";
 
 const Add24 = bundleIcon(Add24Filled, Add24Regular);
@@ -416,6 +416,14 @@ const GlobalSearch = ({ initialQuery = "" }: GlobalSearchProps = {}) => {
     useEffect(() => {
         setSearchQuery(initialQuery.trim());
     }, [initialQuery]);
+
+    // "Add an artist" elsewhere in the app starts here: this box searches the
+    // MusicBrainz catalogue as well as the library.
+    useEffect(() => {
+        const focusSearch = () => searchRef.current?.querySelector("input")?.focus();
+        window.addEventListener(OPEN_SEARCH_EVENT, focusSearch);
+        return () => window.removeEventListener(OPEN_SEARCH_EVENT, focusSearch);
+    }, []);
 
     useEffect(() => {
         if (initialQuery.trim()) {
@@ -897,7 +905,7 @@ const GlobalSearch = ({ initialQuery = "" }: GlobalSearchProps = {}) => {
     return (
         <div ref={searchRef} className={styles.container}>
             <SearchBox
-                placeholder="Search your library..."
+                placeholder="Search or add music…"
                 aria-label="Search artists, albums, tracks, or videos"
                 dismiss={{ "aria-label": "Clear search" }}
                 value={searchQuery}

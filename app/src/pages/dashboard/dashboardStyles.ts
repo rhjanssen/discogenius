@@ -69,6 +69,14 @@ export const useDashboardStyles = makeStyles({
             alignItems: "start",
         },
     },
+    queueColumnsSingle: {
+        "@media (min-width: 960px)": {
+            gridTemplateColumns: "1fr",
+        },
+    },
+    queueEmptyLine: {
+        color: tokens.colorNeutralForeground3,
+    },
     queueSection: {
         display: "flex",
         flexDirection: "column",

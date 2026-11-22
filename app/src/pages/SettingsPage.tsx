@@ -49,6 +49,11 @@ import type {
 } from "@contracts/config";
 import type { AppReleaseInfoContract } from "@contracts/release";
 
+/** The server's own reason (the API client surfaces `detail`, `message` or `error`). */
+function errorMessage(error: unknown): string {
+    return error instanceof Error && error.message ? error.message : "Try again in a moment.";
+}
+
 const ChevronDown24 = bundleIcon(ChevronDown24Filled, ChevronDown24Regular);
 
 const MIN_RUN_NOW_FEEDBACK_MS = 600;
@@ -395,7 +400,7 @@ const SettingsPage = () => {
             }
         } catch (error) {
             console.error("Error updating monitoring config:", error);
-            toast({ title: "Error", description: "Failed to update monitoring configuration.", variant: "destructive" });
+            toast({ title: "Couldn't save monitoring settings", description: errorMessage(error), variant: "destructive" });
         }
     };
 
@@ -405,7 +410,7 @@ const SettingsPage = () => {
             setCurationConfig((current) => (current ? { ...current, ...updates } : current));
         } catch (error) {
             console.error("Error updating curation config:", error);
-            toast({ title: "Error", description: "Failed to update curation configuration.", variant: "destructive" });
+            toast({ title: "Couldn't save filter settings", description: errorMessage(error), variant: "destructive" });
         }
     };
 
@@ -418,7 +423,7 @@ const SettingsPage = () => {
         } catch (error) {
             console.error("Error updating catalog config:", error);
             setCatalogConfig(previous);
-            toast({ title: "Error", description: "Failed to update metadata source.", variant: "destructive" });
+            toast({ title: "Couldn't change the metadata source", description: errorMessage(error), variant: "destructive" });
         }
     };
 
@@ -443,7 +448,7 @@ const SettingsPage = () => {
             });
         } catch (error) {
             console.error("Error queueing missing album search:", error);
-            toast({ title: "Curation failed", description: "Could not queue library-wide curation.", variant: "destructive" });
+            toast({ title: "Couldn't queue curation", description: errorMessage(error), variant: "destructive" });
         } finally {
             setSearchingMissingAlbums(false);
         }
@@ -460,7 +465,7 @@ const SettingsPage = () => {
             toast({ title: "Monitoring cycle queued", description: result?.message || "The monitoring cycle has been queued." });
         } catch (error) {
             console.error("Error triggering monitoring:", error);
-            toast({ title: "Error", description: "Failed to queue the monitoring cycle.", variant: "destructive" });
+            toast({ title: "Couldn't queue the monitoring cycle", description: errorMessage(error), variant: "destructive" });
         } finally {
             const elapsed = Date.now() - startedAt;
             if (elapsed < MIN_RUN_NOW_FEEDBACK_MS) {

@@ -10,9 +10,11 @@ import {
   Settings24Regular,
   DataUsage24Regular,
   Library24Regular,
+  HeartPulse24Regular,
   Settings24Filled,
   DataUsage24Filled,
   Library24Filled,
+  HeartPulse24Filled,
 } from "@fluentui/react-icons";
 const logo = "/assets/images/logo.png";
 import { useQueueStatus } from "@/hooks/useQueueStatus";
@@ -266,6 +268,23 @@ const useStyles = makeStyles({
       minHeight: "32px",
     },
   },
+  // Primary destinations carry a visible label wherever there is room; an icon
+  // alone (a chart for "Dashboard") is not self-explanatory.
+  navLabel: {
+    display: "none",
+    "@media (min-width: 1100px)": {
+      display: "inline",
+      marginLeft: tokens.spacingHorizontalXS,
+      fontSize: tokens.fontSizeBase300,
+      fontWeight: tokens.fontWeightSemibold,
+    },
+  },
+  navLabeledLink: {
+    "@media (min-width: 1100px)": {
+      paddingLeft: tokens.spacingHorizontalS,
+      paddingRight: tokens.spacingHorizontalS,
+    },
+  },
   navIconLinkActive: {
     color: tokens.colorBrandForeground1,
     backgroundColor: "transparent",
@@ -517,17 +536,34 @@ const Layout = () => {
 
               <div className={styles.desktopActions}>
                 <NavLink
+                  to="/"
+                  end
+                  title="Library"
+                  aria-label="Library"
+                  className={({ isActive }) => mergeClasses(
+                    styles.navIconLink,
+                    styles.navLabeledLink,
+                    isActive && styles.navIconLinkActive,
+                  )}
+                >
+                  <Library24Regular className="dg-nav-icon-regular" aria-hidden="true" />
+                  <Library24Filled className="dg-nav-icon-filled" aria-hidden="true" />
+                  <span className={styles.navLabel} aria-hidden="true">Library</span>
+                </NavLink>
+                <NavLink
                   to="/dashboard"
                   title="Dashboard"
                   aria-label={queueCount > 0 ? `Dashboard, ${queueCount} in queue` : "Dashboard"}
                   className={({ isActive }) => mergeClasses(
                     styles.navIconLink,
+                    styles.navLabeledLink,
                     styles.queueButton,
                     isActive && styles.navIconLinkActive,
                   )}
                 >
                   <DataUsage24Regular className="dg-nav-icon-regular" aria-hidden="true" />
                   <DataUsage24Filled className="dg-nav-icon-filled" aria-hidden="true" />
+                  <span className={styles.navLabel} aria-hidden="true">Dashboard</span>
                   {queueCount > 0 ? (
                     <Badge
                       aria-hidden="true"
@@ -542,29 +578,32 @@ const Layout = () => {
                   ) : null}
                 </NavLink>
                 <NavLink
-                  to="/"
-                  end
-                  title="Library"
-                  aria-label="Library"
-                  className={({ isActive }) => mergeClasses(
-                    styles.navIconLink,
-                    isActive && styles.navIconLinkActive,
-                  )}
-                >
-                  <Library24Regular className="dg-nav-icon-regular" aria-hidden="true" />
-                  <Library24Filled className="dg-nav-icon-filled" aria-hidden="true" />
-                </NavLink>
-                <NavLink
                   to="/settings"
                   title="Settings"
                   aria-label="Settings"
                   className={({ isActive }) => mergeClasses(
                     styles.navIconLink,
+                    styles.navLabeledLink,
                     isActive && styles.navIconLinkActive,
                   )}
                 >
                   <Settings24Regular className="dg-nav-icon-regular" aria-hidden="true" />
                   <Settings24Filled className="dg-nav-icon-filled" aria-hidden="true" />
+                  <span className={styles.navLabel} aria-hidden="true">Settings</span>
+                </NavLink>
+                <NavLink
+                  to="/system/status"
+                  title="System"
+                  aria-label="System status"
+                  className={({ isActive }) => mergeClasses(
+                    styles.navIconLink,
+                    styles.navLabeledLink,
+                    isActive && styles.navIconLinkActive,
+                  )}
+                >
+                  <HeartPulse24Regular className="dg-nav-icon-regular" aria-hidden="true" />
+                  <HeartPulse24Filled className="dg-nav-icon-filled" aria-hidden="true" />
+                  <span className={styles.navLabel} aria-hidden="true">System</span>
                 </NavLink>
               </div>
             </div>

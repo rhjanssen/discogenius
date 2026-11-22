@@ -824,7 +824,7 @@ test.describe('Dashboard queue and activity tabs', () => {
 
     await expect(page.locator('main')).toBeVisible();
     await expect(page.getByRole('tab', { name: /^Queue$/i })).toBeVisible();
-    await expect(page.getByText('No items in queue')).toBeVisible();
+    await expect(page.getByText('Nothing is downloading or waiting.')).toBeVisible();
   });
 
   test('activity tab shows the empty-state card', async ({ page }) => {
@@ -852,7 +852,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByText('There are no files waiting for review in your library folders.')).toBeVisible();
 
     await queueTab.click();
-    await expect(page.getByText('No items in queue')).toBeVisible();
+    await expect(page.getByText('Nothing is downloading or waiting.')).toBeVisible();
   });
 
   test('dashboard requests status data', async ({ page }) => {
@@ -1110,7 +1110,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page).not.toHaveURL(/\/auth(?:$|\?)/);
 
     await page.waitForTimeout(200);
-    await expect(page.getByText('No items in queue')).toBeVisible();
+    await expect(page.getByText('Nothing is downloading or waiting.')).toBeVisible();
     await expect(page.getByText('From A Bakermat Point Of View')).toHaveCount(0);
     await expect(page.getByText('Network timeout while downloading album')).toHaveCount(0);
     await expect(page.getByText('Queued')).toHaveCount(0);
@@ -1220,7 +1220,7 @@ test.describe('Dashboard queue and activity tabs', () => {
     await expect(page.getByRole('link', { name: 'Discovery', exact: true })).toHaveAttribute('href', '/album/canonical-discovery');
     await expect(page.getByText('Daft Punk')).toBeVisible();
     await expect(page.getByText('Album', { exact: true })).toBeVisible();
-    await expect(page.getByText('No items in queue')).toHaveCount(0);
+    await expect(page.getByText('Nothing is downloading or waiting.')).toHaveCount(0);
   });
 
   test('queue tab keeps pending-only queue groups visible', async ({ page }) => {

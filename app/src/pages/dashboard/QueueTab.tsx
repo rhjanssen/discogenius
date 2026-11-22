@@ -51,7 +51,7 @@ import { MediaTypeBadge } from "@/components/ui/MediaTypeBadge";
 import { QueuedStatusIcon, SemanticStatusIcon } from "@/components/ui/SemanticStatusIcon";
 import { QualityBadge } from "@/components/ui/QualityBadge";
 import { ProviderQualityRow } from "@/components/ui/ProviderQualityPill";
-import { EmptyState, ErrorState } from "@/components/ui/ContentState";
+import { ErrorState } from "@/components/ui/ContentState";
 import { FailureNotice } from "@/components/ui/FailureNotice";
 import { QueueListSkeleton } from "@/components/ui/LoadingSkeletons";
 import { mediaCoverProxySrc, mediaCoverSrc } from "@/utils/artwork";
@@ -1147,7 +1147,8 @@ const QueueTab = () => {
     return (
         <div className={styles.tabSection}>
             {recoveryMessage && <MessageBar intent="warning"><MessageBarBody>{recoveryMessage}</MessageBarBody></MessageBar>}
-            <div className={styles.queueColumnsWrapper}>
+            {/* An empty queue is one line, not half the screen beside History. */}
+            <div className={mergeClasses(styles.queueColumnsWrapper, !hasQueueRows && !hasQueueRefreshError && styles.queueColumnsSingle)}>
                 {hasQueueRows ? (
                     <section className={styles.queueSection} aria-label="Download queue">
                         <div className={styles.queueSectionHeader}>
@@ -1656,11 +1657,7 @@ const QueueTab = () => {
                                 )}
                             />
                         ) : (
-                            <EmptyState
-                                title="No items in queue"
-                                icon={<ArrowDownload24 />}
-                                compactMobile
-                            />
+                            <Text className={styles.queueEmptyLine}>Nothing is downloading or waiting.</Text>
                         )}
                     </section>
                 )}
