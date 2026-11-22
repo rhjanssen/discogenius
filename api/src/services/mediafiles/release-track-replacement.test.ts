@@ -242,3 +242,26 @@ test("a box-set import leaves the other album's copy of the shared recording in 
   assert.equal(fs.existsSync(boxCopy.file_path), true);
   assert.notEqual(path.resolve(boxCopy.file_path), path.resolve(studioPath));
 });
+
+test("a stored path that is the new file under another spelling is forgotten, not deleted", () => {
+  const folder = path.join(musicRoot, "Racoon", "Liverpool Rain (2011)");
+  fs.mkdirSync(folder, { recursive: true });
+  const newFile = path.join(folder, "12 - Save a Prayer.m4a");
+  fs.writeFileSync(newFile, "the new import");
+  const alias = path.join(tempDir, "library-alias");
+  fs.symlinkSync(musicRoot, alias);
+  const aliasPath = path.join(alias, "Racoon", "Liverpool Rain (2011)", "12 - Save a Prayer.m4a");
+
+  const unlinked = replacementModule.unlinkRetiredLibraryFiles([{
+    id: 999_001,
+    artistId: null,
+    mediaId: null,
+    quality: null,
+    filePath: aliasPath,
+    libraryRoot: alias,
+    resolvedPath: aliasPath,
+  }], newFile, "track");
+
+  assert.equal(fs.existsSync(newFile), true, "the file this import just placed was deleted");
+  assert.deepEqual(unlinked.map((row) => row.id), [999_001], "the alias row must still be forgotten");
+});

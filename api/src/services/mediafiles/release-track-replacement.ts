@@ -82,6 +82,16 @@ function samePath(left: string, right: string): boolean {
     : resolvedLeft === resolvedRight;
 }
 
+function isSameFile(left: string, right: string): boolean {
+  try {
+    const a = fs.statSync(left);
+    const b = fs.statSync(right);
+    return a.ino === b.ino && a.dev === b.dev;
+  } catch {
+    return false;
+  }
+}
+
 function toRetired(row: RetiredRow, newFilePath: string): RetiredLibraryFile | null {
   const resolvedPath = resolveStoredLibraryPath({
     filePath: row.file_path,
@@ -202,6 +212,14 @@ export function unlinkRetiredLibraryFiles(
   for (const row of rows) {
     if (samePath(row.resolvedPath, newFilePath)) continue;
     try {
+      // A stored path can name the new file under another spelling (bind
+      // mount, symlink, case-insensitive or normalising filesystem). Deleting
+      // it would delete the file this import just placed; only its stale row
+      // goes.
+      if (isSameFile(row.resolvedPath, newFilePath)) {
+        unlinked.push(row);
+        continue;
+      }
       if (fs.existsSync(row.resolvedPath)) {
         fs.rmSync(row.resolvedPath, { force: true });
         console.log(`[Organizer] Deleted old ${fileType} file (replaced by upgrade): ${row.resolvedPath}`);
