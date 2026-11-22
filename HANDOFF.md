@@ -1,43 +1,59 @@
 # Session Handoff
 
-- **Branch**: `claude/sweet-hypatia-nywmuu` (audit of 2.26.11 + live report from Primula, 21 Nov ~21:00 CET)
-- **What is done** (each has a test that fails on `main` and passes here):
-  - **Retry of a failed download 404'd (live bug 1).** `QueueHistoryPanel` called `retryItem(id)`, which defaulted to `source=queue`, but history ids are `commands.id`. It now sends `source=history`. The server no longer turns every history-retry error into 404: a job missing its media type/provider id answers 422 with the reason, other errors (e.g. a locked DB) reach the route as 503/500 with their message, and 404s carry a `message`. The API client also shows a body's `error` field, so toasts no longer say just "Request failed". Tests: `QueueHistoryPanel.test.tsx`, `download-wait-queue.test.ts` ("a retry that cannot be queued says why…").
-  - **HTTP routes writing outside the write gate.** On the HTTP thread a bare write throws `database is locked` immediately whenever a worker holds the writer (e.g. during the hour-long ApplyCuration). The five "delete files" routes (`trackfile/:id`, `track/:id/files`, `album/:id/files`, `artist/:id/files`, `video/:id/files`) unlinked the file first and then failed the row delete, which left `TrackFiles` rows pointing at deleted files. These routes, video monitoring `PATCH /video/:id`, `POST /artist/:id/path` and the CheckUpgrades queued by `POST /config/quality` now go through `withDbWrite`. Test: `routes/v1/trackfile.test.ts` (500 + orphaned row on `main`, 200 here).
-  - **#167**: `CheckUpgrades` (scheduled or manual) skips while an `ApplyCuration` / `DownloadMissing` / `DownloadMissingForce` is queued or started. Test in `upgrader-canonical.test.ts`.
-  - **#159**: streamrip output showing Deezer will not deliver the resource (API error 800 `DataException`, "Error getting downloadable data for track", "no media URL for this track"), with no files produced and no transport/auth/config error, now throws `ProviderUnavailableError`. The job takes no same-offer retries, the Deezer release is marked `unavailable`, and planning is made stale, so the next missing pass replans instead of requeueing it. WrongLicense ("…with your subscription") is excluded. The streamrip child now runs with `COLUMNS=400`: rich wrapped log records at 80 columns, which split one error over several lines (that is why the live third shape read "unavailable: no media URL"). A failed run's error text now leads with the Python exception line (`APIError: {...}`) instead of the traceback frame. Tests: `deezer-provider.test.ts`, `download-deezer-unavailable.test.ts`.
-  - **Streamrip classifier, from the live report.** In live #41462 the traceback's source excerpt contains our bridge comment "e-cdns-proxy", and `dns` matched it as transient, which would have blocked #159's unavailable path. The classifier now skips rich's boxed frame lines (they are source code, not messages), matches `\bdns\b`, and counts a bare `XyzError:` / `XyzException:` line as `unknown`, so a crash after a file was written still fails the track.
-  - **yt-dlp, from the live report.** 8 jobs were stored as `yt-dlp exited with code 1: ERROR:`. When the last `ERROR:` line is bare, the error now carries the surrounding stderr. `ERROR: [youtube] <id>: This video is not available` (or `Video unavailable` without "try again later") now throws `ProviderUnavailableError` for that video id, so the offer is marked unavailable and replanned instead of failing every cycle (live: `KLW0TLSmdr4` "Off the Wall"). The age gate ("Sign in to confirm your age") is unchanged, because cookies can fix it. Test in `youtube-music-provider.test.ts`.
-- **What is half-done / not done**:
-  - Route write-gate sweep: the handlers above were confirmed and fixed. A static scan also flagged these mutating handlers with no gate call in their own body. They were **not** reviewed; some delegate to gated helpers or services. List: `auth.ts` (device-login, credentials, downloader-login, logout), `providers.ts` (PUT /priority, logout), `system-status.ts` (unmatched-artists match/ignore, backups), `unmapped.ts` (acoustid, action, identify, auto-import, bulk-*), `v1/album.ts` POST /, `v1/artist.ts` (monitor, PATCH, PUT, DELETE, import), `v1/command.ts` DELETE, `v1/queue.ts` pause/resume, DELETE /tasks/:id, `monitoring.ts` start/stop.
-  - Open PRs `rhjanssen/discogenius#164` (#156) and `rhjanssen/discogenius#160` (#152) are under PO review with Gemini; not touched here.
-- **How it was verified** (last run on the final tree): `yarn lint`, `yarn typecheck` and `yarn build` exit 0. `yarn test:app` (run on the earlier tree; no app files changed since): 51 files, 202 tests passed. `yarn test:api`: 2794 tests, 2781 pass, 6 skipped (the same skips as `main`), 7 fail. No test fails because of these changes (failure names compared against a `main` baseline):
-  - 3 fail in this cloud sandbox on `main` too. "local search answers on an empty catalog" and "artist album upsert stores allowed provider supplements…" need DNS for `api.lidarr.audio`. "a read-only album directory reports the permission cause" cannot fail as root.
-  - 4 are whole files that hit the known "Unable to deserialize cloned data" runner flake: `album-command-service`, `edition-monitoring-contract`, `video-query-service` and `provider-registry`. Each passes in full on a clean isolated run (8/8, 22/22, 15/15, 3/3). The flake also hits isolated runs now and then, so rerun rather than read one failure as a regression.
-  - Each new test was run against the pre-fix code and failed there.
-- **What was live-verified**: nothing. Cloud session, no LAN access. Not live-verified.
-- **Live checks after deploy** (Bastille / Bakermat where relevant):
-  1. Retry a failed album from Queue → History: a new wait row appears; an unqueueable one shows its reason in the toast.
-  2. During an ApplyCuration, "Delete files" on a track/album succeeds (it may take a moment) and leaves no `TrackFiles` row for the deleted path.
-  3. Scheduled CheckUpgrades during a curation/missing pass ends "Skipped: missing-music pass still running".
-  4. A delisted Deezer album (e.g. 113031) fails once, then its Deezer release shows `availability = 'unavailable'` and the next pass does not queue it.
-- **Findings from the live fact report (`discogenius-primula-report-2026-11-21.md`) that need a PO decision**:
-  - **Curation holds the writer for up to 57 s.** Live `sqliteWriteLock` shows `longestHoldMs 56803` (`curation:audio-library`) and `maxWaitMs 34572`. `CurationService.processAll` wraps the whole of `LibraryCurationService.curateLibrary` for one artist in `withSqliteWriteGate`: every read, per-edition plan compute, the optimiser and the writes. Workers wait at most 15 s for the mutex (`withSqliteWriteMutexSync`), so any worker write during a big-catalogue curation fails busy. That explains the two CheckUpgrades failures (22:48 CET on 20 Nov, 01:53 CET on 21 Nov, each during RefreshArtist→CurateArtist), the 3.8 s event-loop lag and the 4.7 s requests.
-    - Proposal (larger change, so not done here): keep only the write sections under the gate. `curateLibrary` interleaves writes (per-edition `acquisitionPlanning.compute` writes plans that the optimiser then reads), so a split means computing plans without persisting them, deciding over the in-memory plans with `prepareSqliteReadPlan(…, sqliteDataRevision)`, then persisting inside one gated transaction that rechecks `isCurrent()` (the pattern `ArtistStatisticsService` already uses).
-    - First, set `DISCOGENIUS_CURATION_PROFILE_MS=5000` on Primula for a day. `[curation-profile]` then shows which phase dominates the 57 s; it is off by default.
-  - **The RefreshArtist "progress stopped" kills at 85% are not stalls after matching.** `matchArtistProviders` runs every connected provider concurrently (`Promise.all(connectedProviders.map(…))`, `refresh-artist-service.ts` ~1394). A provider reports nothing during its collaboration searches and catalog listing (`listArtistReleaseOffers`), which are exactly the phases that hit 429 backoff. So "matching YouTube Music releases (n/n)" is just the fastest provider finishing, while a slower provider (e.g. TIDAL waiting out 429s) works silently until the 30-min watchdog fires. This belongs with #152 / `rhjanssen/discogenius#160`, which already reworks that code. It needs per-provider phase progress (e.g. "TIDAL: searching collaborations (i/n)") as well as progress during rate-limit waits. Not changed here, to avoid conflicting with #160.
-  - **#42288 (Racoon – Liverpool Rain): `TrackFiles` 158058 has no file.** The organizer moves the file *before* writing the row (`organizer.ts` ~2425–2450), so track 12 was placed at or before 18:06:31 UTC and was gone before tagging at ~18:09. Next data to collect, read-only:
+- **Branch**: `claude/sweet-hypatia-nywmuu`, from `main` 2.26.11. No PR opened. It covers the audit, the Primula live reports (21 Nov) and the PO's approval of all recommendations.
+- **Done** (each has a test that fails without the change, unless noted):
+  - **Retry of failed downloads** (live 404): the History panel retries by command id (`source=history`). An unqueueable job answers 422 with its reason, real errors come back as 503/500 with their message, and the API client shows a body's `error` field.
+  - **Readable failures**: `presentFailure` (`api/src/services/commands/failure-presentation.ts`) gives queue, history and activity items a `failure` with category, summary, hint, optional action and the raw `detail`. `FailureNotice` shows the summary and hint, with the raw text behind Details. A failed fallback names the provider that actually failed.
+  - **Curation write gate** (57 s live hold): `processAll` computes each edition's plan under its own gate and holds the gate only for the decision and its persistence (`planning: "caller"`).
+  - **RefreshArtist stalls at 85%**: each provider reports its silent phases (`provider_phase`). When one finishes, the description names the providers still running and their phase.
+  - **HTTP-thread writes outside the gate**, which failed with "database is locked" during curation:
+    - file deletes (track, album, artist, video, track file, unmapped); these unlinked the file before the failing row delete;
+    - artist monitor, unmonitor and policy changes, and artist delete;
+    - video monitoring;
+    - artist path;
+    - provider reorder and disconnect (plans were never marked stale);
+    - manual artist match and ignore;
+    - task cancel;
+    - the CheckUpgrades queued by a quality change.
+  - **#167**: CheckUpgrades skips while ApplyCuration, DownloadMissing or DownloadMissingForce is live.
+  - **#159**: Deezer "no data" output (error 800, "Error getting downloadable data", "no media URL") becomes `ProviderUnavailableError`, so the offer is marked unavailable and replanned.
+    - Streamrip runs with `COLUMNS=400`, because rich wrapped its log lines.
+    - The classifier skips traceback source lines and matches only the whole word `dns`.
+    - A failed run leads with its Python exception line.
+  - **yt-dlp**: a bare `ERROR:` keeps the surrounding stderr; "This video is not available" marks that video unavailable.
+  - **Upgrade renames** release the replaced track's own lyrics and metadata (#42288's stray `.lrc`), keeping anything at the new file's stem.
+  - **UI** (`docs/UX_AUDIT.md`):
+    - nav labels and a System link;
+    - paused-downloads MessageBar;
+    - the provider warning as a MessageBar;
+    - full action labels on desktop;
+    - an empty queue as one line;
+    - Status shows problems first;
+    - an empty library offers "Add an artist", which focuses search;
+    - Settings toasts give the reason.
+- **Not done / proposals** (details in `docs/UX_AUDIT.md`):
+  - a Wanted view (why each monitored album isn't downloading);
+  - a log viewer;
+  - splitting the Dashboard into Activity / Wanted / Library import / System;
+  - `title=` to Fluent `Tooltip` (117 places);
+  - "Retry all failed";
+  - a health dot in the nav, which needs a cheap endpoint.
+- **Not done / open questions**:
+  - #42288's track 12 file went missing between 18:06:31 and about 18:09 UTC. The organizer moves the file before writing the row, so something removed it afterwards. Next data to collect:
     - `find /library -iname "*Save a Prayer*"`
-    - JSONL lines for command 42288 between 18:05 and 18:10 UTC (any `[Organizer]` / `Deleted old` / rename lines)
-    - the `downloadState.tracks` entry for track 12 (`providerTrackId`, `importStatus`)
-  - **Leftover lyric sidecars.** `unlinkRetiredLibraryFiles` (`release-track-replacement.ts`) deletes only the retired media file, so a renamed track keeps its old `.lrc` next to the new one (live: tracks 7 and 10 of #42288). The fix deletes files in the media lifecycle (the #139/#140 area), so it is left for an explicit decision.
-  - **Fallback failures show the wrong provider.** #41603 and #41771 (Cher – Christmas) say `provider: deezer`, but the error is Apple's. `downloadItem` records the fallback provider in the payload only on success, so a failed whole-album fallback keeps the primary's label. This affects diagnostics only.
-  - **Deploys kill running imports.** All the "worker restarted" failures today were the 2.26.8 and 2.26.9 deploys. Compose allows 180 s and the app drains imports for 140 s (`DISCOGENIUS_SHUTDOWN_IMPORT_DRAIN_MS`), but these imports had been mutating the library for minutes and failed closed on boot, by design. Operationally: pause the download queue and wait for running imports to finish before deploying.
-  - **Apple "Failed to get album response" (exit 0)** keeps failing every cycle for albums 1121490551 and 674064561. It could be storefront unavailability, but one failure is too little evidence to mark an offer unavailable, so this is left for a decision.
-  - API auth is disabled (no admin password) while port 3737 is open on all interfaces. That needs a product decision, so it is not changed here.
-- **Draft CHANGELOG lines**:
-  - Retrying a failed download from the queue history works again, and a retry that cannot run now says why instead of "Request failed".
-  - Deleting files no longer fails, or leaves a library entry for a deleted file, while a curation or refresh is running. Toggling video monitoring, changing an artist path and changing quality settings also wait for their turn to write.
-  - Upgrade checks wait until a running curation or missing-music pass has queued its albums (#167).
-  - Deezer albums that Deezer no longer delivers are marked unavailable and replanned instead of retried every pass; Deezer errors show the actual exception (#159).
-  - YouTube videos that YouTube has removed are marked unavailable instead of failing every cycle, and yt-dlp failures keep their reason instead of a bare "ERROR:".
+    - the JSONL log lines for command 42288 between 18:05 and 18:10 UTC
+  - Apple "Failed to get album response" (exit 0) repeats for albums 1121490551 and 674064561. They are not marked unavailable: one failure is too little evidence.
+  - API auth is disabled while port 3737 is open on all interfaces. That is a product decision.
+  - Deploys kill imports that are already moving files; they fail closed by design. Pause downloads and let running imports finish before deploying.
+  - Open PRs `rhjanssen/discogenius#164` (#156) and `rhjanssen/discogenius#160` (#152) belong to Gemini. #160 overlaps the refresh-progress change in `refresh-artist-service.ts` and will need a rebase.
+- **Verification** (final tree): `yarn lint`, `yarn typecheck` and `yarn build` exit 0. `yarn test:app`: 52 files, 204 tests passed. `yarn test:api`: 2800 tests, 2790 pass, 6 skipped (the same skips as `main`), 4 fail. No failure is new against the `main` baseline (names compared). The 4 are tests that fail in this sandbox on `main` as well:
+  - "local search answers on an empty catalog" and "artist album upsert stores allowed provider supplements…" need DNS for `api.lidarr.audio`;
+  - "a read-only album directory reports the permission cause" cannot fail as root;
+  - whole files that hit "Unable to deserialize cloned data" pass when rerun in isolation (`metadata-files.test.ts` here: 11/11 on two clean runs).
+- **Live-verified**: nothing; no LAN access. The UI was checked in Chromium against a scratch database seeded with the live failure texts.
+- **Live checks after deploy** (Bastille / Bakermat):
+  1. Retry a failed album from History: it queues; an unqueueable job shows its reason.
+  2. During a curation pass, `sqliteWriteLock.longestHoldMs` stays at a few seconds, not ~57 s. Deleting files and unmonitoring an artist succeed.
+  3. A refresh killed by the watchdog names the provider and phase it was waiting on.
+  4. A delisted Deezer album fails once and is then not requeued. `KLW0TLSmdr4` is marked unavailable.
+  5. Failed items read as a cause and a next step, with the raw text behind Details.
