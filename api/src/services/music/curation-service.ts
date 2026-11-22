@@ -1,8 +1,13 @@
 import { db, withSqliteWriteGate } from "../../database.js";
+import { emitLibraryUpdated } from "../commands/app-events.js";
 import {
   loadArtistMetadataIdentity,
 } from "./managed-artists.js";
-import { ACQUISITION_PLANNER_VERSION, getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
+import {
+  ACQUISITION_PLANNER_VERSION,
+  AcquisitionPlanningService,
+  getAcquisitionProviderPriority,
+} from "./acquisition-planning-service.js";
 import { LibraryCurationService } from "./library-curation-service.js";
 import { curateArtistVideos } from "./video-curation-service.js";
 
@@ -67,6 +72,11 @@ export class CurationService {
     `).get(identity.canonicalArtistId) as { count: number }).count);
     const providerPriority = getAcquisitionProviderPriority();
     const curation = new LibraryCurationService(db);
+    const planning = new AcquisitionPlanningService(db);
+    const planEdition = (libraryId: number, editionId: number, label: string) => withSqliteWriteGate(
+      () => planning.compute({ libraryId, editionId, providerPriority, plannerVersion: ACQUISITION_PLANNER_VERSION }),
+      label,
+    );
     for (const library of libraries) {
       // Curate this artist, not the whole library. The optimiser has always run
       // per LibraryArtist, so the decisions are identical either way — but an
@@ -77,13 +87,28 @@ export class CurationService {
         WHERE library_id = ? AND artist_metadata_id = ?
       `).all(library.id, identity.canonicalArtistId) as Array<{ id: number }>).map(({ id }) => id);
       if (libraryArtistIds.length === 0) continue;
-      await withSqliteWriteGate(() => curation.curateLibrary({
+      // Plans are a fingerprinted cache of provider evidence and each edition's
+      // plan stands alone, so other writers may run between editions. Only the
+      // monitoring decision must not interleave with a user's exclusion or
+      // lock, and that alone holds the gate. One gate around everything held
+      // the writer for 57 s on a large catalogue and failed every worker write
+      // that waited past its 15 s limit.
+      const scope = { libraryArtistIds };
+      for (const editionId of curation.candidateEditionIds({ libraryId: library.id, scope })) {
+        await planEdition(library.id, editionId, "curation:edition-plan");
+      }
+      const curated = await withSqliteWriteGate(() => curation.curateLibrary({
         libraryId: library.id,
         curationVersion: 1,
         acquisitionPlannerVersion: ACQUISITION_PLANNER_VERSION,
         providerPriority,
-        scope: { libraryArtistIds },
+        scope,
+        planning: "caller",
       }), "curation:audio-library");
+      for (const editionId of curated.selectedEditionIds) {
+        await planEdition(library.id, editionId, "curation:replan-selected");
+      }
+      emitLibraryUpdated({ reason: "library-curated", libraryIds: [library.id] });
     }
     // Videos are curated after the audio editions, because inline placement can
     // only choose among Tracks of Editions that are monitored — which the loop
