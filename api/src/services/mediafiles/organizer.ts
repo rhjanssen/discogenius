@@ -1267,7 +1267,7 @@ export class OrganizerService {
         continue;
       }
 
-      if (normalizedResolvedPath === normalizedExpectedPath) {
+      if (normalizedResolvedPath === normalizedExpectedPath || this.isSameFile(resolvedFilePath, expectedPath)) {
         hasExpectedSidecar = true;
         continue;
       }
@@ -1428,7 +1428,7 @@ export class OrganizerService {
         continue;
       }
 
-      if (normalizedResolvedPath === normalizedExpectedPath) {
+      if (normalizedResolvedPath === normalizedExpectedPath || this.isSameFile(resolvedFilePath, params.expectedPath)) {
         hasExpectedSidecar = true;
         continue;
       }
@@ -1775,6 +1775,17 @@ export class OrganizerService {
       return `path component too long (${Buffer.byteLength(name, "utf8")} bytes): ${name}`;
     }
     return message;
+  }
+
+  /** Two spellings of one file: case-insensitive datasets (live: HDDs/Music), links. */
+  private static isSameFile(left: string, right: string): boolean {
+    try {
+      const a = fs.statSync(left);
+      const b = fs.statSync(right);
+      return a.ino === b.ino && a.dev === b.dev;
+    } catch {
+      return false;
+    }
   }
 
   private static moveFileBytes(sourcePath: string, destPath: string): void {

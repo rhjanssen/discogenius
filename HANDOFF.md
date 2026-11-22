@@ -39,9 +39,7 @@
   - "Retry all failed";
   - a health dot in the nav, which needs a cheap endpoint.
 - **Not done / open questions**:
-  - #42288's track 12 file went missing between 18:06:31 and about 18:09 UTC. The organizer moves the file before writing the row, so something removed it afterwards. Next data to collect:
-    - `find /library -iname "*Save a Prayer*"`
-    - the JSONL log lines for command 42288 between 18:05 and 18:10 UTC
+  - #42288 is solved: `HDDs/Music` (and `HDDs/Media`, `HDDs/Videos`, `/config/media-cover`) is case-insensitive ZFS, and the upgrade renamed track 12 only in case (`2 meter sessie` → `2 Meter Sessie`). Retiring the old row (5460) compared paths as text and deleted the new file (history 203873, 18:06:31). Fixed in `19ff147` (retire by inode). The same text compare in the lyric cleanup and the organizer's sidecar relocation would have deleted the new lyrics, also fixed. Affected live files are lost and need a re-download: retry #42288. Other case-only upgrade renames since the upgrader started may have lost files the same way. Find them with `TrackFileDeleted` events whose `deletedPath` equals `replacementPath` ignoring case.
   - Apple "Failed to get album response" (exit 0) repeats for albums 1121490551 and 674064561. They are not marked unavailable: one failure is too little evidence.
   - API auth is disabled while port 3737 is open on all interfaces. That is a product decision.
   - Deploys kill imports that are already moving files; they fail closed by design. Pause downloads and let running imports finish before deploying.

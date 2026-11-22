@@ -237,6 +237,16 @@ export function releaseExtrasForDeletedTrackFiles(input: {
   return result;
 }
 
+function isSameFile(left: string, right: string): boolean {
+  try {
+    const a = fs.statSync(left);
+    const b = fs.statSync(right);
+    return a.ino === b.ino && a.dev === b.dev;
+  } catch {
+    return false;
+  }
+}
+
 function sidecarStem(filePath: string): string {
   const normalized = path.normalize(filePath);
   return path.join(path.dirname(normalized), path.basename(normalized, path.extname(normalized)));
@@ -262,6 +272,9 @@ export function releaseExtrasOfReplacedTrackFiles(input: {
     if (row.track_file_id == null || !replaced.has(row.track_file_id)) continue;
     const resolvedPath = resolveStoredLibraryPath({ filePath: row.file_path, libraryRoot: row.library_root });
     if (sidecarStem(resolvedPath) === keptStem) continue;
+    // On a case-insensitive dataset (live: HDDs/Music) a name differing only
+    // in case is the replacement's own sidecar.
+    if (isSameFile(resolvedPath, keptStem + path.extname(resolvedPath))) continue;
     releaseExtra(table, row, input.scope, true, result);
   }
   return result;
