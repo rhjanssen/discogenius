@@ -879,3 +879,74 @@ test("dispatchDownloadPhase completes with warning when download workspace produ
     processor.progressBuffer?.clear();
   }
 });
+
+test("a fallback that also fails records which provider the error came from", async () => {
+  registerProvider("label-p");
+  registerProvider("label-q");
+  db.prepare("INSERT INTO ArtistMetadata (id, mbid, name) VALUES (9, 'artist-fp', 'Bakermat')").run();
+  db.prepare("INSERT INTO Albums (id, mbid, title, artist_mbid, primary_type) VALUES (9, 'group-fp', 'Ultra', 'artist-fp', 'Album')").run();
+  db.prepare(`
+    INSERT INTO AlbumEditions (id, mbid, release_group_id, title, release_group_mbid, artist_mbid)
+    VALUES (9, 'release-fp', 9, 'Ultra', 'group-fp', 'artist-fp')
+  `).run();
+  db.prepare("INSERT INTO Recordings (id, mbid, title, length_ms, is_video) VALUES (90, 'rec-fp', 'Teach Me', 180000, 0)").run();
+  db.prepare(`
+    INSERT INTO Tracks (id, mbid, album_edition_id, recording_id, medium_position, position, title, release_mbid, recording_mbid)
+    VALUES (90, 'track-fp', 9, 90, 1, 1, 'Teach Me', 'release-fp', 'rec-fp')
+  `).run();
+  seedOffer({
+    recordingId: 90, recordingMbid: "rec-fp", trackId: 90, trackMbid: "track-fp",
+    itemId: 901, provider: "label-p", providerTrackId: "track-p", qualityClass: "hires-lossless",
+  });
+  seedOffer({
+    recordingId: 90, recordingMbid: "rec-fp", trackId: 90, trackMbid: "track-fp",
+    itemId: 902, provider: "label-q", providerTrackId: "track-q", qualityClass: "lossless",
+  });
+  downloadBackendRegistry.register({
+    id: "label-p-fallback-label-test",
+    supportedProviders: ["label-p"],
+    capabilities: ["stereo"],
+    async download(request) {
+      throw new ProviderUnavailableError("label-p", "track", request.providerId, "gone");
+    },
+  });
+  downloadBackendRegistry.register({
+    id: "label-q-fallback-label-test",
+    supportedProviders: ["label-q"],
+    capabilities: ["stereo"],
+    async download() {
+      throw new Error("Failed to get album response.");
+    },
+  });
+  const payload = {
+    provider: "label-p",
+    providerId: "track-p",
+    type: "track",
+    title: "Teach Me",
+    artist: "Bakermat",
+    slot: "stereo",
+    canonicalTrackMbid: "track-fp",
+    canonicalRecordingMbid: "rec-fp",
+  };
+  db.prepare(`
+    INSERT INTO commands (id, name, payload, status, worker_id)
+    VALUES (91100, 'DownloadTrack', ?, 'started', 'same-provider-test')
+  `).run(JSON.stringify(payload));
+
+  const processor = new DownloadProcessor() as any;
+  processor.attemptOwners.set(91100, "same-provider-test");
+  try {
+    await assert.rejects(
+      () => processor.downloadItem(91100, "track-p", "track", payload, { ...entryFor("label-p"), type: "track", providerId: "track-p" }),
+      /Failed to get album response/,
+    );
+    processor.flushProgressBuffer();
+    const stored = JSON.parse((db.prepare("SELECT payload FROM commands WHERE id = 91100").get() as { payload: string }).payload);
+    assert.equal(stored.provider, "label-p", "a retry still starts from the planned provider");
+    assert.equal(stored.downloadState?.primaryProvider, "label-p");
+    assert.equal(stored.downloadState?.fallbackProvider, "label-q");
+  } finally {
+    clearInterval(processor.progressFlushTimer);
+    processor.progressBuffer?.clear();
+  }
+});

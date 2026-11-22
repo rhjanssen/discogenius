@@ -433,6 +433,27 @@ test("history items explain a stored failure instead of only echoing it", () => 
   assert.equal(item?.failure?.detail, raw);
 });
 
+test("a failed fallback is explained in terms of the provider that failed", () => {
+  const commandId = Number(dbModule.db.prepare(`
+    INSERT INTO commands (name, payload, status, error, ref_id)
+    VALUES ('DownloadAlbum', ?, 'failed', ?, '674064561')
+  `).run(
+    JSON.stringify({
+      type: "album",
+      provider: "deezer",
+      providerId: "674064561",
+      title: "Christmas",
+      downloadState: { state: "failed", primaryProvider: "deezer", fallbackProvider: "apple-music" },
+    }),
+    "apple-music-downloader exited with code 0: Failed to get album response.",
+  ).lastInsertRowid);
+  queryModule.DownloadQueueQueryService.invalidateSnapshots();
+
+  const item = queryModule.DownloadQueueQueryService.getQueueHistory({ limit: 10, offset: 0 }).items
+    .find((entry) => entry.id === commandId);
+  assert.equal(item?.failure?.summary, "Apple Music didn't return this album");
+});
+
 test("recoverOrphanClaims drops wait rows whose command already failed", () => {
   enqueueTrack("fail-orphan", "Stuck Album");
   const claimed = waitQueueModule.DownloadWaitQueue.claimNextPage().claimed;
