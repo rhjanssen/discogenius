@@ -119,11 +119,39 @@ export function pathsDifferOnlyByCase(left: string, right: string): boolean {
 
 export function sameDirectoryEntry(left: string, right: string): boolean {
     try {
-        const source = fs.lstatSync(left);
-        const expected = fs.lstatSync(right);
+        const source = fs.lstatSync(left, { bigint: true });
+        const expected = fs.lstatSync(right, { bigint: true });
         return source.dev === expected.dev && source.ino === expected.ino;
     } catch {
         return false;
+    }
+}
+
+/**
+ * True when both paths resolve to the same physical file (same device and
+ * inode). Uses bigint stats so 64-bit ZFS inodes never lose precision.
+ */
+export function isSameFile(left: string, right: string): boolean {
+    try {
+        const a = fs.statSync(left, { bigint: true });
+        const b = fs.statSync(right, { bigint: true });
+        return a.dev === b.dev && a.ino === b.ino;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Witness for a regular non-symlink file (`dev:ino:size:mtimeNs`), or null when
+ * missing, linked, or not a regular file.
+ */
+export function fileContentWitness(filePath: string): string | null {
+    try {
+        const stat = fs.lstatSync(filePath, { bigint: true });
+        if (!stat.isFile() || stat.isSymbolicLink()) return null;
+        return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}`;
+    } catch {
+        return null;
     }
 }
 

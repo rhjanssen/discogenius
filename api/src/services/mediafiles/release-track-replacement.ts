@@ -4,7 +4,7 @@ import { db } from "../../database.js";
 import { SQL_JSON_LIST, jsonList } from "../../utils/sql-id-list.js";
 import { HISTORY_EVENT_TYPES, recordHistoryEvent } from "../commands/history-events.js";
 import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
-import { normalizeResolvedPath, resolvedPathIsInsideRoot } from "./path-utils.js";
+import { isSameFile, normalizeResolvedPath, resolvedPathIsInsideRoot } from "./path-utils.js";
 
 /**
  * The only audio file an import may retire.
@@ -33,6 +33,7 @@ export type VideoResourceReplacement = {
 
 export type RetiredLibraryFile = {
   id: number;
+  libraryId?: number | null;
   artistId: number | string | null;
   mediaId: string | null;
   quality: string | null;
@@ -43,6 +44,7 @@ export type RetiredLibraryFile = {
 
 type RetiredRow = {
   id: number;
+  library_id: number | null;
   artist_id: number | string | null;
   media_id: string | null;
   quality: string | null;
@@ -82,16 +84,6 @@ function samePath(left: string, right: string): boolean {
     : resolvedLeft === resolvedRight;
 }
 
-function isSameFile(left: string, right: string): boolean {
-  try {
-    const a = fs.statSync(left);
-    const b = fs.statSync(right);
-    return a.ino === b.ino && a.dev === b.dev;
-  } catch {
-    return false;
-  }
-}
-
 function toRetired(row: RetiredRow, newFilePath: string): RetiredLibraryFile | null {
   const resolvedPath = resolveStoredLibraryPath({
     filePath: row.file_path,
@@ -100,6 +92,7 @@ function toRetired(row: RetiredRow, newFilePath: string): RetiredLibraryFile | n
   if (samePath(resolvedPath, newFilePath)) return null;
   return {
     id: row.id,
+    libraryId: row.library_id,
     artistId: row.artist_id,
     mediaId: row.media_id,
     quality: row.quality,
@@ -156,6 +149,7 @@ export function listPreviousReleaseTrackFiles(target: ReleaseTrackReplacement): 
   const rows = db.prepare(`
     SELECT
       tf.id,
+      tf.library_id,
       tf.artist_metadata_id AS artist_id,
       CAST(tf.provider_id AS TEXT) AS media_id,
       tf.quality,
@@ -183,6 +177,7 @@ export function listPreviousVideoFiles(target: VideoResourceReplacement): Retire
   const rows = db.prepare(`
     SELECT
       tf.id,
+      tf.library_id,
       tf.artist_metadata_id AS artist_id,
       CAST(tf.provider_id AS TEXT) AS media_id,
       tf.quality,

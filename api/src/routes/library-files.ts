@@ -17,6 +17,10 @@ import { requiresBrowserCompatibleAudioStream, spawnBrowserCompatibleAudioTransc
 import { rootScanRouteService } from "../services/mediafiles/root-scan-route-service.js";
 import { isRequestValidationError, parseBoundedQueryInteger, RequestValidationError, getObjectBody, getRequiredInteger, getOptionalBoolean, rejectUnknownKeys } from "../utils/request-validation.js";
 import { previewLibraryCleanup } from "../services/mediafiles/library-cleanup-plan.js";
+import {
+  OrphanSidecarConflictError,
+  previewOrphanSidecarCleanup,
+} from "../services/mediafiles/orphan-sidecar-cleanup.js";
 import { parsePlaybackRange } from "../services/music/segmented-playback-cache.js";
 
 import { parseFileSelectionIds } from "../services/mediafiles/file-selection.js";
@@ -90,6 +94,102 @@ router.post("/cleanup/apply",async(req,res)=>{
     res.status(202).json({commandId});
   } catch(error) {
     res.status(isRequestValidationError(error) ? 400 : 409).json({detail:error instanceof Error ? error.message : String(error)});
+  }
+});
+
+router.get("/orphan-sidecars/preview", async (req, res) => {
+  try {
+    const libraryRoot = typeof req.query.libraryRoot === "string" && req.query.libraryRoot.trim()
+      ? req.query.libraryRoot.trim()
+      : undefined;
+    const artistId = typeof req.query.artistId === "string" && req.query.artistId.trim()
+      ? req.query.artistId.trim()
+      : undefined;
+    const limit = req.query.limit !== undefined
+      ? parseBoundedQueryInteger(req.query.limit, 500, { min: 1, max: 2000 })
+      : 500;
+    const report = await previewOrphanSidecarCleanup({ libraryRoot, artistId, limit });
+    res.json(report);
+  } catch (error) {
+    const status = isRequestValidationError(error) ? 400 : 500;
+    res.status(status).json({ detail: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post("/orphan-sidecars/apply", async (req, res) => {
+  try {
+    const body = getObjectBody(req.body);
+    rejectUnknownKeys(body, ["confirm", "confirmationToken", "libraryRoot", "artistId", "pruneEmptyFolders", "filePaths"]);
+    if (body.confirm !== true) {
+      throw new RequestValidationError("confirm: true is required after running orphan-sidecars preview");
+    }
+    const confirmationToken = typeof body.confirmationToken === "string" ? body.confirmationToken.trim() : "";
+    if (!confirmationToken) {
+      throw new RequestValidationError("confirmationToken from orphan-sidecars preview is required");
+    }
+    const libraryRoot = typeof body.libraryRoot === "string" && body.libraryRoot.trim()
+      ? body.libraryRoot.trim()
+      : undefined;
+    const artistId = typeof body.artistId === "string" && body.artistId.trim()
+      ? body.artistId.trim()
+      : undefined;
+    const pruneEmptyFolders = getOptionalBoolean(body, "pruneEmptyFolders") ?? false;
+    let filePaths: string[] | undefined;
+    if (body.filePaths !== undefined) {
+      if (!Array.isArray(body.filePaths) || body.filePaths.length === 0 || body.filePaths.some((p) => typeof p !== "string" || !p.trim())) {
+        throw new RequestValidationError("filePaths must be a non-empty array of file path strings");
+      }
+      filePaths = body.filePaths.map((p) => p.trim());
+    }
+
+    const preview = await previewOrphanSidecarCleanup({ libraryRoot, artistId });
+    if (preview.confirmationToken !== confirmationToken) {
+      throw new OrphanSidecarConflictError(
+        "Orphan sidecar list changed since dry-run preview; run preview again before applying",
+      );
+    }
+    if (filePaths) {
+      const eligible = new Set(preview.entries.map((entry) => path.resolve(entry.filePath)));
+      for (const candidatePath of filePaths) {
+        if (!eligible.has(path.resolve(candidatePath))) {
+          throw new OrphanSidecarConflictError(
+            `Requested path is not an eligible orphan sidecar in the confirmed preview: ${candidatePath}`,
+          );
+        }
+      }
+    }
+
+    const targetCount = filePaths ? filePaths.length : preview.orphanCount;
+    if (targetCount === 0) {
+      return res.json({ commandId: null, orphanCount: 0, confirmationToken, message: "No orphan sidecars to remove" });
+    }
+
+    const commandId = await withDbWrite(() =>
+      CommandQueueManager.push(
+        CommandNames.CleanupOrphanSidecars,
+        {
+          confirm: true,
+          confirmationToken,
+          ...(libraryRoot ? { libraryRoot } : {}),
+          ...(artistId ? { artistId } : {}),
+          pruneEmptyFolders,
+          ...(filePaths ? { filePaths } : {}),
+          title: "Clean Orphan Sidecars",
+          description: `Removing ${targetCount} confirmed orphan sidecar(s)`,
+        },
+        `cleanup-orphan-sidecars:${confirmationToken.slice(0, 16)}`,
+        CommandPriority.Interactive,
+        CommandTrigger.Manual,
+      ),
+    );
+    res.status(202).json({ commandId, orphanCount: targetCount, confirmationToken });
+  } catch (error) {
+    const status = isRequestValidationError(error)
+      ? 400
+      : error instanceof OrphanSidecarConflictError
+        ? 409
+        : 500;
+    res.status(status).json({ detail: error instanceof Error ? error.message : String(error) });
   }
 });
 
