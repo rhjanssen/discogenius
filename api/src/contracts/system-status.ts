@@ -83,9 +83,34 @@ export interface DeepDatabaseHealthResultContract {
   persistenceError?: string;
 }
 
+export interface RuntimeDiagnosticsContract {
+  uptimeMs: number;
+  inFlightRequests?: number;
+  slowRequests?: number;
+  eventLoopLag?: {
+    meanMs: number;
+    p95Ms: number;
+    p99Ms: number;
+    maxMs: number;
+  };
+  commands?: {
+    sqliteWriteLock?: {
+      held: boolean;
+      heldForMs: number;
+      queueDepth: number;
+      maxWaitMs: number;
+      longestHoldMs: number;
+      heldByLabel: string | null;
+      longestHoldLabel: string | null;
+    };
+  } | null;
+}
+
 export interface SystemStatusContract {
+  version?: string;
   checkedAt: string;
   status: HealthOverallStatusContract;
+  runtime?: RuntimeDiagnosticsContract;
   paths: {
     config: HealthCheckResultContract;
     database: HealthCheckResultContract;

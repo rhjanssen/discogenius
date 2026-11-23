@@ -99,3 +99,11 @@ test("backup download and delete reject unrelated files", async () => {
   assert.equal(remove.status, 404);
   assert.equal(fs.readFileSync(unrelatedFile, "utf8"), "keep me");
 });
+
+test("GET /system/status includes current app version (#171)", async () => {
+  const response = await fetch(`${baseUrl}/system/status`);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { version?: string; status?: string };
+  assert.match(String(body.version || ""), /^\d+\.\d+\.\d+/);
+  assert.ok(body.status);
+});

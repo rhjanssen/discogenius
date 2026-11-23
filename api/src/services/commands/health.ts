@@ -5,6 +5,7 @@ import { db } from "../../database.js";
 import { BASE_SCHEMA_VERSION } from "../../database/schema/version.js";
 import { rebuildSearchIndex } from "../../database/schema/search.js";
 import { Config, CONFIG_DIR, getConfigSection } from "../config/config.js";
+import { getCurrentAppReleaseInfo } from "../config/app-release.js";
 import { DB_PATH } from "../config/bootstrap.js";
 import { getRuntimeDiagnosticsSnapshot } from "./runtime-diagnostics.js";
 import {
@@ -54,6 +55,7 @@ export interface DeepDatabaseHealthResult {
 }
 
 export interface HealthDiagnosticsSnapshot {
+  version: string;
   checkedAt: string;
   status: HealthOverallStatus;
   runtime: RuntimeDiagnosticsSnapshot;
@@ -414,10 +416,27 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
     const commandNames = Object.values(CommandNames);
     const failed = db.prepare(`
       SELECT COUNT(*) AS count
-      FROM commands INDEXED BY idx_commands_status_name_completed
-      WHERE status = 'failed'
-        AND name IN (${commandNames.map(() => "?").join(", ")})
-        AND completed_at >= datetime('now', '-24 hours')
+      FROM commands f INDEXED BY idx_commands_status_name_completed
+      WHERE f.status = 'failed'
+        AND f.name IN (${commandNames.map(() => "?").join(", ")})
+        AND f.completed_at >= datetime('now', '-24 hours')
+        AND NOT (
+          f.ref_id IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM commands s INDEXED BY idx_commands_name_status_ref_id
+            WHERE s.name = f.name
+              AND s.status = 'completed'
+              AND s.ref_id = f.ref_id
+              AND (
+                COALESCE(s.completed_at, s.updated_at, '') > COALESCE(f.completed_at, f.updated_at, '')
+                OR (
+                  COALESCE(s.completed_at, s.updated_at, '') = COALESCE(f.completed_at, f.updated_at, '')
+                  AND s.id > f.id
+                )
+              )
+          )
+        )
     `).get(...commandNames) as { count: number };
 
     const queued = Number(active.queued) || 0;
@@ -435,10 +454,43 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
     const noProgress = commandRuntime?.leases.noProgress ?? 0;
     const pool = commandRuntime?.workerPool ?? null;
     const deadPool = Boolean(pool?.started && pool.workers.length === 0);
+    const nowMs = Date.now();
     const staleBusyWorkers = pool?.workers.filter((worker) => (
       worker.busy
-      && Date.now() - Date.parse(worker.lastSeenAt) > 2 * 60_000
+      && nowMs - Date.parse(worker.lastSeenAt) > 2 * 60_000
     )) ?? [];
+    const activeBusyWorkers = pool?.workers.filter((worker) => (
+      worker.busy
+      && nowMs - Date.parse(worker.lastSeenAt) <= 2 * 60_000
+    )) ?? [];
+
+    const isAging = oldestEligibleAgeMs != null && oldestEligibleAgeMs >= warningAgeMs;
+    let drainingWave = false;
+    if (
+      isAging
+      && noProgress === 0
+      && expiredLeases === 0
+      && staleBusyWorkers.length === 0
+      && Boolean(pool?.started)
+      && activeBusyWorkers.length > 0
+      && started > 0
+    ) {
+      const oldestNonRefresh = db.prepare(`
+        SELECT MIN(created_at) AS oldest_created_at
+        FROM commands
+        WHERE status = 'queued'
+          AND (retry_after IS NULL OR retry_after <= CURRENT_TIMESTAMP)
+          AND name NOT IN (?, ?)
+      `).get(CommandNames.RefreshArtist, CommandNames.MatchArtistProviders) as
+        | { oldest_created_at: string | null }
+        | undefined;
+      const nonRefreshTimestamp = parseSqliteTimestamp(oldestNonRefresh?.oldest_created_at ?? null);
+      const nonRefreshAgeMs = nonRefreshTimestamp == null ? null : Math.max(0, nowMs - nonRefreshTimestamp);
+      if (nonRefreshAgeMs == null || nonRefreshAgeMs < warningAgeMs) {
+        drainingWave = true;
+      }
+    }
+    const agingWarning = isAging && !drainingWave;
 
     const details = {
       queued,
@@ -451,35 +503,46 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
       workerPoolStarted: pool?.started ?? false,
       workerCount: pool?.workers.length ?? 0,
       staleBusyWorkerIds: staleBusyWorkers.map((worker) => worker.workerId),
+      drainingWave,
       thresholds: { warningAgeMs, errorAgeMs, busyWorkerLastSeenMs: 2 * 60_000 },
     };
 
     if (deadPool || expiredLeases > 0 || staleBusyWorkers.length > 0) {
+      const errorReasons: string[] = [];
+      if (deadPool) errorReasons.push("command worker pool has no live workers");
+      if (expiredLeases > 0) errorReasons.push(`${expiredLeases} expired command lease(s)`);
+      if (staleBusyWorkers.length > 0) errorReasons.push(`${staleBusyWorkers.length} unresponsive busy worker(s)`);
       return {
         scope: "commands.queue",
         status: "error",
-        message: "The command queue has a liveness failure requiring operator attention",
+        message: `Command queue liveness failure: ${errorReasons.join("; ")}`,
         details,
       };
     }
-    if (
-      noProgress > 0
-      || failedLast24h > 0
-      || (oldestEligibleAgeMs != null && oldestEligibleAgeMs >= warningAgeMs)
-    ) {
+    if (noProgress > 0 || agingWarning) {
+      const warningReasons: string[] = [];
+      if (noProgress > 0) warningReasons.push(`${noProgress} command(s) stalled with no progress`);
+      if (agingWarning && oldestEligibleAgeMs != null) {
+        warningReasons.push(`oldest eligible queued command has waited ${Math.max(1, Math.round(oldestEligibleAgeMs / 60_000))}m`);
+      }
       return {
         scope: "commands.queue",
         status: "warning",
-        message: "The command queue has recent failures, stalled progress, or an aging backlog",
+        message: `Command queue needs attention: ${warningReasons.join("; ")}`,
         details,
       };
     }
+    const failureNote = failedLast24h > 0
+      ? ` (${failedLast24h} unresolved failure(s) in last 24h)`
+      : "";
     return {
       scope: "commands.queue",
       status: "ok",
-      message: queued > 0 || started > 0
-        ? `Command queue is making work available (${queued} queued, ${started} started)`
-        : "Command queue has no active backlog",
+      message: drainingWave
+        ? `Command queue is draining an active refresh wave (${queued} queued, ${started} started)${failureNote}`
+        : queued > 0 || started > 0
+          ? `Command queue is making work available (${queued} queued, ${started} started)${failureNote}`
+          : `Command queue has no active backlog${failureNote}`,
       details,
     };
   } catch (error) {
@@ -575,16 +638,33 @@ function collectImportCheck(): HealthCheckResult {
 
   try {
     const failed = db.prepare(`
-      SELECT COUNT(*) AS count, MAX(completed_at) AS latest
-      FROM commands INDEXED BY idx_commands_status_name_completed
-      WHERE status = 'failed'
-        AND name IN (${placeholders})
-        AND completed_at >= datetime('now', '-7 days')
+      SELECT COUNT(*) AS count, MAX(f.completed_at) AS latest
+      FROM commands f INDEXED BY idx_commands_status_name_completed
+      WHERE f.status = 'failed'
+        AND f.name IN (${placeholders})
+        AND f.completed_at >= datetime('now', '-7 days')
         AND (
-          name IN ('ImportDownload', 'ImportUnmappedFiles')
-          OR json_extract(payload, '$.downloadState.state') = 'importFailed'
+          f.name IN ('ImportDownload', 'ImportUnmappedFiles')
+          OR json_extract(f.payload, '$.downloadState.state') = 'importFailed'
         )
-    `).get(...importCommandNames) as { count: number; latest: string | null };
+        AND NOT (
+          f.ref_id IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM commands s INDEXED BY idx_commands_ref_id
+            WHERE s.ref_id = f.ref_id
+              AND s.status = 'completed'
+              AND s.name IN (${placeholders})
+              AND (
+                COALESCE(s.completed_at, s.updated_at, '') > COALESCE(f.completed_at, f.updated_at, '')
+                OR (
+                  COALESCE(s.completed_at, s.updated_at, '') = COALESCE(f.completed_at, f.updated_at, '')
+                  AND s.id > f.id
+                )
+              )
+          )
+        )
+    `).get(...importCommandNames, ...importCommandNames) as { count: number; latest: string | null };
     const active = db.prepare(`
       SELECT id, name, started_at, last_progress_at,
              json_extract(payload, '$.downloadState.state') AS import_state
@@ -648,20 +728,17 @@ function collectImportCheck(): HealthCheckResult {
         details,
       };
     }
-    if (failedCount > 0) {
-      return {
-        scope: "imports.health",
-        status: "warning",
-        message: `${failedCount} import command(s) failed in the last seven days`,
-        details,
-      };
-    }
+    const failureNote = failedCount > 0
+      ? ` (${failedCount} unresolved failure(s) in last 7 days)`
+      : "";
     return {
       scope: "imports.health",
       status: "ok",
       message: active.length > 0
-        ? `${active.length} import(s) are active within the expected window`
-        : "No failed or stale imports were detected",
+        ? `${active.length} import(s) are active within the expected window${failureNote}`
+        : failedCount > 0
+          ? `No stale imports detected${failureNote}`
+          : "No failed or stale imports were detected",
       details,
     };
   } catch (error) {
@@ -1094,6 +1171,7 @@ export function collectHealthDiagnosticsSnapshot(
   );
 
   return {
+    version: getCurrentAppReleaseInfo().version,
     checkedAt: new Date().toISOString(),
     status: rollupHealthStatus(issues),
     runtime,

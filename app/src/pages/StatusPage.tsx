@@ -29,6 +29,7 @@ import {
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { glassSurfaceStyles } from "@/components/ui/glassSurfaceStyles";
 import { ErrorState } from "@/components/ui/ContentState";
+import { useToast } from "@/hooks/useToast";
 import { api } from "@/services/api";
 import type {
     HealthCheckResultContract,
@@ -58,6 +59,19 @@ const useStyles = makeStyles({
         gap: tokens.spacingVerticalS,
         marginBottom: tokens.spacingVerticalM,
     },
+    headerTop: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: tokens.spacingHorizontalS,
+    },
+    headerBadges: {
+        display: "flex",
+        alignItems: "center",
+        gap: tokens.spacingHorizontalXS,
+        flexWrap: "wrap",
+    },
     mutedText: {
         color: tokens.colorNeutralForeground3,
     },
@@ -72,6 +86,11 @@ const useStyles = makeStyles({
         gap: tokens.spacingHorizontalM,
         padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
         borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    },
+    providerRow: {
+        flexDirection: "column",
+        alignItems: "stretch",
+        gap: tokens.spacingVerticalXS,
     },
     rowLast: {
         borderBottom: "none",
@@ -143,12 +162,12 @@ const useStyles = makeStyles({
 
 function statusIcon(status: HealthCheckStatusContract, styles: ReturnType<typeof useStyles>) {
     if (status === "ok") {
-        return <CheckmarkCircle16 className={styles.statusIconOk} />;
+        return <CheckmarkCircle16 className={styles.statusIconOk} aria-label="Passed" role="img" />;
     }
     if (status === "warning") {
-        return <Warning16 className={styles.statusIconWarning} />;
+        return <Warning16 className={styles.statusIconWarning} aria-label="Warning" role="img" />;
     }
-    return <ErrorCircle16 className={styles.statusIconError} />;
+    return <ErrorCircle16 className={styles.statusIconError} aria-label="Error" role="img" />;
 }
 
 function diagnosticIcon(status: ProviderDiagnosticResult["status"], styles: ReturnType<typeof useStyles>) {
@@ -264,15 +283,13 @@ function ProviderRow({
     );
 
     return (
-        <div className={mergeClasses(styles.row, last ? styles.rowLast : undefined)}
-            style={{ flexDirection: "column", alignItems: "stretch", gap: tokens.spacingVerticalXS }}
-        >
+        <div className={mergeClasses(styles.row, styles.providerRow, last ? styles.rowLast : undefined)}>
             <div className={styles.rowMain}>
                 {hasDiagnosticError
-                    ? <ErrorCircle16 className={styles.statusIconError} />
+                    ? <ErrorCircle16 className={styles.statusIconError} aria-label="Error" role="img" />
                     : provider.authenticated && !hasDiagnosticWarning
-                    ? <CheckmarkCircle16 className={styles.statusIconOk} />
-                    : <Warning16 className={styles.statusIconWarning} />}
+                    ? <CheckmarkCircle16 className={styles.statusIconOk} aria-label="Connected" role="img" />
+                    : <Warning16 className={styles.statusIconWarning} aria-label="Warning" role="img" />}
                 <div className={styles.rowContent}>
                     <Text size={300} weight="semibold">{provider.name}</Text>
                     <Caption1 className={styles.mutedText}>
@@ -294,7 +311,7 @@ function ProviderRow({
                 </div>
             ) : diagnosticsError ? (
                 <div className={styles.capabilityRow} role="alert">
-                    <ErrorCircle16 className={styles.statusIconError} />
+                    <ErrorCircle16 className={styles.statusIconError} aria-label="Error" role="img" />
                     <Text size={200}>{`Diagnostics unavailable: ${diagnosticsError.message}`}</Text>
                     {onRetryDiagnostics ? (
                         <Button size="small" appearance="secondary" onClick={onRetryDiagnostics}>
@@ -319,9 +336,24 @@ function ProviderRow({
     );
 }
 
+function formatDurationMs(ms: number): string {
+    if (!Number.isFinite(ms) || ms < 1_000) return `${Math.max(0, Math.round(ms))} ms`;
+    if (ms < 60_000) return `${(ms / 1_000).toFixed(1)} s`;
+    const minutes = Math.floor(ms / 60_000);
+    const seconds = Math.round((ms % 60_000) / 1_000);
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function sectionStatus(checks: HealthCheckResultContract[]): HealthOverallStatusContract {
+    if (checks.some((check) => check.status === "error")) return "unhealthy";
+    if (checks.some((check) => check.status === "warning")) return "degraded";
+    return "healthy";
+}
+
 const StatusPage = () => {
     const styles = useStyles();
     const queryClient = useQueryClient();
+    const { toast } = useToast();
     const [matchTarget, setMatchTarget] = useState<UnmatchedArtistTarget | null>(null);
 
     const ignoreMutation = useMutation({
@@ -329,6 +361,13 @@ const StatusPage = () => {
             api.ignoreUnmatchedArtist(provider, providerId),
         onSuccess: () => {
             void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+        },
+        onError: (error: unknown) => {
+            toast({
+                title: "Couldn’t ignore unmatched artist",
+                description: error instanceof Error ? error.message : "Request failed.",
+                variant: "destructive",
+            });
         },
     });
 
@@ -340,7 +379,8 @@ const StatusPage = () => {
     } = useQuery({
         queryKey: ["system-status"],
         queryFn: () => api.getSystemStatus(),
-        refetchInterval: 30000,
+        refetchInterval: 60_000,
+        refetchIntervalInBackground: false,
     });
 
     const {
@@ -351,34 +391,36 @@ const StatusPage = () => {
     } = useQuery({
         queryKey: ["streaming-providers", "status-page"],
         queryFn: () => api.getStreamingProviders(),
-        refetchInterval: 30000,
+        refetchInterval: 60_000,
+        refetchIntervalInBackground: false,
     });
     const providerDiagnosticsQueries = useQueries({
         queries: (providersResponse?.providers ?? []).map((provider) => ({
             queryKey: ["provider-diagnostics", provider.id],
             queryFn: () => api.getProviderDiagnostics(provider.id),
-            refetchInterval: 30000,
-            staleTime: 30000,
+            refetchInterval: 60_000,
+            refetchIntervalInBackground: false,
+            staleTime: 60_000,
         })),
     });
 
     const {
         data: overview,
-        isLoading: overviewLoading,
         error: overviewError,
         refetch: refetchOverview,
     } = useQuery({
         queryKey: ["status-overview", "status-page"],
         queryFn: () => api.getStatusOverview(),
-        refetchInterval: 30000,
+        refetchInterval: 60_000,
+        refetchIntervalInBackground: false,
     });
 
-    const isLoading = statusLoading || providersLoading || overviewLoading;
-    const pageError = [statusError, providersError, overviewError]
-        .find((queryError): queryError is Error => queryError instanceof Error)
-        ?? ([statusError, providersError, overviewError].some(Boolean)
-            ? new Error("One or more status requests failed.")
-            : null);
+    const isLoading = statusLoading && !status;
+    const primaryError = statusError instanceof Error
+        ? statusError
+        : statusError
+            ? new Error("Failed to load system status.")
+            : null;
     const providers = providersResponse?.providers ?? [];
     const diagnosticsByProvider = new Map<string, {
         data?: ProviderDiagnosticsResponse;
@@ -413,7 +455,7 @@ const StatusPage = () => {
             status.tools.tiddl,
         ]
         : [];
-    const runtimeChecks = status
+    const baseRuntimeChecks = status
         ? [
             status.subsystems.database.schema,
             status.subsystems.database.wal,
@@ -424,13 +466,36 @@ const StatusPage = () => {
             status.subsystems.imports,
             status.subsystems.statistics,
             status.subsystems.catalog,
+            ...(status.subsystems.providerAuth ? [status.subsystems.providerAuth] : []),
         ]
         : [];
+    const renderedScopes = new Set([
+        ...pathChecks.map((check) => check.scope),
+        ...baseRuntimeChecks.map((check) => check.scope),
+        ...(status?.backends.tiddl.checks.map((check) => check.scope) ?? []),
+    ]);
+    const extraIssues = (status?.issues ?? []).filter((issue) => !renderedScopes.has(issue.scope));
+    const runtimeChecks = [...baseRuntimeChecks, ...extraIssues];
+    const writeLock = status?.runtime?.commands?.sqliteWriteLock ?? null;
 
     return (
         <div className={styles.container}>
             <div className={styles.header}>
-                <Title1 as="h1">System Status</Title1>
+                <div className={styles.headerTop}>
+                    <Title1 as="h1">System Status</Title1>
+                    <div className={styles.headerBadges}>
+                        {status?.version ? (
+                            <Badge appearance="tint" color="informative">
+                                {`v${status.version}`}
+                            </Badge>
+                        ) : null}
+                        {status ? (
+                            <Badge appearance="filled" color={overallBadgeColor(status.status)}>
+                                {overallStatusLabel(status.status)}
+                            </Badge>
+                        ) : null}
+                    </div>
+                </div>
                 <Text className={styles.mutedText}>
                     Cross-cutting health, download-backend, and provider connectivity diagnostics.
                 </Text>
@@ -440,10 +505,10 @@ const StatusPage = () => {
                 <div className={styles.loading}>
                     <Spinner label="Loading status…" />
                 </div>
-            ) : pageError ? (
+            ) : primaryError ? (
                 <ErrorState
                     title="Couldn’t load system status"
-                    error={pageError}
+                    error={primaryError}
                     minHeight="320px"
                     actions={(
                         <Button
@@ -464,11 +529,11 @@ const StatusPage = () => {
                 <>
                     <SettingsSection
                         id="health"
-                        title="Health"
+                        title="Paths & Tools"
                         description="Paths, tools, and runtime requirements Discogenius depends on."
                         actions={status ? (
-                            <Badge appearance="filled" color={overallBadgeColor(status.status)}>
-                                {overallStatusLabel(status.status)}
+                            <Badge appearance="filled" color={overallBadgeColor(sectionStatus(pathChecks))}>
+                                {overallStatusLabel(sectionStatus(pathChecks))}
                             </Badge>
                         ) : undefined}
                     >
@@ -478,7 +543,7 @@ const StatusPage = () => {
                     <SettingsSection
                         id="runtime"
                         title="Runtime & Recovery"
-                        description="Database integrity, queue liveness, scheduled work, imports, statistics, and catalog readiness."
+                        description="Database integrity, queue liveness, scheduled work, imports, provider logins, and recovery."
                         actions={status ? (
                             <Badge
                                 appearance="filled"
@@ -491,6 +556,24 @@ const StatusPage = () => {
                         ) : undefined}
                     >
                         <CheckList checks={runtimeChecks} />
+                        {writeLock ? (
+                            <div className={styles.card}>
+                                <div className={mergeClasses(styles.row, styles.rowLast)}>
+                                    <div className={styles.rowContent}>
+                                        <Text size={300}>SQLite write lock</Text>
+                                        <Caption1 className={styles.mutedText}>
+                                            {`Longest hold: ${formatDurationMs(writeLock.longestHoldMs)}`}
+                                            {writeLock.longestHoldLabel ? ` (${writeLock.longestHoldLabel})` : ""}
+                                            {` · Max wait: ${formatDurationMs(writeLock.maxWaitMs)}`}
+                                            {writeLock.held
+                                                ? ` · Currently held ${formatDurationMs(writeLock.heldForMs)}${writeLock.heldByLabel ? ` by ${writeLock.heldByLabel}` : ""}`
+                                                : ""}
+                                            {writeLock.queueDepth > 0 ? ` · ${writeLock.queueDepth} waiting` : ""}
+                                        </Caption1>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
                     </SettingsSection>
 
                     <SettingsSection
@@ -538,7 +621,23 @@ const StatusPage = () => {
                         description="Connectivity and capabilities for each streaming provider."
                     >
                         <div className={styles.card}>
-                            {providers.length > 0 ? (
+                            {providersError ? (
+                                <div className={styles.row} role="alert">
+                                    <div className={styles.rowMain}>
+                                        <ErrorCircle16 className={styles.statusIconError} aria-label="Error" role="img" />
+                                        <Text size={200}>
+                                            {`Provider status unavailable: ${providersError instanceof Error ? providersError.message : "Request failed."}`}
+                                        </Text>
+                                    </div>
+                                    <Button size="small" appearance="secondary" onClick={() => void refetchProviders()}>
+                                        Retry
+                                    </Button>
+                                </div>
+                            ) : providersLoading && providers.length === 0 ? (
+                                <div className={styles.row}>
+                                    <Spinner size="tiny" label="Loading providers…" />
+                                </div>
+                            ) : providers.length > 0 ? (
                                 providers.map((provider, index) => (
                                     <ProviderRow
                                         key={provider.id}
@@ -548,7 +647,7 @@ const StatusPage = () => {
                                         diagnosticsError={diagnosticsByProvider.get(provider.id)?.error}
                                         onRetryDiagnostics={diagnosticsByProvider.get(provider.id)?.retry}
                                         styles={styles}
-                                        last={index === providers.length - 1 && !overview?.rateLimitMetrics}
+                                        last={index === providers.length - 1 && !overview?.rateLimitMetrics && !overviewError}
                                     />
                                 ))
                             ) : (
