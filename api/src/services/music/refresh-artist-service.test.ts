@@ -30,6 +30,8 @@ beforeEach(() => {
   dbModule.db.prepare("DELETE FROM LibraryArtists").run();
   dbModule.db.prepare("DELETE FROM Albums").run();
   dbModule.db.prepare("DELETE FROM ArtistMetadata").run();
+  dbModule.db.prepare("UPDATE Libraries SET enabled = CASE WHEN name = 'Stereo' THEN 1 ELSE 0 END").run();
+  (refreshServiceModule.RefreshArtistService as any).collaborationNegativeMissAt?.clear();
 });
 
 after(() => {
@@ -857,6 +859,7 @@ test("release-group-only provider evidence does not leak a guessed MusicBrainz e
 });
 
 test("targeted collaboration search retries only unmatched releases unless forced", async () => {
+  dbModule.db.prepare("UPDATE Libraries SET enabled = 1 WHERE name = 'Spatial'").run();
   const selectedArtistMbid = "11111111-1111-4111-8111-111111111111";
   const ownerArtistMbid = "22222222-2222-4222-8222-222222222222";
   const releaseGroupMbid = "33333333-3333-4333-8333-333333333333";
@@ -1031,6 +1034,7 @@ test("provider matching consumes targeted collaboration offers without a selecte
 });
 
 test("connected video provider mints a provider_catalog recording when no catalog twin exists", async () => {
+  dbModule.db.prepare("UPDATE Libraries SET enabled = 1 WHERE name = 'Video'").run();
   const artistMbid = "11111111-1111-4111-8111-111111111111";
   const providerArtistId = "fake-video-artist";
   let videoFetches = 0;
@@ -1159,4 +1163,621 @@ test("connected video provider mints a provider_catalog recording when no catalo
   `).get(artistMbid) as { yt: string | null; status: string };
   assert.equal(minted.yt, null);
   assert.equal(minted.status, "provider_catalog");
+});
+
+test("RefreshArtist TIDAL lookup that receives 429 + retry after eventually succeeds and is not excluded from retryOnRateLimit (#152)", async () => {
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  const selectedArtistMbid = "aaaa1111-1111-4111-8111-111111111111";
+  const ownerArtistMbid = "bbbb2222-2222-4222-8222-222222222222";
+  const releaseGroupMbid = "cccc3333-3333-4333-8333-333333333333";
+  const releaseMbid = "dddd4444-4444-4444-8444-444444444444";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?), (?, ?)
+  `).run(selectedArtistMbid, "Rate Limit Artist", ownerArtistMbid, "Owner Artist");
+  const releaseGroup = dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, 'Collab Rate Limit Test', 'Single', '2026-11-20')
+    RETURNING id
+  `).get(releaseGroupMbid, ownerArtistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (
+      mbid, release_group_id, release_group_mbid, artist_mbid, title,
+      status, date, media_count, track_count
+    ) VALUES (?, ?, ?, ?, 'Collab Rate Limit Test', 'Official', '2026-11-20', 1, 1)
+  `).run(releaseMbid, releaseGroup.id, releaseGroupMbid, ownerArtistMbid);
+  const selectedArtist = dbModule.db.prepare(
+    "SELECT id FROM ArtistMetadata WHERE mbid = ?",
+  ).get(selectedArtistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (
+      artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship
+    ) VALUES (?, ?, ?, ?, 'credited')
+  `).run(selectedArtist.id, selectedArtistMbid, releaseGroup.id, releaseGroupMbid);
+
+  let stereoAttempts = 0;
+  const provider = {
+    id: "tidal",
+    name: "TIDAL",
+    capabilities: { musicVideos: true },
+    searchReleaseGroup: async (query: Record<string, unknown>) => {
+      if (query.slot === "stereo") {
+        stereoAttempts++;
+        if (stereoAttempts <= 3) {
+          throw new ProviderRateLimitError(provider.id, Date.now() + 10);
+        }
+      }
+      return [{
+        providerId: "rate-limited-offer-1",
+        title: "Collab Rate Limit Test",
+        artist: { providerId: "owner-provider-id", name: "Owner Artist" },
+        releaseDate: "2026-11-20",
+        trackCount: 1,
+        volumeCount: 1,
+        type: "SINGLE",
+      }];
+    },
+  } as any;
+
+  const result = await (refreshServiceModule.RefreshArtistService as any)
+    .searchCanonicalCollaborationOffers(provider, selectedArtistMbid, true);
+
+  assert.equal(stereoAttempts, 4, "TIDAL retried past 3 immediate 429s after backoff and succeeded");
+  assert.equal(result.albums.length, 1);
+  assert.equal(result.matches.get("rate-limited-offer-1")?.releaseGroup?.mbid, releaseGroupMbid);
+});
+
+test("RefreshArtist provider video lookup retries after 429 and succeeds when Video library is enabled (#152)", async () => {
+  dbModule.db.prepare("UPDATE Libraries SET enabled = 1 WHERE name = 'Video'").run();
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  const artistId = "test-video-artist-id";
+
+  let videoAttempts = 0;
+  const provider = {
+    id: "retry-video-provider",
+    name: "Retry Video Provider",
+    capabilities: { musicVideos: true },
+    getArtistVideos: async () => {
+      videoAttempts++;
+      if (videoAttempts <= 3) {
+        throw new ProviderRateLimitError(provider.id, Date.now() + 10);
+      }
+      return [{
+        id: "retried-video-1",
+        providerId: "retried-video-1",
+        title: "Retried Video",
+        artistId,
+        releaseDate: "2026-11-20",
+        duration: 200,
+        quality: "HD",
+      }];
+    },
+  } as any;
+
+  await (refreshServiceModule.RefreshArtistService as any)
+    .refreshProviderVideosForMatchedArtist(provider, "test-artist-id", artistId, {});
+
+  assert.equal(videoAttempts, 4, "video fetch retried past 3 immediate 429s and succeeded");
+
+  const videoItem = dbModule.db.prepare(`
+    SELECT provider_id FROM ProviderItems WHERE provider = ? AND entity_type = 'video'
+  `).get(provider.id) as { provider_id: string } | undefined;
+  assert.equal(videoItem?.provider_id, "retried-video-1");
+});
+
+test("RefreshArtist provider album fetch retries past 3 immediate 429s after backoff and succeeds through matchArtistProviders (#152)", async () => {
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+  const artistId = "test-album-retry-artist";
+  const artistMbid = "eeee5555-5555-4555-8555-555555555555";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)
+  `).run(artistMbid, "Album Retry Artist");
+
+  let albumAttempts = 0;
+  const provider = {
+    id: "retry-album-provider",
+    name: "Retry Album Provider",
+    capabilities: { musicVideos: false },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => ({ id: "provider-artist-1", name: "Album Retry Artist" }),
+    getArtistAlbums: async () => {
+      albumAttempts++;
+      if (albumAttempts <= 3) {
+        throw new ProviderRateLimitError(provider.id, Date.now() + 10);
+      }
+      return [{
+        providerId: "retried-album-1",
+        title: "Retried Album",
+        artist: { providerId: "provider-artist-1", name: "Album Retry Artist" },
+        releaseDate: "2026-11-20",
+        trackCount: 1,
+        volumeCount: 1,
+        type: "ALBUM",
+      }];
+    },
+    getAlbumTracks: async () => [],
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  } as any;
+
+  const artistRow = dbModule.db.prepare(
+    "SELECT id FROM ArtistMetadata WHERE mbid = ?",
+  ).get(artistMbid) as { id: number };
+  const artistItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES (?, 'artist', 'provider-artist-1', 'Album Retry Artist')
+    RETURNING id
+  `).get(provider.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(artistItem.id, artistRow.id);
+
+  const manager = providersModule.streamingProviderManager as any;
+  const originalGetAll = manager.getAllStreamingProviders;
+  const service = refreshServiceModule.RefreshArtistService as any;
+  const originalSearchCollaborations = service.searchCanonicalCollaborationOffers;
+  const originalStore = service.storeProviderAlbumOffers;
+  const originalReplay = service.replayStaleTrackMatches;
+  const originalReviews = service.refreshMissingAlbumReviews;
+  const originalCovers = service.precacheArtistMediaCovers;
+  let storedAlbums: any[] = [];
+
+  manager.getAllStreamingProviders = () => [provider];
+  service.searchCanonicalCollaborationOffers = async () => ({ albums: [], matches: new Map() });
+  service.storeProviderAlbumOffers = async (
+    _providerId: string,
+    _artistMbid: string | null,
+    albums: any[],
+  ) => { storedAlbums = albums; };
+  service.replayStaleTrackMatches = async () => undefined;
+  service.refreshMissingAlbumReviews = async () => undefined;
+  service.precacheArtistMediaCovers = async () => undefined;
+
+  try {
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(
+      artistId,
+      artistMbid,
+      {},
+      true,
+    );
+  } finally {
+    manager.getAllStreamingProviders = originalGetAll;
+    service.searchCanonicalCollaborationOffers = originalSearchCollaborations;
+    service.storeProviderAlbumOffers = originalStore;
+    service.replayStaleTrackMatches = originalReplay;
+    service.refreshMissingAlbumReviews = originalReviews;
+    service.precacheArtistMediaCovers = originalCovers;
+  }
+
+  assert.equal(albumAttempts, 4, "album fetch retried past 3 immediate 429s and succeeded");
+  assert.equal(storedAlbums.length, 1);
+  assert.equal(storedAlbums[0].provider_id, "retried-album-1");
+});
+
+test("RefreshArtist waits out realistic 60s rate-limit window using fake timers (#152)", async () => {
+  const { mock } = await import("node:test");
+  const { ProviderRateLimitError } = await import("../providers/provider-request-state.js");
+
+  const artistId = "test-apple-wait-artist";
+  const artistMbid = "ffff6666-6666-4666-8666-666666666666";
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Apple Wait Artist')
+  `).run(artistMbid);
+
+  let attempts = 0;
+  const provider = {
+    id: "apple-music",
+    name: "Apple Music",
+    capabilities: { musicVideos: false },
+    search: async () => ({ artists: [], albums: [], tracks: [], videos: [] }),
+    getArtist: async () => ({ id: "apple-artist-1", name: "Apple Wait Artist" }),
+    getArtistAlbums: async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw new ProviderRateLimitError("apple-music", Date.now() + 60_000);
+      }
+      return [{
+        providerId: "apple-delayed-album-1",
+        title: "Delayed Album",
+        artist: { providerId: "apple-artist-1", name: "Apple Wait Artist" },
+        releaseDate: "2026-11-20",
+        trackCount: 1,
+        volumeCount: 1,
+        type: "ALBUM",
+      }];
+    },
+    getAlbumTracks: async () => [],
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  } as any;
+
+  const artistRow = dbModule.db.prepare(
+    "SELECT id FROM ArtistMetadata WHERE mbid = ?",
+  ).get(artistMbid) as { id: number };
+  const artistItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES (?, 'artist', 'apple-artist-1', 'Apple Wait Artist')
+    RETURNING id
+  `).get(provider.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(artistItem.id, artistRow.id);
+
+  const manager = providersModule.streamingProviderManager as any;
+  const originalGetAll = manager.getAllStreamingProviders;
+  const service = refreshServiceModule.RefreshArtistService as any;
+  const originalSearchCollaborations = service.searchCanonicalCollaborationOffers;
+  const originalStore = service.storeProviderAlbumOffers;
+  const originalReplay = service.replayStaleTrackMatches;
+  const originalReviews = service.refreshMissingAlbumReviews;
+  const originalCovers = service.precacheArtistMediaCovers;
+  let storedAlbums: any[] = [];
+  let progressCalls = 0;
+
+  manager.getAllStreamingProviders = () => [provider];
+  service.searchCanonicalCollaborationOffers = async () => ({ albums: [], matches: new Map() });
+  service.storeProviderAlbumOffers = async (
+    _providerId: string,
+    _artistMbid: string | null,
+    albums: any[],
+  ) => { storedAlbums = albums; };
+  service.replayStaleTrackMatches = async () => undefined;
+  service.refreshMissingAlbumReviews = async () => undefined;
+  service.precacheArtistMediaCovers = async () => undefined;
+
+  mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  try {
+    const refreshPromise = refreshServiceModule.RefreshArtistService.matchArtistProviders(
+      artistId,
+      artistMbid,
+      {
+        progress: (event: any) => {
+          if (event.kind === "status" && event.message.includes("waiting out rate limit on Apple Music")) {
+            progressCalls++;
+          }
+        },
+      },
+      true,
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    mock.timers.tick(60_000);
+
+    await refreshPromise;
+    assert.equal(attempts, 2, "initial attempt failed with 60s rate limit, second attempt succeeded after timer advance");
+    assert.equal(progressCalls, 1, "reported rate-limit wait progress");
+    assert.equal(storedAlbums.length, 1);
+    assert.equal(storedAlbums[0].provider_id, "apple-delayed-album-1");
+  } finally {
+    mock.timers.reset();
+    manager.getAllStreamingProviders = originalGetAll;
+    service.searchCanonicalCollaborationOffers = originalSearchCollaborations;
+    service.storeProviderAlbumOffers = originalStore;
+    service.replayStaleTrackMatches = originalReplay;
+    service.refreshMissingAlbumReviews = originalReviews;
+    service.precacheArtistMediaCovers = originalCovers;
+  }
+});
+
+test("disabled Video and Spatial libraries are skipped completely during RefreshArtist (#152)", async () => {
+  // Explicitly ensure Video and Spatial libraries are disabled, while artist still has a LibraryArtists row for Video
+  dbModule.db.prepare("UPDATE Libraries SET enabled = 0 WHERE name IN ('Spatial', 'Video')").run();
+  dbModule.db.prepare("UPDATE Libraries SET enabled = 1 WHERE name = 'Stereo'").run();
+
+  const artistMbid = "10101010-1010-4010-8010-101010101010";
+  const ownerMbid = "20202020-2020-4020-8020-202020202020";
+  const rgMbid = "30303030-3030-4030-8030-303030303030";
+  const releaseMbid = "40404040-4040-4040-8040-404040404040";
+
+  const artistRow = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Disabled Lib Artist') RETURNING id
+  `).get(artistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Collaborator Artist')
+  `).run(ownerMbid);
+
+  const videoLib = dbModule.db.prepare("SELECT id FROM Libraries WHERE name = 'Video'").get() as { id: number };
+  const stereoLib = dbModule.db.prepare("SELECT id FROM Libraries WHERE name = 'Stereo'").get() as { id: number };
+  for (const libId of [stereoLib.id, videoLib.id]) {
+    dbModule.db.prepare(`
+      INSERT INTO LibraryArtists (library_id, artist_metadata_id, policy, credited_scope)
+      VALUES (?, ?, 'all', 'release_and_track_credit')
+    `).run(libId, artistRow.id);
+  }
+
+  const rg = dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, 'Stereo Only Collab', 'Single', '2025-05-01') RETURNING id
+  `).get(rgMbid, ownerMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, 'Stereo Only Collab', 'Official', '2025-05-01', 1, 1)
+  `).run(releaseMbid, rg.id, rgMbid, ownerMbid);
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship)
+    VALUES (?, ?, ?, ?, 'credited')
+  `).run(artistRow.id, artistMbid, rg.id, rgMbid);
+
+  let videoCalls = 0;
+  const searchedSlots: string[] = [];
+  const provider = {
+    id: "disabled-lib-test-provider",
+    name: "Disabled Lib Test Provider",
+    capabilities: { musicVideos: true },
+    getArtistAlbums: async () => [],
+    getAlbumTracks: async () => [],
+    getArtistVideos: async () => {
+      videoCalls++;
+      return [];
+    },
+    searchReleaseGroup: async (query: { slot: string }) => {
+      searchedSlots.push(query.slot);
+      return [];
+    },
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  } as any;
+
+  const artistItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES (?, 'artist', 'disabled-lib-artist-1', 'Disabled Lib Artist') RETURNING id
+  `).get(provider.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(artistItem.id, artistRow.id);
+
+  const manager = providersModule.streamingProviderManager as any;
+  const originalGetAll = manager.getAllStreamingProviders;
+  manager.getAllStreamingProviders = () => [provider];
+  try {
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(artistMbid, artistMbid, { forceUpdate: true }, true);
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(artistMbid, artistMbid, { forceUpdate: true }, false);
+  } finally {
+    manager.getAllStreamingProviders = originalGetAll;
+  }
+
+  assert.equal(videoCalls, 0, "provider video fetch is completely skipped when Video library is disabled");
+  assert.deepEqual(searchedSlots, ["stereo"], "only stereo slot is searched when Spatial library is disabled");
+});
+
+test("RefreshArtist fetches artist's own catalog before collaboration searches, emits collaboration progress heartbeats, and enforces negative-miss TTL (#152)", async () => {
+  const artistMbid = "51515151-5151-4151-8151-515151515151";
+  const ownerMbid = "61616161-6161-4161-8161-616161616161";
+  const rgMbid = "71717171-7171-4171-8171-717171717171";
+  const releaseMbid = "81818181-8181-4181-8181-818181818181";
+
+  const artistRow = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Order And TTL Artist') RETURNING id
+  `).get(artistMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Collab Owner')
+  `).run(ownerMbid);
+
+  const rg = dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, 'Unmatched Credited Single', 'Single', '2026-11-01') RETURNING id
+  `).get(rgMbid, ownerMbid) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, 'Unmatched Credited Single', 'Official', '2026-11-01', 1, 1)
+  `).run(releaseMbid, rg.id, rgMbid, ownerMbid);
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship)
+    VALUES (?, ?, ?, ?, 'credited')
+  `).run(artistRow.id, artistMbid, rg.id, rgMbid);
+
+  const callOrder: string[] = [];
+  let collabSearchCount = 0;
+  const provider = {
+    id: "order-ttl-provider",
+    name: "Order TTL Provider",
+    capabilities: { musicVideos: false },
+    getArtistAlbums: async () => {
+      callOrder.push("own-catalog");
+      return [];
+    },
+    getAlbumTracks: async () => [],
+    searchReleaseGroup: async () => {
+      callOrder.push("collab-search");
+      collabSearchCount++;
+      return [];
+    },
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  } as any;
+
+  const artistItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES (?, 'artist', 'order-artist-1', 'Order And TTL Artist') RETURNING id
+  `).get(provider.id) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(artistItem.id, artistRow.id);
+
+  const manager = providersModule.streamingProviderManager as any;
+  const originalGetAll = manager.getAllStreamingProviders;
+  const statusMessages: string[] = [];
+  manager.getAllStreamingProviders = () => [provider];
+
+  try {
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(
+      artistMbid,
+      artistMbid,
+      {
+        progress: (event: any) => {
+          if (event.kind === "status") {
+            statusMessages.push(event.message);
+          }
+        },
+      },
+      true,
+    );
+
+    assert.deepEqual(callOrder, ["own-catalog", "collab-search"], "artist's own catalog is fetched before collaboration searches");
+    assert.equal(collabSearchCount, 1);
+    assert.ok(
+      statusMessages.some((msg) => msg.includes("Order TTL Provider: searching collaborations (1/1)")),
+      "emits status progress heartbeat inside searchCanonicalCollaborationOffers",
+    );
+
+    // Second non-forced refresh within negative-miss TTL must not re-search the unmatched collaboration
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(
+      artistMbid,
+      artistMbid,
+      {},
+      true,
+    );
+    assert.equal(collabSearchCount, 1, "unmatched collaboration is not re-searched within negative-miss TTL");
+  } finally {
+    manager.getAllStreamingProviders = originalGetAll;
+  }
+});
+
+test("RefreshArtist skips re-listing fresh provider album catalogs and reuses materialized tracklists even when summary trackCount is 0 (Deezer) (#152)", async () => {
+  const artistMbid = "91919191-9191-4191-8191-919191919191";
+  const rgMbid = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1";
+  const editionMbid = "b1b1b1b1-b1b1-41b1-81b1-b1b1b1b1b1b1";
+
+  const artistRow = dbModule.db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Catalog TTL Artist') RETURNING id
+  `).get(artistMbid) as { id: number };
+  const rg = dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, first_release_date)
+    VALUES (?, ?, 'Established Album', 'Album', '2021-06-15') RETURNING id
+  `).get(rgMbid, artistMbid) as { id: number };
+  const edition = dbModule.db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_id, release_group_mbid, artist_mbid, title, status, date, media_count, track_count)
+    VALUES (?, ?, ?, ?, 'Established Album', 'Official', '2021-06-15', 1, 2) RETURNING id
+  `).get(editionMbid, rg.id, rgMbid, artistMbid) as { id: number };
+
+  const providerId = "deezer-ttl-test";
+  const artistItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title)
+    VALUES (?, 'artist', 'deezer-artist-1', 'Catalog TTL Artist') RETURNING id
+  `).get(providerId) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderArtistMatches (
+      provider_artist_item_id, artist_id, match_state, decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(artistItem.id, artistRow.id);
+
+  // Materialize the release and its 2 tracks as fresh (checked 2 days ago)
+  const twoDaysAgoIso = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  const releaseItem = dbModule.db.prepare(`
+    INSERT INTO ProviderItems (provider, entity_type, provider_id, title, checked_at, updated_at)
+    VALUES (?, 'release', 'deezer-album-1', 'Established Album', ?, ?) RETURNING id
+  `).get(providerId, twoDaysAgoIso, twoDaysAgoIso) as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ProviderEditionMatches (
+      provider_edition_item_id, edition_id, relation, match_state,
+      decision_source, confidence, method, matcher_version
+    ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+  `).run(releaseItem.id, edition.id);
+
+  for (const pos of [1, 2]) {
+    const trackItem = dbModule.db.prepare(`
+      INSERT INTO ProviderItems (provider, entity_type, provider_id, title, duration_ms, updated_at)
+      VALUES (?, 'track', ?, ?, 200000, ?) RETURNING id
+    `).get(providerId, `deezer-track-${pos}`, `Track ${pos}`, twoDaysAgoIso) as { id: number };
+    dbModule.db.prepare(`
+      INSERT INTO ProviderEditionMembers (provider_edition_item_id, member_item_id, medium_position, position, contextual_title, contextual_duration_ms)
+      VALUES (?, ?, 1, ?, ?, 200000)
+    `).run(releaseItem.id, trackItem.id, pos, `Track ${pos}`);
+  }
+
+  let listAlbumsCalls = 0;
+  let getAlbumTracksCalls = 0;
+  const provider = {
+    id: providerId,
+    name: "Deezer TTL Test",
+    capabilities: { musicVideos: false },
+    getArtistAlbums: async () => {
+      listAlbumsCalls++;
+      // Like Deezer's /artist/{id}/albums, omit trackCount (null -> num_tracks = 0)
+      return [{
+        providerId: "deezer-album-1",
+        title: "Established Album",
+        artist: { providerId: "deezer-artist-1", name: "Catalog TTL Artist" },
+        releaseDate: "2021-06-15",
+        trackCount: null,
+        type: "ALBUM",
+      }];
+    },
+    getAlbumTracks: async () => {
+      getAlbumTracksCalls++;
+      return [];
+    },
+    getAuthStatus: async () => ({
+      connected: true,
+      tokenExpired: false,
+      refreshTokenExpired: false,
+      hoursUntilExpiry: 24,
+      canAccessShell: true,
+      canAccessLocalLibrary: false,
+      remoteCatalogAvailable: true,
+      canAuthenticate: true,
+    }),
+  } as any;
+
+  const manager = providersModule.streamingProviderManager as any;
+  const originalGetAll = manager.getAllStreamingProviders;
+  manager.getAllStreamingProviders = () => [provider];
+
+  try {
+    // 1. Fresh catalog (2 days old, no recent release): getArtistAlbums is NOT called at all
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(artistMbid, artistMbid, {}, true);
+    assert.equal(listAlbumsCalls, 0, "fresh provider catalog is not re-listed on routine due refresh");
+    assert.equal(getAlbumTracksCalls, 0);
+
+    // 2. When catalog becomes stale (> 60 days old), getArtistAlbums IS called,
+    //    but fresh materialized tracklists are STILL reused even when summary trackCount is null/0
+    const seventyDaysAgoIso = new Date(Date.now() - 70 * 24 * 60 * 60 * 1000).toISOString();
+    dbModule.db.prepare("UPDATE ProviderItems SET checked_at = ?, updated_at = ? WHERE id = ?")
+      .run(seventyDaysAgoIso, seventyDaysAgoIso, releaseItem.id);
+
+    await refreshServiceModule.RefreshArtistService.matchArtistProviders(artistMbid, artistMbid, {}, true);
+    assert.equal(listAlbumsCalls, 1, "stale provider catalog is re-listed");
+    assert.equal(getAlbumTracksCalls, 0, "materialized tracklist is reused even when summary trackCount is omitted (Deezer)");
+  } finally {
+    manager.getAllStreamingProviders = originalGetAll;
+  }
 });
