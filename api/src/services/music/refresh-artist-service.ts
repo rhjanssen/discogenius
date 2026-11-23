@@ -9,7 +9,12 @@ import {
 } from "./artist-paths.js";
 import { RefreshVideoService } from "./refresh-video-service.js";
 import { type RefreshOptions, type ArtistRefreshResult } from "./scan-types.js";
-import { shouldRefreshArtist, shouldRefreshVideos } from "../config/refresh-policy.js";
+import {
+    ALBUM_HARD_REFRESH_DAYS,
+    shouldRefreshAlbum,
+    shouldRefreshArtist,
+    shouldRefreshVideos,
+} from "../config/refresh-policy.js";
 import { MetadataIdentityService } from "../metadata/metadata-identity-service.js";
 import { servarrMetadata } from "../metadata/servarr-metadata.js";
 import { syncMusicBrainzVideosForArtist } from "../metadata/musicbrainz-video-service.js";
@@ -25,7 +30,7 @@ import {
 import { ProviderArtistIdentityService, normalizeProviderArtist } from "../metadata/provider-artist-identity-service.js";
 import { streamingProviderManager } from "../providers/index.js";
 import type { StreamingProvider, ProviderAlbum } from "../providers/streaming-provider.js";
-import { ProviderRateLimitError } from "../providers/provider-request-state.js";
+import { ProviderRateLimitError, providerRequestState } from "../providers/provider-request-state.js";
 import { ProviderOfferReleaseLinkService } from "../metadata/provider-offer-release-link-service.js";
 import { isUntrustedTidalCatalogVideoQuality } from "../providers/tidal/tidal-quality.js";
 import {
@@ -38,9 +43,12 @@ import {
     type ProviderArtworkCandidate,
 } from "../metadata/media-cover-service.js";
 import { MusicBrainzArtistCreditService } from "../metadata/musicbrainz-artist-credit-service.js";
-import { MusicBrainzReleaseSelectionService } from "../metadata/musicbrainz-release-selection-service.js";
 import { ProviderCatalogRepository } from "../providers/provider-catalog-repository.js";
-import { providerAudioVariants, RefreshAlbumService } from "./refresh-album-service.js";
+import {
+    providerAudioVariants,
+    providerTrackToTrackMetadataRow,
+    RefreshAlbumService,
+} from "./refresh-album-service.js";
 import { ArtistTopTrackService } from "./artist-top-track-service.js";
 import { parseVideoVariant } from "./video-variant.js";
 import {
@@ -56,11 +64,9 @@ import {
     isCoreVideoCatalogProvider,
     isMusicBrainzMbid,
     normalizeIsrc,
-    normalizeMatchText,
     providerAlbumToOfferRow,
     providerVideoToOfferRow,
     slotTrack,
-    type SlotTrack,
 } from "./refresh-artist-support.js";
 import {
     buildProviderReleaseGroupMatches,
@@ -86,6 +92,11 @@ import {
 } from "../providers/soundcloud/soundcloud-downloadability.js";
 import { syncVideoRelationsFromEditionMembership } from "./video-edition-relation-sync.js";
 import { yieldToEventLoop } from "../commands/command-context.js";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const COLLABORATION_NEGATIVE_MISS_TTL_MS = 7 * DAY_MS;
+export const MAX_COLLABORATION_SEARCHES_PER_REFRESH = 50;
 
 function isWidePlaylistSearchReleaseGroup(
     primaryType?: string | null,
@@ -146,9 +157,110 @@ export function createMatchingYield(): () => Promise<void> {
 }
 
 export class RefreshArtistService {
+    private static readonly collaborationNegativeMissAt = new Map<string, number>();
+
     private static getArtistMusicBrainzId(artistId: string): string | null {
         const identity = loadArtistMetadataIdentity(artistId);
         return identity?.mbid ? String(identity.mbid) : null;
+    }
+
+    private static isVideoLibraryEnabled(): boolean {
+        const row = db.prepare(`
+            SELECT 1
+            FROM Libraries library
+            JOIN quality_profiles quality_profile
+              ON quality_profile.id = library.quality_profile_id
+            WHERE library.enabled = 1
+              AND EXISTS (
+                SELECT 1
+                FROM json_each(COALESCE(quality_profile.allowed_source_formats, '[]')) allowed
+                WHERE allowed.value = 'video'
+              )
+            LIMIT 1
+        `).get();
+        return Boolean(row);
+    }
+
+    private static getEnabledAudioLibrarySlots(): Array<"stereo" | "spatial"> {
+        const rows = db.prepare(`
+            SELECT quality_profile.allowed_source_formats
+            FROM Libraries library
+            JOIN quality_profiles quality_profile
+              ON quality_profile.id = library.quality_profile_id
+            WHERE library.enabled = 1
+            ORDER BY library.id
+        `).all() as Array<{ allowed_source_formats: string | null }>;
+        let hasStereo = false;
+        let hasSpatial = false;
+        for (const row of rows) {
+            try {
+                const formats = JSON.parse(String(row.allowed_source_formats || "[]"));
+                if (!Array.isArray(formats)) continue;
+                for (const raw of formats) {
+                    const format = String(raw || "").trim().toLowerCase();
+                    if (format === "spatial") hasSpatial = true;
+                    if (format === "lossy" || format === "lossless" || format === "hires-lossless") {
+                        hasStereo = true;
+                    }
+                }
+            } catch {
+                // Ignore malformed quality profile format JSON.
+            }
+        }
+        const slots: Array<"stereo" | "spatial"> = [];
+        if (hasStereo) slots.push("stereo");
+        if (hasSpatial) slots.push("spatial");
+        return slots;
+    }
+
+    private static normalizeTimestampMs(raw: string | null | undefined): number | null {
+        if (!raw) return null;
+        const trimmed = raw.trim();
+        if (!trimmed) return null;
+        const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(trimmed)
+            ? `${trimmed.replace(" ", "T")}Z`
+            : trimmed;
+        const parsed = Date.parse(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    private static shouldRefreshProviderArtistCatalog(
+        artistMbid: string | null,
+        providerId: string,
+    ): boolean {
+        if (!artistMbid) return true;
+        const row = db.prepare(`
+            SELECT
+                COUNT(DISTINCT release_item.id) AS matched_releases,
+                MIN(COALESCE(release_item.checked_at, release_item.updated_at)) AS oldest_scan,
+                MAX(album.first_release_date) AS latest_release_date
+            FROM Albums album
+            LEFT JOIN AlbumEditions edition
+              ON edition.release_group_id = album.id
+            LEFT JOIN ProviderEditionMatches release_match
+              ON release_match.edition_id = edition.id
+             AND release_match.match_state = 'accepted'
+            LEFT JOIN ProviderItems release_item
+              ON release_item.id = release_match.provider_edition_item_id
+             AND release_item.provider = ?
+             AND release_item.entity_type = 'release'
+            WHERE album.artist_mbid = ?
+        `).get(providerId, artistMbid) as {
+            matched_releases?: number;
+            oldest_scan?: string | null;
+            latest_release_date?: string | null;
+        } | undefined;
+
+        const matchedReleases = Number(row?.matched_releases || 0);
+        const oldestScanMs = this.normalizeTimestampMs(row?.oldest_scan ?? null);
+        if (matchedReleases === 0 || oldestScanMs === null) {
+            return true;
+        }
+
+        return shouldRefreshAlbum({
+            albumReleaseDate: row?.latest_release_date ?? null,
+            lastScanned: new Date(oldestScanMs).toISOString(),
+        });
     }
 
     private static async syncArtistMusicBrainzCatalog(
@@ -161,10 +273,6 @@ export class RefreshArtistService {
             return { artistMbid: null, creditedArtistMbids: [] };
         }
 
-        // Past the artist-refresh staleness gate we always re-pull canonical
-        // stubs + videos. syncArtist is content_hash-cheap; video upserts are
-        // idempotent. Skipping because Albums/videos already exist stranded new
-        // release groups and left ISRCs / curated columns on the first hydrate.
         void force;
         await servarrMetadata.syncArtist(artistMbid);
         let creditedArtistMbids: string[] = [];
@@ -175,34 +283,28 @@ export class RefreshArtistService {
                 `[RefreshArtistService] Synced ${credited.releaseGroups} credited MusicBrainz release group(s) ` +
                 `and ${credited.artists} credited artist(s) for ${artistMbid}`,
             );
-            // The credit service materializes collaborator identities and this
-            // artist's credited release groups. Keep those collaborators as
-            // catalog rows: refreshing one selected artist must not fan out into
-            // full discography/provider jobs for every unmonitored credit.
         }
-        const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force: true });
-        if (syncedVideos > 0) {
-            console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
-        }
-        try {
-            const youtubeVideos = await syncYouTubeVideoCatalogForArtist(artistId, artistMbid);
-            if (youtubeVideos > 0) {
-                console.log(`[RefreshArtistService] Synced ${youtubeVideos} YouTube video recording(s) for artist ${artistMbid}`);
+        if (this.isVideoLibraryEnabled()) {
+            const syncedVideos = await syncMusicBrainzVideosForArtist(artistMbid, { force: true });
+            if (syncedVideos > 0) {
+                console.log(`[RefreshArtistService] Synced ${syncedVideos} MusicBrainz video recording(s) for artist ${artistMbid}`);
             }
-        } catch (error) {
-            console.warn(`[RefreshArtistService] YouTube video catalog sync failed for ${artistMbid}:`, error);
-        }
-        // MusicBrainz free-streaming URL offers are written inside a sync
-        // transaction and cannot probe resolution inline, so they land with
-        // quality=NULL. Fill those (and any other missing tags) via the
-        // provider getVideo probe now that we're outside that transaction.
-        try {
-            const backfilled = await RefreshVideoService.backfillMissingVideoOfferQuality(artistMbid);
-            if (backfilled > 0) {
-                console.log(`[RefreshArtistService] Backfilled quality on ${backfilled} video offer(s) for artist ${artistMbid}`);
+            try {
+                const youtubeVideos = await syncYouTubeVideoCatalogForArtist(artistId, artistMbid);
+                if (youtubeVideos > 0) {
+                    console.log(`[RefreshArtistService] Synced ${youtubeVideos} YouTube video recording(s) for artist ${artistMbid}`);
+                }
+            } catch (error) {
+                console.warn(`[RefreshArtistService] YouTube video catalog sync failed for ${artistMbid}:`, error);
             }
-        } catch (error) {
-            console.warn(`[RefreshArtistService] Video offer quality backfill failed for ${artistMbid}:`, error);
+            try {
+                const backfilled = await RefreshVideoService.backfillMissingVideoOfferQuality(artistMbid);
+                if (backfilled > 0) {
+                    console.log(`[RefreshArtistService] Backfilled quality on ${backfilled} video offer(s) for artist ${artistMbid}`);
+                }
+            } catch (error) {
+                console.warn(`[RefreshArtistService] Video offer quality backfill failed for ${artistMbid}:`, error);
+            }
         }
 
         return { artistMbid, creditedArtistMbids };
@@ -213,6 +315,9 @@ export class RefreshArtistService {
      * first, then the shared title+duration function for leftover standalone OMVs.
      */
     private static async syncCatalogVideoAudioRelations(artistMbid: string): Promise<void> {
+        if (!this.isVideoLibraryEnabled()) {
+            return;
+        }
         const editionVideoRelations = await syncVideoRelationsFromEditionMembership(artistMbid);
         if (editionVideoRelations > 0) {
             console.log(`[RefreshArtistService] Derived ${editionVideoRelations} video→audio relation(s) from canonical edition membership for ${artistMbid}`);
@@ -355,180 +460,92 @@ export class RefreshArtistService {
         return artistMbid;
     }
 
-    private static async addSupplementalProviderOffers(
-        provider: StreamingProvider,
-        albums: any[],
-        matches: Map<string, ProviderReleaseGroupMatch>,
-    ): Promise<void> {
-        const albumsById = new Map(albums.map((album) => [String(album.provider_id), album] as const));
-        const groups = new Map<string, ProviderReleaseGroupMatch[]>();
+    private static async retryOnRateLimit<T>(
+        operation: () => Promise<T>,
+        context: {
+            provider: StreamingProvider | string;
+            action: string;
+            maxRetries?: number;
+            maxWaitMs?: number;
+            options?: RefreshOptions;
+        },
+    ): Promise<T> {
+        const providerName = typeof context.provider === "string" ? context.provider : context.provider.name;
+        const providerId = typeof context.provider === "string" ? context.provider : context.provider.id;
+        const maxRetries = context.maxRetries ?? 5;
+        const maxWaitMs = context.maxWaitMs ?? 65_000;
 
-        for (const match of matches.values()) {
-            if (!match.releaseGroup || (match.status !== "verified" && match.status !== "probable")) {
-                continue;
-            }
-            const groupMatches = groups.get(match.releaseGroup.mbid) || [];
-            groupMatches.push(match);
-            groups.set(match.releaseGroup.mbid, groupMatches);
-        }
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return await operation();
+            } catch (error: any) {
+                const isRateLimit =
+                    error instanceof ProviderRateLimitError ||
+                    error?.status === 429;
 
-        for (const [releaseGroupMbid, groupMatches] of groups) {
-            const representative = MusicBrainzReleaseSelectionService.selectRepresentativeRelease(releaseGroupMbid);
-            if (!representative || Number(representative.track_count || 0) <= 1) {
-                continue;
-            }
-
-            const initialAlbums = groupMatches
-                .map((match) => albumsById.get(String(match.providerId)))
-                .filter(Boolean);
-            const targetTrackCount = Number(representative.track_count || 0);
-            const hydratedTracks = new Map<string, SlotTrack[]>();
-
-            const hydrateAlbum = async (albumId: string): Promise<SlotTrack[]> => {
-                const cached = hydratedTracks.get(albumId);
-                if (cached) {
-                    return cached;
+                if (!isRateLimit) {
+                    throw error;
                 }
 
-                const album = albumsById.get(albumId);
-                if (Array.isArray(album?._provider_tracks)) {
-                    hydratedTracks.set(albumId, album._provider_tracks);
-                    return album._provider_tracks;
+                const state = providerRequestState();
+                let waitMs = 0;
+                if (error instanceof ProviderRateLimitError && error.retryAt) {
+                    waitMs = Math.max(0, error.retryAt - Date.now());
+                } else if (error?.retryAfterMs != null) {
+                    waitMs = Math.max(0, error.retryAfterMs);
+                } else {
+                    const retryAt = state.retryAt(providerId);
+                    if (retryAt > Date.now()) {
+                        waitMs = retryAt - Date.now();
+                    } else {
+                        waitMs = Math.min(1000 * Math.pow(2, attempt - 1), maxWaitMs);
+                    }
                 }
 
-                const rawTracks = await provider.getAlbumTracks(albumId);
-                // Persist what we fetch: materialize provider track offer rows once
-                // (single source of truth) instead of discarding the tracklist into a
-                // dead blob and re-calling the provider each refresh cycle.
-                try {
-                    const { RefreshAlbumService, providerTrackToTrackMetadataRow } = await import("./refresh-album-service.js");
-                    await RefreshAlbumService.storeProviderTrackOffers(
-                        provider.id,
-                        albumId,
-                        rawTracks.map(providerTrackToTrackMetadataRow),
+                if (waitMs > maxWaitMs) {
+                    console.warn(
+                        `[RefreshArtistService] ${context.action} hit rate limit on ${providerName}; ` +
+                        `advertised wait ${Math.ceil(waitMs)}ms exceeds maximum ${maxWaitMs}ms, deferring`
                     );
-                } catch (error) {
-                    console.warn(`[RefreshArtistService] Failed to persist provider track offers for album ${albumId}:`, error);
-                }
-                const tracks = rawTracks.map((track) => slotTrack(track));
-                hydratedTracks.set(albumId, tracks);
-                if (album) {
-                    album._provider_tracks = tracks;
-                }
-                return tracks;
-            };
-
-            for (const match of groupMatches) {
-                const album = albumsById.get(String(match.providerId));
-                if (!album) {
-                    continue;
+                    throw error;
                 }
 
-                const albumTrackCount = Number(album.num_tracks || 0);
-                const hasSuspiciousShape = targetTrackCount > 1
-                    && albumTrackCount > 0
-                    && albumTrackCount !== targetTrackCount;
-                const needsEvidence = match.status !== "verified" || match.evidence?.trackCountMatched !== true;
-                if (hasSuspiciousShape || needsEvidence) {
-                    try {
-                        await hydrateAlbum(String(album.provider_id));
-                    } catch (error) {
-                        console.warn(`[RefreshArtistService] Failed to hydrate provider album ${album.provider_id}:`, error);
-                    }
-                }
-            }
-
-            const largestInitialOffer = Math.max(0, ...initialAlbums.map((album) => Number(album.num_tracks || 0)));
-            if (largestInitialOffer >= targetTrackCount) {
-                continue;
-            }
-
-            const targets = db.prepare(`
-                SELECT t.title, r.isrcs
-                FROM Tracks t
-                LEFT JOIN Recordings r ON r.mbid = t.recording_mbid
-                WHERE t.release_mbid = ?
-                ORDER BY t.medium_position ASC, t.position ASC
-            `).all(representative.mbid) as Array<{ title: string; isrcs?: string | null }>;
-            const targetRows = targets.map((target) => {
-                let isrcs: string[] = [];
-                try {
-                    const parsed = JSON.parse(String(target.isrcs || "[]"));
-                    isrcs = Array.isArray(parsed) ? parsed.map(normalizeIsrc).filter(Boolean) : [];
-                } catch {
-                    isrcs = [];
-                }
-                return {
-                    title: target.title,
-                    normalizedTitle: normalizeMatchText(target.title),
-                    isrcs: new Set(isrcs),
-                };
-            });
-            const coversTarget = (track: SlotTrack, target: typeof targetRows[number]) =>
-                Boolean(track.isrc && target.isrcs.has(track.isrc))
-                || normalizeMatchText(track.title) === target.normalizedTitle;
-
-            for (const album of initialAlbums) {
-                await hydrateAlbum(String(album.provider_id));
-            }
-
-            for (const target of targetRows) {
-                const alreadyCovered = Array.from(hydratedTracks.values())
-                    .some((tracks) => tracks.some((track) => coversTarget(track, target)));
-                if (alreadyCovered) {
-                    continue;
+                const effectiveMaxRetries = waitMs >= 20_000 ? Math.min(maxRetries, 2) : maxRetries;
+                if (attempt >= effectiveMaxRetries) {
+                    console.warn(
+                        `[RefreshArtistService] ${context.action} hit rate limit on ${providerName}; ` +
+                        `giving up after ${attempt} attempts`
+                    );
+                    throw error;
                 }
 
-                const results = await provider.search(target.title, { types: ["tracks"], limit: 15 });
-                for (const searchTrack of results.tracks) {
-                    let track = searchTrack;
-                    if (!track.album?.providerId || !track.isrc) {
-                        try {
-                            track = await provider.getTrack(track.providerId);
-                        } catch (error) {
-                            console.warn(
-                                `[RefreshArtistService] Failed to hydrate provider track ${track.providerId}:`,
-                                error,
-                            );
-                            continue;
-                        }
-                    }
-
-                    const shapedTrack = slotTrack(track);
-                    if (!coversTarget(shapedTrack, target)) {
-                        continue;
-                    }
-                    const providerAlbumId = String(track.album?.providerId || "").trim();
-                    if (!providerAlbumId) {
-                        continue;
-                    }
-
-                    let album = albumsById.get(providerAlbumId);
-                    if (!album) {
-                        album = providerAlbumToOfferRow(await provider.getAlbum(providerAlbumId), "");
-                        albums.push(album);
-                        albumsById.set(providerAlbumId, album);
-                    }
-                    await hydrateAlbum(providerAlbumId);
-
-                    const base = groupMatches[0];
-                    matches.set(providerAlbumId, {
-                        ...base,
-                        providerId: providerAlbumId,
-                        status: "probable",
-                        confidence: Math.max(base.confidence, 0.9),
-                        method: "musicbrainz-recording-isrc-coverage",
-                        releaseMbid: representative.mbid,
-                        evidence: {
-                            ...base.evidence,
-                            matchedReleaseMbid: representative.mbid,
-                            availableReleaseMbids: [representative.mbid],
-                        },
-                    });
-                    break;
+                console.warn(
+                    `[RefreshArtistService] ${context.action} hit rate limit on ${providerName}; ` +
+                    `retrying (${attempt}/${effectiveMaxRetries}) after ${Math.ceil(waitMs)}ms`
+                );
+                context.options?.progress?.({
+                    kind: "status",
+                    message: `waiting out rate limit on ${providerName} (${Math.ceil(waitMs / 1000)}s)`,
+                });
+                if (waitMs > 0) {
+                    await sleep(waitMs);
                 }
             }
         }
+        throw new Error(`Failed ${context.action} on ${providerName} after rate limit retries`);
+    }
+
+    private static isCollaborationNegativeMissFresh(providerId: string, releaseGroupMbid: string): boolean {
+        const key = `${providerId}:${releaseGroupMbid}`;
+        const missedAt = this.collaborationNegativeMissAt.get(key);
+        if (missedAt === undefined) {
+            return false;
+        }
+        if (Date.now() - missedAt < COLLABORATION_NEGATIVE_MISS_TTL_MS) {
+            return true;
+        }
+        this.collaborationNegativeMissAt.delete(key);
+        return false;
     }
 
     private static async searchCanonicalCollaborationOffers(
@@ -536,16 +553,19 @@ export class RefreshArtistService {
         artistMbid: string | null,
         forceUpdate: boolean,
         reportPhase?: (message: string) => void,
+        options?: RefreshOptions,
+        includePrimaryUnmatched = false,
+        alreadyMatchedRgMbids?: ReadonlySet<string>,
     ): Promise<{ albums: any[]; matches: Map<string, ProviderReleaseGroupMatch> }> {
         if (!artistMbid || !provider.searchReleaseGroup) {
             return { albums: [], matches: new Map() };
         }
+        const slots = this.getEnabledAudioLibrarySlots();
+        if (slots.length === 0) {
+            return { albums: [], matches: new Map() };
+        }
 
-        const cachedReleaseGroups = new Map(
-            servarrMetadata.getCachedReleaseGroupsForArtist(artistMbid)
-                .map((releaseGroup) => [releaseGroup.mbid, releaseGroup] as const),
-        );
-        const targets = db.prepare(`
+        const rawTargets = db.prepare(`
             SELECT DISTINCT
                 rg.mbid,
                 rg.title,
@@ -564,12 +584,27 @@ export class RefreshArtistService {
                     WHERE release.release_group_mbid = rg.mbid
                     ORDER BY COALESCE(release.track_count, 0) DESC, release.mbid ASC
                     LIMIT 1
-                ) AS preferred_volume_count
+                ) AS preferred_volume_count,
+                (
+                    SELECT MAX(edition_match.updated_at)
+                    FROM AlbumEditions edition
+                    JOIN ProviderEditionMatches edition_match
+                      ON edition_match.edition_id = edition.id
+                    JOIN ProviderItems provider_item
+                      ON provider_item.id = edition_match.provider_edition_item_id
+                     AND provider_item.entity_type = 'release'
+                    WHERE edition.release_group_mbid = rg.mbid
+                      AND provider_item.provider = ?
+                ) AS last_match_attempt_at
             FROM Albums rg
-            JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+            LEFT JOIN ArtistReleaseGroups scope
+              ON scope.release_group_mbid = rg.mbid
+             AND scope.artist_mbid = ?
             LEFT JOIN ArtistMetadata owner ON owner.mbid = rg.artist_mbid
-            WHERE scope.artist_mbid = ?
-              AND rg.artist_mbid != ?
+            WHERE (
+                (? = 1 AND (rg.artist_mbid = ? OR scope.artist_mbid = ?))
+                OR (? = 0 AND scope.artist_mbid = ? AND rg.artist_mbid != ?)
+              )
               AND (
                 ? = 1
                 OR NOT EXISTS (
@@ -585,37 +620,91 @@ export class RefreshArtistService {
                       AND provider_item.provider = ?
                 )
               )
-            ORDER BY rg.mbid ASC
-        `).all(artistMbid, artistMbid, forceUpdate ? 1 : 0, provider.id) as Array<{
+            ORDER BY COALESCE(rg.first_release_date, '') DESC, rg.mbid ASC
+        `).all(
+            provider.id,
+            artistMbid,
+            includePrimaryUnmatched ? 1 : 0,
+            artistMbid,
+            artistMbid,
+            includePrimaryUnmatched ? 1 : 0,
+            artistMbid,
+            artistMbid,
+            forceUpdate ? 1 : 0,
+            provider.id,
+        ) as Array<{
             mbid: string;
             title: string;
             first_release_date?: string | null;
             artist_name?: string | null;
             preferred_track_count?: number | null;
             preferred_volume_count?: number | null;
+            last_match_attempt_at?: string | null;
         }>;
-        const slots = ["stereo", "spatial"] as const;
+
+        const now = Date.now();
+        const filteredTargets = rawTargets.filter((target) => {
+            if (alreadyMatchedRgMbids?.has(target.mbid)) {
+                return false;
+            }
+            if (forceUpdate) {
+                return true;
+            }
+            if (this.isCollaborationNegativeMissFresh(provider.id, target.mbid)) {
+                return false;
+            }
+            const lastAttemptMs = this.normalizeTimestampMs(target.last_match_attempt_at);
+            if (lastAttemptMs !== null && now - lastAttemptMs < COLLABORATION_NEGATIVE_MISS_TTL_MS) {
+                return false;
+            }
+            return true;
+        });
+        const targets = forceUpdate
+            ? filteredTargets
+            : filteredTargets.slice(0, MAX_COLLABORATION_SEARCHES_PER_REFRESH);
+        if (targets.length === 0) {
+            return { albums: [], matches: new Map() };
+        }
+
+        const cachedReleaseGroups = new Map(
+            servarrMetadata.getCachedReleaseGroupsForArtist(artistMbid)
+                .map((releaseGroup) => [releaseGroup.mbid, releaseGroup] as const),
+        );
         const albumsByProviderId = new Map<string, any>();
         const matches = new Map<string, ProviderReleaseGroupMatch>();
+        const yieldSearch = createMatchingYield();
 
         for (const [targetIndex, target] of targets.entries()) {
+            await yieldSearch();
             const releaseGroup = cachedReleaseGroups.get(target.mbid) as MusicBrainzReleaseGroupForMatching | undefined;
             if (!releaseGroup) {
                 continue;
             }
-            reportPhase?.(`${provider.name}: searching collaborations (${targetIndex + 1}/${targets.length})`);
+            const phaseMessage = `${provider.name}: searching collaborations (${targetIndex + 1}/${targets.length})`;
+            reportPhase?.(phaseMessage);
+            options?.progress?.({ kind: "status", message: phaseMessage });
 
+            let matchedTarget = false;
+            let hadSearchError = false;
             for (const slot of slots) {
                 try {
-                    const providerAlbums = await provider.searchReleaseGroup({
-                        artistName: String(target.artist_name || ""),
-                        releaseGroupMbid: target.mbid,
-                        releaseGroupTitle: target.title,
-                        releaseDate: target.first_release_date || null,
-                        slot,
-                        preferredTrackCount: target.preferred_track_count || null,
-                        preferredVolumeCount: target.preferred_volume_count || null,
-                    });
+                    const providerAlbums = await this.retryOnRateLimit(
+                        () => provider.searchReleaseGroup!({
+                            artistName: String(target.artist_name || ""),
+                            releaseGroupMbid: target.mbid,
+                            releaseGroupTitle: target.title,
+                            releaseDate: target.first_release_date || null,
+                            slot,
+                            preferredTrackCount: target.preferred_track_count || null,
+                            preferredVolumeCount: target.preferred_volume_count || null,
+                        }),
+                        {
+                            provider,
+                            action: `search canonical collaboration ${target.title} (${slot})`,
+                            options,
+                            maxWaitMs: 25_000,
+                        },
+                    );
                     const albums = providerAlbums.map((album) => providerAlbumToOfferRow(album, artistMbid));
                     const targetMatches = matchProviderAlbumsToReleaseGroups(
                         albums.map((album) => ({
@@ -644,18 +733,26 @@ export class RefreshArtistService {
                         }
                         albumsByProviderId.set(providerAlbumId, album);
                         matches.set(providerAlbumId, match);
+                        matchedTarget = true;
                     }
                 } catch (error) {
                     if (error instanceof ProviderRateLimitError) {
                         console.warn(`[RefreshArtistService] Deferring ${provider.name} collaboration searches: ${error.message}`);
                         return { albums: Array.from(albumsByProviderId.values()), matches };
                     }
+                    hadSearchError = true;
                     console.warn(
                         `[RefreshArtistService] Failed to search ${provider.name} for canonical collaboration ` +
                         `${target.title} (${target.mbid}):`,
                         error,
                     );
                 }
+            }
+            const missKey = `${provider.id}:${target.mbid}`;
+            if (matchedTarget) {
+                this.collaborationNegativeMissAt.delete(missKey);
+            } else if (!hadSearchError) {
+                this.collaborationNegativeMissAt.set(missKey, Date.now());
             }
         }
 
@@ -670,79 +767,42 @@ export class RefreshArtistService {
         reason: "missing" | "empty" | "coverage-changed" | "drm-only",
     ): void {
         db.transaction(() => {
-            const existing = db.prepare(`
-                SELECT title, version, provider_type, upc, duration_ms, release_date, explicit,
-                       provider_url, cover_id, artwork_url, volume_count, copyright
+            const releaseRow = db.prepare(`
+                SELECT id
                 FROM ProviderItems
                 WHERE provider = 'soundcloud'
                   AND entity_type = 'release'
                   AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
                 LIMIT 1
-            `).get(providerAlbumId) as Record<string, unknown> | undefined;
-            if (existing) {
-                new ProviderCatalogRepository(db).upsertItem({
-                    provider: "soundcloud",
-                    entityType: "release",
-                    providerId: providerAlbumId,
-                    title: String(existing.title || "") || null,
-                    version: String(existing.version || "") || null,
-                    providerType: String(existing.provider_type || "") || null,
-                    upc: String(existing.upc || "") || null,
-                    durationMs: existing.duration_ms == null ? null : Number(existing.duration_ms),
-                    releaseDate: String(existing.release_date || "") || null,
-                    explicit: existing.explicit == null ? null : Boolean(existing.explicit),
-                    availability: "unavailable",
-                    availabilityReason: reason,
-                    checkedAt: new Date().toISOString(),
-                    providerUrl: String(existing.provider_url || "") || null,
-                    coverId: String(existing.cover_id || "") || null,
-                    artworkUrl: String(existing.artwork_url || "") || null,
-                    volumeCount: existing.volume_count == null ? null : Number(existing.volume_count),
-                    copyright: String(existing.copyright || "") || null,
-                });
+            `).get(providerAlbumId) as { id: number } | undefined;
+            if (!releaseRow) {
+                return;
             }
+            const checkedAt = new Date().toISOString();
             db.prepare(`
                 UPDATE ProviderItems
                 SET availability = 'unavailable',
                     availability_reason = ?,
+                    checked_at = ?,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE provider = 'soundcloud'
-                  AND entity_type = 'track'
-                  AND id IN (
-                    SELECT member_item_id
-                    FROM ProviderEditionMembers
-                    WHERE provider_edition_item_id = (
-                      SELECT id
-                      FROM ProviderItems
-                      WHERE provider = 'soundcloud'
-                        AND entity_type = 'release'
-                        AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                      LIMIT 1
-                    )
-                  )
-            `).run(reason, providerAlbumId);
-            db.prepare(`
-                UPDATE ProviderItems
-                SET availability = 'unavailable',
-                    availability_reason = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE provider = 'soundcloud'
-                  AND entity_type = 'release'
-                  AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-            `).run(reason, providerAlbumId);
+                WHERE id = ?
+                   OR (
+                     provider = 'soundcloud'
+                     AND entity_type = 'track'
+                     AND id IN (
+                       SELECT member_item_id
+                       FROM ProviderEditionMembers
+                       WHERE provider_edition_item_id = ?
+                     )
+                   )
+            `).run(reason, checkedAt, releaseRow.id, releaseRow.id);
             db.prepare(`
                 UPDATE ProviderEditionMatches
                 SET match_state = 'rejected',
                     updated_at = CURRENT_TIMESTAMP
-                WHERE provider_edition_item_id = (
-                  SELECT id
-                  FROM ProviderItems
-                  WHERE provider = 'soundcloud'
-                    AND entity_type = 'release'
-                    AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-                )
+                WHERE provider_edition_item_id = ?
                   AND method = ?
-            `).run(providerAlbumId, PLAYLIST_TRACKLIST_COVERAGE_METHOD);
+            `).run(releaseRow.id, PLAYLIST_TRACKLIST_COVERAGE_METHOD);
         })();
     }
 
@@ -1025,9 +1085,9 @@ export class RefreshArtistService {
 
     private static async storeProviderAlbumOffers(
         providerId: string,
-        artistMbid: string | null,
+        _artistMbid: string | null,
         albums: any[],
-        matches: Map<string, ProviderReleaseGroupMatch>,
+        _matches?: Map<string, ProviderReleaseGroupMatch>,
     ): Promise<void> {
         if (albums.length === 0) {
             return;
@@ -1042,7 +1102,6 @@ export class RefreshArtistService {
         // worker cannot heartbeat, and the watchdog kills it for that.
         await runGatedChunkedWrite(albums, (album) => {
                 const providerAlbumId = String(album.provider_id);
-                const match = matches.get(providerAlbumId);
                 const durationSeconds = Number(album.duration);
                 const itemId = normalizedCatalog.upsertItem({
                     provider: providerId,
@@ -1077,15 +1136,6 @@ export class RefreshArtistService {
         // Provisional matches can point several provider albums at one canonical
         // release group; warming them here raced unrelated covers into one cache.
     }
-
-    /**
-     * ALL provider identities linked to this canonical artist, not just the
-     * most recent one. Providers sometimes split one real-world artist into
-     * several catalog entries (TIDAL has both "Concertgebouworkest" and "Royal
-     * Concertgebouw Orchestra" for the same MB artist); each identity carries
-     * its own releases, so hydration must union their catalogs or half the
-     * discography never shows up as offers.
-     */
 
     private static reapplyArtistPathAfterIdentity(artistId: string): void {
         const identity = loadArtistMetadataIdentity(artistId);
@@ -1272,8 +1322,10 @@ export class RefreshArtistService {
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid, options);
                 await yieldToEventLoop();
-                options.progress?.({ kind: "status", message: `syncing catalog relations for ${artistId}` });
-                await this.syncCatalogVideoAudioRelations(artistMbid);
+                if (this.isVideoLibraryEnabled()) {
+                    options.progress?.({ kind: "status", message: `syncing catalog relations for ${artistId}` });
+                    await this.syncCatalogVideoAudioRelations(artistMbid);
+                }
             }
         }
 
@@ -1353,18 +1405,21 @@ export class RefreshArtistService {
             .filter((entry) => entry.status.connected)
             .map((entry) => entry.provider);
 
-        // YouTube video listing is core catalog (syncYouTubeVideoCatalogForArtist),
-        // not a connected-plugin fetch. Apple/TIDAL/etc. still list videos here.
-        const videoCatalogProviders = connectedProviders.filter(
-            (provider) => Boolean(provider.getArtistVideos) && !isCoreVideoCatalogProvider(provider.id),
-        );
+        const videoEnabled = this.isVideoLibraryEnabled();
+        const shouldRefreshArtistVideos =
+            videoEnabled && (
+                options.forceUpdate === true ||
+                shouldRefreshVideos({ artistId })
+            );
+        const videoCatalogProviders = videoEnabled
+            ? connectedProviders.filter(
+                (provider) => Boolean(provider.getArtistVideos) && !isCoreVideoCatalogProvider(provider.id),
+            )
+            : [];
 
         if (!shouldHydrateCatalog) {
             console.log(`[RefreshArtistService] Skipping broad catalog hydration for artist ${artistId} (managed metadata already present)`);
 
-            const shouldRefreshArtistVideos =
-                options.forceUpdate === true ||
-                shouldRefreshVideos({ artistId });
             if (shouldRefreshArtistVideos) {
                 try {
                     await syncYouTubeVideoCatalogForArtist(artistId, artistMbid);
@@ -1390,121 +1445,53 @@ export class RefreshArtistService {
         }
 
         let totalAlbumsCount = 0;
+        const loadMaterializedTracks = db.prepare(`
+            SELECT
+                track_item.provider_id,
+                COALESCE(member.contextual_title, track_item.title) AS title,
+                track_item.isrc,
+                COALESCE(
+                  ROUND(member.contextual_duration_ms / 1000.0),
+                  ROUND(track_item.duration_ms / 1000.0)
+                ) AS duration,
+                member.position AS track_number,
+                member.medium_position AS volume_number,
+                track_item.updated_at AS updated_at
+            FROM ProviderItems release_item
+            JOIN ProviderEditionMembers member
+              ON member.provider_edition_item_id = release_item.id
+            JOIN ProviderItems track_item
+              ON track_item.id = member.member_item_id
+             AND track_item.entity_type = 'track'
+            WHERE release_item.provider = ?
+              AND release_item.entity_type = 'release'
+              AND release_item.provider_id = ?
+            ORDER BY member.medium_position, member.position
+        `);
 
-        // Run connected providers in parallel so adding Apple/YouTube/etc. does
-        // not serialize wall-clock matching time against TIDAL.
-        // Each provider reports its own silent phases, and whoever finishes says
-        // which providers are still running. The providers run concurrently, and
-        // the fastest one's last message used to be all a watchdog-killed
-        // refresh showed while a rate-limited provider was the one stuck.
         const runningPhases = new Map<string, string>();
         const matchOneProvider = async (provider: StreamingProvider) => {
             const reportPhase = (message: string) => {
                 runningPhases.set(provider.name, message.replace(`${provider.name}: `, ""));
                 options.progress?.({ kind: "provider_phase", message });
             };
-            reportPhase(`${provider.name}: finding the artist`);
-            const providerArtistIds = await resolveProviderArtistIds(provider, artistId, artistMbid);
-            const collaborationOffers = await this.searchCanonicalCollaborationOffers(
-                provider,
-                artistMbid,
-                options.forceUpdate === true,
-                reportPhase,
-            );
-            if (providerArtistIds.length === 0 && collaborationOffers.albums.length === 0) {
-                console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
-                return;
-            }
+            const ingestProviderAlbums = async (
+                albums: any[],
+                seededMatches: Map<string, ProviderReleaseGroupMatch>,
+            ): Promise<Map<string, ProviderReleaseGroupMatch>> => {
+                if (albums.length === 0) {
+                    return new Map();
+                }
 
-            if (providerArtistIds.length > 0 && !isCoreVideoCatalogProvider(provider.id)) {
-                try {
-                    reportPhase(`${provider.name}: fetching videos`);
-                    await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
-                } catch (err) {
-                    console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
-                }
-            }
-
-            try {
-                // Union the release catalogs of every linked provider identity
-                // (a provider can split one artist into several entries, each
-                // holding part of the discography), deduped by provider album id.
-                const providerAlbums: ProviderAlbum[] = [];
-                const seenProviderAlbumIds = new Set<string>();
-                for (const providerArtistId of providerArtistIds) {
-                    reportPhase(`${provider.name}: listing releases`);
-                    const identityAlbums = provider.listArtistReleaseOffers
-                        ? await provider.listArtistReleaseOffers(providerArtistId)
-                        : await provider.getArtistAlbums(providerArtistId);
-                    for (const album of identityAlbums) {
-                        const key = String(album.providerId);
-                        if (seenProviderAlbumIds.has(key)) continue;
-                        seenProviderAlbumIds.add(key);
-                        providerAlbums.push(album);
-                    }
-                }
-                if (providerArtistIds.length > 1) {
-                    console.log(`[RefreshArtistService] Merged ${providerAlbums.length} releases from ${providerArtistIds.length} ${provider.name} identities for ${artistId}`);
-                }
-                const albumsByProviderId = new Map(providerAlbums.map((album) => {
-                    const shaped = {
-                    ...providerAlbumToOfferRow(album, artistId),
-                    provider: provider.id,
-                    };
-                    return [String(shaped.provider_id), shaped] as const;
-                }));
-                for (const album of collaborationOffers.albums) {
-                    const providerAlbumId = String(album.provider_id);
-                    if (!albumsByProviderId.has(providerAlbumId)) {
-                        albumsByProviderId.set(providerAlbumId, {
-                            ...album,
-                            provider: provider.id,
-                        });
-                    }
-                }
-                const albums = Array.from(albumsByProviderId.values());
-
-                // Reuse already-materialized provider track offer rows for track-level
-                // matching instead of re-fetching the tracklist every refresh. Track
-                // offers are persisted below (storeProviderTrackOffers) once fetched, so
-                // subsequent refreshes read them here and skip the provider call. The
-                // slotTrack shape is reconstructed from the row + its (volume, position)
-                // evidence.
-                const loadMaterializedTracks = db.prepare(`
-                    SELECT
-                        track_item.provider_id,
-                        COALESCE(member.contextual_title, track_item.title) AS title,
-                        track_item.isrc,
-                        COALESCE(
-                          ROUND(member.contextual_duration_ms / 1000.0),
-                          ROUND(track_item.duration_ms / 1000.0)
-                        ) AS duration,
-                        member.position AS track_number,
-                        member.medium_position AS volume_number
-                    FROM ProviderItems release_item
-                    JOIN ProviderEditionMembers member
-                      ON member.provider_edition_item_id = release_item.id
-                    JOIN ProviderItems track_item
-                      ON track_item.id = member.member_item_id
-                     AND track_item.entity_type = 'track'
-                    WHERE release_item.provider = ?
-                      AND release_item.entity_type = 'release'
-                      AND release_item.provider_id = ?
-                    ORDER BY member.medium_position, member.position
-                `);
-                // The command heartbeat is a timer, so a lease expires only when the
-                // handler starves the event loop — which a few thousand synchronous
-                // SQLite reads in a row will do. Yielding costs nothing and issues no
-                // provider request; the fetch pattern below (bulk tracklists,
-                // non-candidates skipped) is deliberately untouched, because chunking
-                // *fetching* would mean more calls.
                 const yieldMaterialize = createMatchingYield();
+                const tracklistTtlMs = ALBUM_HARD_REFRESH_DAYS * DAY_MS;
+                const nowMs = Date.now();
                 for (const album of albums) {
                     await yieldMaterialize();
-                    const numTracks = Number(album.num_tracks);
-                    if (!Number.isFinite(numTracks) || numTracks <= 0) {
+                    if (options.forceUpdate === true || Array.isArray(album._provider_tracks)) {
                         continue;
                     }
+                    const numTracks = Number(album.num_tracks);
                     const materialized = loadMaterializedTracks.all(
                         provider.id,
                         String(album.provider_id),
@@ -1515,34 +1502,39 @@ export class RefreshArtistService {
                         duration: number | null;
                         track_number: number | null;
                         volume_number: number | null;
+                        updated_at: string | null;
                     }>;
-                    // On forceUpdate always re-fetch tracklists: stored members
-                    // omit live-only fields (SoundCloud DRM/media, Apple
-                    // audioTraits/qualityTags such as dolby-atmos). Reusing them
-                    // left Atmos never written to ProviderItemAudioVariants.
-                    if (materialized.length === numTracks && options.forceUpdate !== true) {
-                        album._provider_tracks = materialized.map((row) => ({
-                            mbid: null,
-                            provider_id: row.provider_id || null,
-                            isrc: normalizeIsrc(row.isrc) || null,
-                            title: row.title || null,
-                            track_number: row.track_number || null,
-                            volume_number: row.volume_number || 1,
-                            duration: row.duration || null,
-                        }));
+                    if (materialized.length === 0) {
+                        continue;
                     }
+                    if (Number.isFinite(numTracks) && numTracks > 0 && materialized.length !== numTracks) {
+                        continue;
+                    }
+                    const isStale = materialized.some((row) => {
+                        const updatedMs = this.normalizeTimestampMs(row.updated_at);
+                        return updatedMs !== null && nowMs - updatedMs >= tracklistTtlMs;
+                    });
+                    if (isStale) {
+                        continue;
+                    }
+                    if (!Number.isFinite(numTracks) || numTracks <= 0) {
+                        album.num_tracks = materialized.length;
+                    }
+                    album._provider_tracks = materialized.map((row) => ({
+                        mbid: null,
+                        provider_id: row.provider_id || null,
+                        isrc: normalizeIsrc(row.isrc) || null,
+                        title: row.title || null,
+                        track_number: row.track_number || null,
+                        volume_number: row.volume_number || 1,
+                        duration: row.duration || null,
+                    }));
                 }
 
                 options.progress?.({ kind: "albums_total", total: albums.length });
 
-                // Provider artist catalogs can contain hundreds of compilations and
-                // loosely credited releases. First narrow them using the cheap album
-                // metadata already returned by the artist-catalog call, then hydrate
-                // tracklists only for plausible MusicBrainz release-group candidates.
-                // Canonical MB tracklists remain complete; this only avoids detailed
-                // provider calls for releases the metadata matcher cannot associate.
                 const preliminaryMatches = buildProviderReleaseGroupMatches(artistMbid, albums);
-                for (const [providerAlbumId, match] of collaborationOffers.matches) {
+                for (const [providerAlbumId, match] of seededMatches) {
                     preliminaryMatches.set(providerAlbumId, match);
                 }
                 const candidateAlbumIds = new Set(
@@ -1565,16 +1557,14 @@ export class RefreshArtistService {
                 }
                 if (missingAlbums.length > 0) {
                     console.log(`[RefreshArtistService] Fetching tracklists for ${missingAlbums.length} albums from ${provider.name}...`);
-
-                    // Prefer one batched fetch for the whole artist when the provider
-                    // supports it (TIDAL v2: ~2×ceil(albums/20) calls instead of one per
-                    // album — the provider-matching N+1 killer). Falls back to per-album
-                    // getAlbumTracks for any album the batch didn't return.
                     reportPhase(`${provider.name}: fetching tracklists`);
                     let bulkTracks: Map<string, any> | null = null;
                     if (provider.getAlbumTracksBulk) {
                         try {
-                            bulkTracks = await provider.getAlbumTracksBulk(missingAlbums.map((album) => String(album.provider_id)));
+                            bulkTracks = await this.retryOnRateLimit(
+                                () => provider.getAlbumTracksBulk!(missingAlbums.map((album) => String(album.provider_id))),
+                                { provider, action: `bulk tracklist fetch for ${missingAlbums.length} albums`, options },
+                            );
                         } catch (error) {
                             console.warn(`[RefreshArtistService] Bulk tracklist fetch failed for ${provider.name}, falling back per-album:`, error);
                         }
@@ -1588,23 +1578,19 @@ export class RefreshArtistService {
                                 try {
                                     const batched = bulkTracks?.get(String(album.provider_id));
                                     const completeBatch = completeBulkTrackList(album.num_tracks, batched);
-                                    // Compound provider documents may paginate a nested
-                                    // album relationship independently of the top-level
-                                    // response. A partial batch is unsafe for matching
-                                    // and durable ProviderItems, so refresh just that
-                                    // album through the provider's complete endpoint.
                                     const rawTracks = completeBatch
                                         ? completeBatch
-                                        : await provider.getAlbumTracks(album.provider_id);
+                                        : await this.retryOnRateLimit(
+                                            () => provider.getAlbumTracks(album.provider_id),
+                                            { provider, action: `fetch tracks for album ${album.provider_id}`, options },
+                                        );
                                     album._provider_tracks = rawTracks.map((t: any) => slotTrack(t));
-                                    // Keep the raw provider tracks so we can persist them as
-                                    // track offer rows once the album offers exist (below).
                                     album._provider_raw_tracks = rawTracks;
                                 } catch (error) {
                                     console.warn(`[RefreshArtistService] Failed to fetch tracks for album ${album.provider_id}:`, error);
                                     album._provider_tracks = [];
                                 }
-                            })
+                            }),
                         );
                         const fetched = Math.min(i + chunkSize, missingAlbums.length);
                         const lastAlbum = chunk[chunk.length - 1];
@@ -1620,23 +1606,14 @@ export class RefreshArtistService {
                 }
 
                 const providerReleaseGroupMatches = buildProviderReleaseGroupMatches(artistMbid, albums);
-                for (const [providerAlbumId, match] of collaborationOffers.matches) {
+                for (const [providerAlbumId, match] of seededMatches) {
                     providerReleaseGroupMatches.set(providerAlbumId, match);
                 }
                 console.log(`[RefreshArtistService] Found ${albums.length} albums on ${provider.name} for artist ${artistId}`);
-
                 totalAlbumsCount += albums.length;
 
                 await this.storeProviderAlbumOffers(provider.id, artistMbid, albums, providerReleaseGroupMatches);
 
-                // Persist the freshly-fetched tracklists as provider track offer rows.
-                // The album offers now exist, so storeProviderTrackOffers can map each
-                // provider track to its canonical MB track by (volume, position). This
-                // is the single materialization path and avoids re-fetching next refresh
-                // (see loadMaterializedTracks above). No extra API calls — these tracks
-                // were already fetched for release-group matching.
-                const { RefreshAlbumService: RefreshAlbumSvc, providerTrackToTrackMetadataRow: toTrackRow } =
-                    await import("./refresh-album-service.js");
                 let rematchedReleases = 0;
                 reportPhase(`${provider.name}: matching releases`);
                 const yieldIngest = createMatchingYield();
@@ -1649,174 +1626,224 @@ export class RefreshArtistService {
                         message: `matching ${provider.name} releases (${albumIndex + 1}/${albums.length})`,
                     });
                     await yieldIngest();
-                    const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
-                        providerReleaseGroupMatches.get(String(album.provider_id)) || null,
-                    );
+                    const providerAlbumId = String(album.provider_id);
+                    const match = providerReleaseGroupMatches.get(providerAlbumId);
+                    const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(match || null);
                     const rawTracks = album._provider_raw_tracks;
                     if (!Array.isArray(rawTracks) || rawTracks.length === 0) {
-                        // Already materialized, so nothing was fetched for it. Matching
-                        // still has to run: it is a decision over stored rows, not a
-                        // consequence of new data, and gating it on a fetch meant a
-                        // matcher fix could never reach an existing catalog. Replay it
-                        // from the stored membership — no provider traffic.
                         if (!album._provider_tracks) continue;
                         try {
-                            if (await RefreshAlbumSvc.rematchStoredProviderRelease(
+                            if (await RefreshAlbumService.rematchStoredProviderRelease(
                                 provider.id,
-                                String(album.provider_id),
+                                providerAlbumId,
                                 matchedReleaseMbid,
                             )) {
                                 rematchedReleases += 1;
                             }
                         } catch (error) {
-                            console.warn(`[RefreshArtistService] Failed to re-match stored release ${album.provider_id}:`, error);
+                            console.warn(`[RefreshArtistService] Failed to re-match stored release ${providerAlbumId}:`, error);
                         }
                         continue;
                     }
                     try {
-                        await RefreshAlbumSvc.storeProviderTrackOffers(
+                        await RefreshAlbumService.storeProviderTrackOffers(
                             provider.id,
-                            String(album.provider_id),
-                            rawTracks.map(toTrackRow),
+                            providerAlbumId,
+                            rawTracks.map(providerTrackToTrackMetadataRow),
                             artistMbid,
                             matchedReleaseMbid,
                         );
                     } catch (error) {
-                        console.warn(`[RefreshArtistService] Failed to persist track offers for album ${album.provider_id}:`, error);
+                        console.warn(`[RefreshArtistService] Failed to persist track offers for album ${providerAlbumId}:`, error);
+                    }
+
+                    if (provider.id === "soundcloud"
+                        && match
+                        && match.method !== PLAYLIST_TRACKLIST_COVERAGE_METHOD
+                        && rawTracks.length > 0) {
+                        const downloadable = scoreSoundCloudDownloadableCoverage(
+                            rawTracks.map((_: unknown, index: number) => ({ playlistIndex: index })),
+                            rawTracks,
+                            rawTracks.length,
+                        );
+                        if (!soundCloudOfferHasDownloadableMatch(downloadable)) {
+                            const classifiable = downloadable.downloadableCovered
+                                + downloadable.knownUndownloadableCovered;
+                            if (classifiable > 0 && downloadable.downloadableCovered === 0) {
+                                this.markSoundCloudPlaylistOfferUnavailable(providerAlbumId, "drm-only");
+                                providerReleaseGroupMatches.delete(providerAlbumId);
+                            }
+                        }
                     }
                 }
                 if (rematchedReleases > 0) {
                     console.log(`[RefreshArtistService] Re-matched ${rematchedReleases} already-materialized ${provider.name} release(s) from stored rows`);
                 }
 
-                const yieldDecide = createMatchingYield();
-                for (const album of albums) {
-                    await yieldDecide();
-                    const providerAlbumId = String(album.provider_id);
-                    const match = providerReleaseGroupMatches.get(providerAlbumId);
-                    if (!match) {
-                        continue;
-                    }
-                    // SoundCloud DRM/SNIP-only catalog shells must not fill slots or
-                    // drive monitoring — reject them and keep looking for fan sets.
-                    if (provider.id === "soundcloud"
-                        && match.method !== PLAYLIST_TRACKLIST_COVERAGE_METHOD) {
-                        const rawTracks = Array.isArray(album._provider_raw_tracks)
-                            ? album._provider_raw_tracks
-                            : [];
-                        if (rawTracks.length > 0) {
-                            const downloadable = scoreSoundCloudDownloadableCoverage(
-                                rawTracks.map((_: unknown, index: number) => ({ playlistIndex: index })),
-                                rawTracks,
-                                rawTracks.length,
-                            );
-                            if (!soundCloudOfferHasDownloadableMatch(downloadable)) {
-                                const classifiable = downloadable.downloadableCovered
-                                    + downloadable.knownUndownloadableCovered;
-                                if (classifiable > 0 && downloadable.downloadableCovered === 0) {
-                                    this.markSoundCloudPlaylistOfferUnavailable(
-                                        providerAlbumId,
-                                        "drm-only",
-                                    );
-                                    providerReleaseGroupMatches.delete(providerAlbumId);
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                }
+                return providerReleaseGroupMatches;
+            };
 
-                // SoundCloud mixtapes / dj-mixes / demos often live only as fan or
-                // user playlists, not under the official artist album catalog.
-                // For those release types, search playlists by title and accept
-                // supersets that cover the MusicBrainz tracklist.
-                // Title-only shells with no tracklist must not block this search —
-                // otherwise an empty official SC album stub prevents finding the
-                // fan set that actually covers the mixtape.
-                // DRM/SNIP-only SoundCloud catalog matches also must not block:
-                // they are not real Discogenius downloads and secondary fan sets
-                // (e.g. emmatad OPH) should still be searched.
-                const matchedRgMbids = new Set(
-                    Array.from(providerReleaseGroupMatches.entries())
-                        .filter(([providerAlbumId, match]) => {
-                            if (!match.releaseGroup) return false;
-                            if (!["verified", "probable", "candidate"].includes(match.status)) {
-                                return false;
-                            }
-                            if (match.method === PLAYLIST_TRACKLIST_COVERAGE_METHOD) {
-                                return true;
-                            }
-                            const hasShape = match.evidence?.trackCountMatched === true
-                                || Number(match.evidence?.providerTrackCount || 0) > 0;
-                            if (!hasShape) return false;
-                            if (provider.id !== "soundcloud") return true;
-                            // Official SoundCloud hit: only block secondary search when
-                            // the hydrated tracks are actually downloadable enough.
-                            const album = albums.find((row) =>
-                                String(row.provider_id) === String(providerAlbumId));
-                            const rawTracks = Array.isArray(album?._provider_raw_tracks)
-                                ? album._provider_raw_tracks
-                                : [];
-                            if (rawTracks.length === 0) {
-                                // Empty/stub shells never block mixtape fallback.
-                                return false;
-                            }
-                            const downloadable = scoreSoundCloudDownloadableCoverage(
-                                rawTracks.map((_: unknown, index: number) => ({ playlistIndex: index })),
-                                rawTracks,
-                                rawTracks.length,
-                            );
-                            return soundCloudOfferHasDownloadableMatch(downloadable);
-                        })
-                        .map(([, match]) => String(match.releaseGroup!.mbid)),
+            reportPhase(`${provider.name}: finding the artist`);
+            const providerArtistIds = await resolveProviderArtistIds(provider, artistId, artistMbid);
+            const shouldFetchOwnCatalog =
+                providerArtistIds.length > 0 && (
+                    options.forceUpdate === true ||
+                    this.shouldRefreshProviderArtistCatalog(artistMbid, provider.id)
                 );
-                const widePlaylistOffers = await this.searchSoundCloudMixtapePlaylistOffers(
-                    provider,
-                    artistMbid,
-                    matchedRgMbids,
-                );
-                if (widePlaylistOffers.albums.length > 0) {
-                    await this.storeProviderAlbumOffers(
-                        provider.id,
-                        artistMbid,
-                        widePlaylistOffers.albums,
-                        widePlaylistOffers.matches,
-                    );
-                    const { RefreshAlbumService: RefreshAlbumSvcWide, providerTrackToTrackMetadataRow: toTrackRowWide } =
-                        await import("./refresh-album-service.js");
-                    for (const album of widePlaylistOffers.albums) {
-                        const rawTracks = album._provider_raw_tracks;
-                        if (!Array.isArray(rawTracks) || rawTracks.length === 0) continue;
-                        try {
-                            const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
-                                widePlaylistOffers.matches.get(String(album.provider_id)) || null,
-                            );
-                            await RefreshAlbumSvcWide.storeProviderTrackOffers(
-                                provider.id,
-                                String(album.provider_id),
-                                rawTracks.map(toTrackRowWide),
-                                artistMbid,
-                                matchedReleaseMbid,
-                            );
-                        } catch (error) {
-                            console.warn(
-                                `[RefreshArtistService] Failed to persist mixtape playlist track offers for ${album.provider_id}:`,
-                                error,
-                            );
+
+            let ownAlbums: any[] = [];
+            let ownReleaseGroupMatches = new Map<string, ProviderReleaseGroupMatch>();
+            if (providerArtistIds.length > 0 && !shouldFetchOwnCatalog) {
+                console.log(`[RefreshArtistService] Skipping ${provider.name} album catalog listing for ${artistId} (fresh)`);
+            } else if (shouldFetchOwnCatalog) {
+                try {
+                    const providerAlbums: ProviderAlbum[] = [];
+                    const seenProviderAlbumIds = new Set<string>();
+                    for (const providerArtistId of providerArtistIds) {
+                        reportPhase(`${provider.name}: listing releases`);
+                        const identityAlbums = await this.retryOnRateLimit(
+                            () => (provider.listArtistReleaseOffers
+                                ? provider.listArtistReleaseOffers(providerArtistId)
+                                : provider.getArtistAlbums(providerArtistId)),
+                            { provider, action: `fetch artist albums for ${providerArtistId}`, options },
+                        );
+                        for (const album of identityAlbums) {
+                            const key = String(album.providerId);
+                            if (seenProviderAlbumIds.has(key)) continue;
+                            seenProviderAlbumIds.add(key);
+                            providerAlbums.push(album);
                         }
                     }
-                    for (const album of widePlaylistOffers.albums) {
-                        const providerAlbumId = String(album.provider_id);
-                        const match = widePlaylistOffers.matches.get(providerAlbumId);
-                        if (!match) continue;
+                    if (providerArtistIds.length > 1) {
+                        console.log(`[RefreshArtistService] Merged ${providerAlbums.length} releases from ${providerArtistIds.length} ${provider.name} identities for ${artistId}`);
                     }
-                    totalAlbumsCount += widePlaylistOffers.albums.length;
-                    console.log(
-                        `[RefreshArtistService] Added ${widePlaylistOffers.albums.length} SoundCloud mixtape/playlist offer(s) for ${artistId}`,
-                    );
+                    ownAlbums = providerAlbums.map((album) => ({
+                        ...providerAlbumToOfferRow(album, artistId),
+                        provider: provider.id,
+                    }));
+                    ownReleaseGroupMatches = await ingestProviderAlbums(ownAlbums, new Map());
+                } catch (error) {
+                    console.warn(`[RefreshArtistService] Failed to fetch albums on ${provider.name} for ${artistId}:`, error);
                 }
-            } catch (error) {
-                console.warn(`[RefreshArtistService] Failed to fetch albums on ${provider.name} for ${artistId}:`, error);
+            }
+
+            const alreadyMatchedRgMbids = new Set<string>();
+            for (const match of ownReleaseGroupMatches.values()) {
+                if (match.releaseGroup?.mbid && (match.status === "verified" || match.status === "probable")) {
+                    alreadyMatchedRgMbids.add(match.releaseGroup.mbid);
+                }
+            }
+
+            const collaborationOffers = await this.searchCanonicalCollaborationOffers(
+                provider,
+                artistMbid,
+                options.forceUpdate === true,
+                reportPhase,
+                options,
+                providerArtistIds.length > 0 && !shouldFetchOwnCatalog,
+                alreadyMatchedRgMbids,
+            );
+            if (providerArtistIds.length === 0 && collaborationOffers.albums.length === 0) {
+                console.log(`[RefreshArtistService] Skipping catalog hydration on ${provider.name} for ${artistId} (no provider artist match)`);
+                return;
+            }
+
+            if (collaborationOffers.albums.length > 0) {
+                const ownAlbumIds = new Set(ownAlbums.map((album) => String(album.provider_id)));
+                const newCollaborationAlbums = collaborationOffers.albums
+                    .filter((album) => !ownAlbumIds.has(String(album.provider_id)))
+                    .map((album) => ({ ...album, provider: provider.id }));
+                if (newCollaborationAlbums.length > 0) {
+                    try {
+                        await ingestProviderAlbums(newCollaborationAlbums, collaborationOffers.matches);
+                    } catch (error) {
+                        console.warn(`[RefreshArtistService] Failed to ingest collaboration albums on ${provider.name} for ${artistId}:`, error);
+                    }
+                }
+            }
+
+            if (shouldRefreshArtistVideos && providerArtistIds.length > 0 && !isCoreVideoCatalogProvider(provider.id)) {
+                try {
+                    reportPhase(`${provider.name}: fetching videos`);
+                    await this.refreshProviderVideosForMatchedArtist(provider, providerArtistIds[0], artistId, options);
+                } catch (err) {
+                    console.warn(`[RefreshArtistService] Non-fatal error fetching videos on ${provider.name} for ${artistId}:`, err);
+                }
+            }
+
+            if (provider.id === "soundcloud") {
+                try {
+                    const matchedRgMbids = new Set(
+                        Array.from(ownReleaseGroupMatches.entries())
+                            .filter(([providerAlbumId, match]) => {
+                                if (!match.releaseGroup) return false;
+                                if (!["verified", "probable", "candidate"].includes(match.status)) {
+                                    return false;
+                                }
+                                if (match.method === PLAYLIST_TRACKLIST_COVERAGE_METHOD) {
+                                    return true;
+                                }
+                                const hasShape = match.evidence?.trackCountMatched === true
+                                    || Number(match.evidence?.providerTrackCount || 0) > 0;
+                                if (!hasShape) return false;
+                                const album = ownAlbums.find((row) =>
+                                    String(row.provider_id) === String(providerAlbumId));
+                                const rawTracks = Array.isArray(album?._provider_raw_tracks)
+                                    ? album._provider_raw_tracks
+                                    : [];
+                                if (rawTracks.length === 0) {
+                                    return false;
+                                }
+                                const downloadable = scoreSoundCloudDownloadableCoverage(
+                                    rawTracks.map((_: unknown, index: number) => ({ playlistIndex: index })),
+                                    rawTracks,
+                                    rawTracks.length,
+                                );
+                                return soundCloudOfferHasDownloadableMatch(downloadable);
+                            })
+                            .map(([, match]) => String(match.releaseGroup!.mbid)),
+                    );
+                    const widePlaylistOffers = await this.searchSoundCloudMixtapePlaylistOffers(
+                        provider,
+                        artistMbid,
+                        matchedRgMbids,
+                    );
+                    if (widePlaylistOffers.albums.length > 0) {
+                        await this.storeProviderAlbumOffers(
+                            provider.id,
+                            artistMbid,
+                            widePlaylistOffers.albums,
+                            widePlaylistOffers.matches,
+                        );
+                        for (const album of widePlaylistOffers.albums) {
+                            const rawTracks = album._provider_raw_tracks;
+                            if (!Array.isArray(rawTracks) || rawTracks.length === 0) continue;
+                            try {
+                                const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(
+                                    widePlaylistOffers.matches.get(String(album.provider_id)) || null,
+                                );
+                                await RefreshAlbumService.storeProviderTrackOffers(
+                                    provider.id,
+                                    String(album.provider_id),
+                                    rawTracks.map(providerTrackToTrackMetadataRow),
+                                    artistMbid,
+                                    matchedReleaseMbid,
+                                );
+                            } catch (error) {
+                                console.warn(
+                                    `[RefreshArtistService] Failed to persist mixtape playlist track offers for ${album.provider_id}:`,
+                                    error,
+                                );
+                            }
+                        }
+                        totalAlbumsCount += widePlaylistOffers.albums.length;
+                        console.log(
+                            `[RefreshArtistService] Added ${widePlaylistOffers.albums.length} SoundCloud mixtape/playlist offer(s) for ${artistId}`,
+                        );
+                    }
+                } catch (error) {
+                    console.warn(`[RefreshArtistService] Failed to search SoundCloud mixtape playlists for ${artistId}:`, error);
+                }
             }
         };
         await Promise.all(connectedProviders.map(async (provider) => {
@@ -1885,13 +1912,12 @@ export class RefreshArtistService {
         }>;
         if (stale.length === 0) return;
 
-        const { RefreshAlbumService: RefreshAlbumSvc } = await import("./refresh-album-service.js");
         const yieldReplay = createMatchingYield();
         let replayed = 0;
         for (const release of stale) {
             await yieldReplay();
             try {
-                if (await RefreshAlbumSvc.rematchStoredProviderRelease(
+                if (await RefreshAlbumService.rematchStoredProviderRelease(
                     release.provider,
                     release.provider_id,
                     release.edition_mbid,
@@ -1917,7 +1943,7 @@ export class RefreshArtistService {
         artistMbid: string | null,
         options: RefreshOptions,
     ): Promise<void> {
-        if (providers.length === 0) {
+        if (providers.length === 0 || !this.isVideoLibraryEnabled()) {
             return;
         }
 
@@ -1950,12 +1976,15 @@ export class RefreshArtistService {
         artistId: string,
         options: RefreshOptions,
     ): Promise<void> {
-        if (!provider.getArtistVideos) {
+        if (!provider.getArtistVideos || !this.isVideoLibraryEnabled()) {
             return;
         }
 
         try {
-            const videos = (await provider.getArtistVideos(providerArtistId) || [])
+            const videos = (await this.retryOnRateLimit(
+                () => provider.getArtistVideos!(providerArtistId),
+                { provider, action: `fetch artist videos for ${providerArtistId}`, options },
+            ) || [])
                 .map((video) => ({
                     ...providerVideoToOfferRow(video, artistId),
                     provider: provider.id,
@@ -1980,7 +2009,10 @@ export class RefreshArtistService {
                     const limit = pLimit(4);
                     await Promise.all(missingFacts.map((video) => limit(async () => {
                         try {
-                            const detailed = await provider.getVideo!(String(video.provider_id));
+                            const detailed = await this.retryOnRateLimit(
+                                () => provider.getVideo!(String(video.provider_id)),
+                                { provider, action: `fetch video details for ${video.provider_id}`, options },
+                            );
                             if (detailed.releaseDate) {
                                 video.release_date = detailed.releaseDate;
                             }
@@ -2019,7 +2051,6 @@ export class RefreshArtistService {
             }
             console.log(`[RefreshArtistService] Found ${videos.length} videos on ${provider.name} for artist ${artistId}`);
             await RefreshVideoService.upsertArtistVideosInBatches(artistId, videos, options);
-            await this.precacheArtistVideoArtwork(artistId);
         } catch (error) {
             console.warn(`[RefreshArtistService] Failed to fetch videos on ${provider.name} for ${artistId}:`, error);
         }
@@ -2032,23 +2063,17 @@ export class RefreshArtistService {
         if (!artistMbid) {
             return;
         }
-        const rows = force
-            ? db.prepare(`
-                SELECT DISTINCT rg.mbid
-                FROM Albums rg
-                LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-                WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
-                ORDER BY rg.mbid
-            `).all(artistMbid, artistMbid) as Array<{ mbid: string }>
-            : db.prepare(`
-                SELECT DISTINCT rg.mbid
-                FROM Albums rg
-                LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-                WHERE (rg.artist_mbid = ? OR scope.artist_mbid = ?)
-                  AND (rg.review_text IS NULL OR TRIM(rg.review_text) = '')
-                  AND rg.review_last_updated IS NULL
-                ORDER BY rg.mbid
-            `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
+        const rows = db.prepare(`
+            SELECT DISTINCT rg.mbid
+            FROM Albums rg
+            LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
+            WHERE (rg.artist_mbid = ? OR scope.artist_mbid = ?)
+              AND (
+                ? = 1
+                OR ((rg.review_text IS NULL OR TRIM(rg.review_text) = '') AND rg.review_last_updated IS NULL)
+              )
+            ORDER BY rg.mbid
+        `).all(artistMbid, artistMbid, force ? 1 : 0) as Array<{ mbid: string }>;
         if (rows.length === 0) {
             return;
         }
@@ -2136,6 +2161,9 @@ export class RefreshArtistService {
      * resolveVideoArtwork caches a full-aspect origin plus the 250px card proxy.
      */
     private static async precacheArtistVideoArtwork(artistId: string): Promise<void> {
+        if (!this.isVideoLibraryEnabled()) {
+            return;
+        }
         const artistMbid = this.getArtistMusicBrainzId(artistId);
         const videoIds = db.prepare(`
             SELECT DISTINCT
