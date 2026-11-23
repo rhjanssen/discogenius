@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.27.1] - 2026-11-23
+
+### Fixed
+
+- Missing music downloads again for almost every monitored album. A duplicate-match check flagged each track as conflicting with itself, so most missing albums were silently skipped and only a few dozen were queued per pass (#177).
+
 ## [2.27.0] - 2026-11-22
 
 ### Fixed
