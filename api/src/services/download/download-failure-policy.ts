@@ -2,7 +2,7 @@ import { ProviderUnavailableError } from "./provider-unavailable-error.js";
 import { errorIndicatesProviderAuth, isAppleTruncatedSegmentError } from "../providers/provider-auth-error.js";
 import { readIntEnv } from "../../utils/env.js";
 import { streamingProviderManager } from "../providers/index.js";
-import { isAppleUnavailableTrackError } from "../providers/apple-music/apple-music-backend.js";
+import { isAppleMediaUserTokenError, isAppleUnavailableTrackError } from "../providers/apple-music/apple-music-backend.js";
 
 /**
  * Same-offer retries before provider fallback (A1).
@@ -179,7 +179,7 @@ export function classifyDownloadFailure(error: unknown): DownloadFailureKind {
   if (!text.trim()) {
     return "transient";
   }
-  if (isAppleUnavailableTrackError(text)) {
+  if (isAppleUnavailableTrackError(text) || isAppleMediaUserTokenError(text)) {
     return "permanent";
   }
   if (isAppleTruncatedSegmentError(text)) {

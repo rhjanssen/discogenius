@@ -107,9 +107,30 @@ export class ProviderCatalogRepository {
         duration_ms = COALESCE(excluded.duration_ms, ProviderItems.duration_ms),
         release_date = COALESCE(excluded.release_date, ProviderItems.release_date),
         explicit = COALESCE(excluded.explicit, ProviderItems.explicit),
-        availability = excluded.availability,
-        availability_reason = excluded.availability_reason,
-        checked_at = excluded.checked_at,
+        availability = CASE
+          WHEN ProviderItems.availability IN ('unavailable', 'needs_cookies', 'no_longer_available', 'geography_restricted', 'entitlement_restricted')
+            AND ProviderItems.availability_reason IS NOT NULL
+            AND excluded.availability IN ('available', 'unknown')
+            AND excluded.availability_reason IS NULL
+          THEN ProviderItems.availability
+          ELSE excluded.availability
+        END,
+        availability_reason = CASE
+          WHEN ProviderItems.availability IN ('unavailable', 'needs_cookies', 'no_longer_available', 'geography_restricted', 'entitlement_restricted')
+            AND ProviderItems.availability_reason IS NOT NULL
+            AND excluded.availability IN ('available', 'unknown')
+            AND excluded.availability_reason IS NULL
+          THEN ProviderItems.availability_reason
+          ELSE excluded.availability_reason
+        END,
+        checked_at = CASE
+          WHEN ProviderItems.availability IN ('unavailable', 'needs_cookies', 'no_longer_available', 'geography_restricted', 'entitlement_restricted')
+            AND ProviderItems.availability_reason IS NOT NULL
+            AND excluded.availability IN ('available', 'unknown')
+            AND excluded.availability_reason IS NULL
+          THEN ProviderItems.checked_at
+          ELSE excluded.checked_at
+        END,
         provider_url = COALESCE(excluded.provider_url, ProviderItems.provider_url),
         cover_id = COALESCE(excluded.cover_id, ProviderItems.cover_id),
         artwork_url = COALESCE(excluded.artwork_url, ProviderItems.artwork_url),

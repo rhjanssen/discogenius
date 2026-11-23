@@ -1,6 +1,13 @@
 import { markAcquisitionPlanningStale } from "../music/acquisition-planning-control.js";
 import { prefetchImportNetworkData, resolveImportedCatalogIdentity } from "../mediafiles/downloaded-tracks-import-service.js";
 import { ProviderUnavailableError } from "./provider-unavailable-error.js";
+import {
+    clearOfferFailureStateOnSuccess,
+    clearOfferFailureStreak,
+    hasOfferFailureStreakOrNeedsCookies,
+    recordRepeatedOfferFailure,
+    type OfferFailureTarget,
+} from "./offer-availability.js";
 import { providerRequestWorkerData } from "../providers/provider-request-state.js";
 import { superviseDownloadProcesses } from "./download-child-process.js";
 import { validateExecutionManifest } from './execution-manifest.js';
@@ -2792,6 +2799,12 @@ export class DownloadProcessor {
                         },
                     );
 
+                    await this.clearOfferFailureOnSuccess({
+                        provider: activeProvider,
+                        entityType: type as "album" | "track" | "video",
+                        providerId: activeProviderItemId,
+                    });
+
                     if (usedFallback && fallbackProvider) {
                         this.markFallbackSuccessWarning(
                             commandId,
@@ -2838,7 +2851,15 @@ export class DownloadProcessor {
                     }
                     const authError = asProviderAuthError(activeProvider, error);
                     if (authError) throw authError;
-                    await this.recordUnavailableProviderResource(error);
+                    if (error instanceof ProviderUnavailableError) {
+                        await this.recordUnavailableProviderResource(error);
+                    } else {
+                        await this.recordOfferFailure({
+                            provider: activeProvider,
+                            entityType: type as "album" | "track" | "video",
+                            providerId: activeProviderItemId,
+                        }, error);
+                    }
                     const next = this.nextDownloadOffer(rankedAlternates, triedOffers);
                     if (!next) {
                         // The error is the last provider's; without this the
@@ -2955,12 +2976,14 @@ export class DownloadProcessor {
         let entityType: string | undefined = fallback?.entityType;
         let providerId = fallback?.providerId;
         let reason = error instanceof Error ? error.message : String(error);
+        let availability = "unavailable";
 
         if (error instanceof ProviderUnavailableError) {
             provider = error.provider;
             entityType = error.entityType;
             providerId = error.providerId;
             reason = error.message;
+            availability = error.availability;
         } else if (!provider || !entityType || !providerId) {
             return;
         }
@@ -2969,11 +2992,36 @@ export class DownloadProcessor {
 
         await withSqliteWriteGate(() => {
             db.prepare(`
-            UPDATE ProviderItems SET availability = 'unavailable', availability_reason = ?, checked_at = ?
+            UPDATE ProviderItems SET availability = ?, availability_reason = ?, checked_at = ?
             WHERE provider = ? AND entity_type = ? AND provider_id = ?
-        `).run(reason, new Date().toISOString(), provider, entityType, providerId);
+        `).run(availability, reason, new Date().toISOString(), provider, entityType, providerId);
+            clearOfferFailureStreak(db, {
+                provider: provider!,
+                entityType: entityType as OfferFailureTarget["entityType"],
+                providerId: providerId!,
+            });
             markAcquisitionPlanningStale();
         }, 'download:unavailable-resource');
+    }
+
+    private async recordOfferFailure(
+        target: OfferFailureTarget,
+        error: unknown,
+    ): Promise<{ markedUnavailable: boolean; count: number }> {
+        return withSqliteWriteGate(() => {
+            const result = recordRepeatedOfferFailure(db, { ...target, error });
+            if (result.markedUnavailable) {
+                markAcquisitionPlanningStale();
+            }
+            return result;
+        }, 'download:repeated-offer-failure');
+    }
+
+    private async clearOfferFailureOnSuccess(target: OfferFailureTarget): Promise<void> {
+        if (!hasOfferFailureStreakOrNeedsCookies(db, target)) return;
+        await withSqliteWriteGate(() => {
+            clearOfferFailureStateOnSuccess(db, target);
+        }, 'download:clear-offer-failure');
     }
 
     private async downloadAlbumTrackOffers(
@@ -3285,6 +3333,11 @@ export class DownloadProcessor {
                         );
 
                         this.flattenTrackOfferWorkspace(trackDownloadPath, downloadPath, offer.providerTrackId);
+                        await this.clearOfferFailureOnSuccess({
+                            provider: providerId,
+                            entityType: "track",
+                            providerId: offer.providerTrackId,
+                        });
 
                         if (trackIndex >= 0) {
                             tracks[trackIndex] = {
@@ -3307,7 +3360,7 @@ export class DownloadProcessor {
                         }
                         const authError = asProviderAuthError(providerId, error);
                         if (authError) throw authError;
-                        const isUnavailable = error instanceof ProviderUnavailableError
+                        let isUnavailable = error instanceof ProviderUnavailableError
                             || isAppleUnavailableTrackError(error instanceof Error ? error.message : String(error));
                         if (isUnavailable) {
                             await this.recordUnavailableProviderResource(error, {
@@ -3315,6 +3368,15 @@ export class DownloadProcessor {
                                 entityType: "track",
                                 providerId: offer.providerTrackId,
                             });
+                        } else {
+                            const repeated = await this.recordOfferFailure({
+                                provider: providerId,
+                                entityType: "track",
+                                providerId: offer.providerTrackId,
+                            }, error);
+                            if (repeated.markedUnavailable) {
+                                isUnavailable = true;
+                            }
                         }
                         const next = this.nextDownloadOffer(ranked, tried);
                         if (!next) {

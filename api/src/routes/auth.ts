@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { withDbWrite } from "../database.js";
+import { markAcquisitionPlanningStale } from "../services/music/acquisition-planning-control.js";
 import { streamingProviderManager } from "../services/providers/index.js";
 import {
   providerSupportsAppAuthentication,
@@ -120,6 +122,9 @@ router.post("/credentials", async (req, res) => {
       ? body.credentials
       : body;
     await provider.saveCredentials(credentials as Record<string, unknown>);
+    if (provider.id === "youtube-music") {
+      await withDbWrite(() => markAcquisitionPlanningStale());
+    }
     res.json({ success: true, provider: provider.id, status: await provider.getAuthStatus() });
   } catch (error: any) {
     res.status(400).json({ detail: error.message });

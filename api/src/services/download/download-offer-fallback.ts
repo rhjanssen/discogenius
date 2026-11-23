@@ -1,4 +1,5 @@
 import { db } from "../../database.js";
+import { providerItemAvailableSql } from "./offer-availability.js";
 import { compareVideoOffersByQualityThenProvider } from "../music/video-offer-resolver.js";
 import {
   compareAudioOffersByQualityThenProvider,
@@ -32,11 +33,8 @@ type SpatialRankedDownloadOffer = RankedDownloadOffer & {
   spatialRank: number;
 };
 
-function availabilitySql(column: string): string {
-  return `(
-    ${column} IS NULL
-    OR LOWER(CAST(${column} AS TEXT)) NOT IN ('0', 'false', 'unavailable', 'no', '')
-  )`;
+function availabilitySql(column: string, providerColumn?: string): string {
+  return providerItemAvailableSql(column, providerColumn);
 }
 
 function offerKey(provider: string, providerId: string): string {
@@ -151,7 +149,7 @@ export function listRankedAlbumOffers(
      AND ${availabilitySql("variant.availability")}
     WHERE item.entity_type = 'release'
       AND release_group.mbid = ?
-      AND ${availabilitySql("item.availability")}
+      AND ${availabilitySql("item.availability", "item.provider")}
   `).all(mbid) as AudioOfferRow[];
 
   if (slot === "spatial") {
@@ -218,8 +216,8 @@ export function listRankedTrackOffers(options: {
           AND conflicting_match.match_state = 'accepted'
           AND conflicting_match.recording_id != track_match.recording_id
       )
-      AND ${availabilitySql("item.availability")}
-      AND (parent.id IS NULL OR ${availabilitySql("parent.availability")})
+      AND ${availabilitySql("item.availability", "item.provider")}
+      AND (parent.id IS NULL OR ${availabilitySql("parent.availability", "parent.provider")})
   `).all(trackMbid, trackMbid, recordingMbid, recordingMbid) as AudioOfferRow[];
 
   const slot = String(options.librarySlot || "stereo").trim().toLowerCase();
@@ -303,8 +301,8 @@ export function listRankedAlbumTrackOffers(options: {
         (? != '' AND track.mbid = ?)
         OR (? != '' AND recording.mbid = ?)
       )
-      AND ${availabilitySql("item.availability")}
-      AND ${availabilitySql("parent.availability")}
+      AND ${availabilitySql("item.availability", "item.provider")}
+      AND ${availabilitySql("parent.availability", "parent.provider")}
   `).all(
     provider,
     provider,
@@ -347,7 +345,7 @@ export function listRankedVideoOffers(recordingRef: string | null | undefined): 
     JOIN Recordings recording ON recording.id = video_match.recording_id
     WHERE item.entity_type = 'video'
       AND (CAST(video_match.recording_id AS TEXT) = ? OR recording.mbid = ?)
-      AND ${availabilitySql("item.availability")}
+      AND ${availabilitySql("item.availability", "item.provider")}
   `).all(key, key) as Array<{
     provider_item_id: number;
     provider: string;

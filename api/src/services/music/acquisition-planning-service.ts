@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isOfferAvailabilityUsable, isYouTubeCookiesConfigured } from "../download/offer-availability.js";
 import type Database from "better-sqlite3";
 import { getConfigSection } from "../config/config.js";
 import { streamingProviderManager } from "../../providers/index.js";
@@ -63,15 +64,7 @@ function parseQualityList(value: unknown): NormalizedAudioQuality[] {
 }
 
 function isAvailable(value: unknown): boolean {
-  const availability = String(value || "unknown").trim().toLowerCase();
-  return ![
-    "unavailable",
-    "no_longer_available",
-    "geography_restricted",
-    "entitlement_restricted",
-    "explicit_policy_ineligible",
-    "quality_unavailable",
-  ].includes(availability);
+  return isOfferAvailabilityUsable(value);
 }
 
 interface PlanningContextRow {
@@ -179,7 +172,8 @@ export function eligiblePlansForEdition<
 }
 
 function loadAcquisitionCandidateRows(db: Database.Database, editionId: number): CandidateRow[] {
-  return db.prepare(ACQUISITION_CANDIDATE_SQL).all(editionId, editionId) as CandidateRow[];
+  const ytCookies = isYouTubeCookiesConfigured() ? 1 : 0;
+  return db.prepare(ACQUISITION_CANDIDATE_SQL).all(editionId, editionId, ytCookies, ytCookies) as CandidateRow[];
 }
 
 const ACQUISITION_CANDIDATE_SQL = `
@@ -346,10 +340,12 @@ const ACQUISITION_CANDIDATE_SQL = `
           'unavailable', 'no_longer_available', 'geography_restricted',
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
+      AND NOT (release_item.availability = 'needs_cookies' AND ? = 0)
       AND member_item.availability NOT IN (
           'unavailable', 'no_longer_available', 'geography_restricted',
           'entitlement_restricted', 'explicit_policy_ineligible', 'quality_unavailable'
         )
+      AND NOT (member_item.availability = 'needs_cookies' AND ? = 0)
       ORDER BY release_match.id, target_track.id, track_match.id, track_variant.id, release_variant.id
     `;
 
