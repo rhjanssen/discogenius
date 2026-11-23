@@ -1262,6 +1262,20 @@ test("planned video repair removes a stale studio link and commits its live repl
   assert.deepEqual(links(), [{ target_recording_id: liveId }]);
   await refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
   assert.deepEqual(links(), [{ target_recording_id: liveId }]);
+
+  // Deleting a recording while relation writes are queued must be a safe no-op via conditional WHERE EXISTS.
+  dbModule.db.prepare("DELETE FROM RecordingRelations WHERE source_recording_id = ?").run(videoId);
+  const transientVideoId = insertCanonicalVideo({ mbid: "transient-video", title: "Pompeii (Live)", variant: "live", lengthMs: 232000 });
+  seedAcceptedProviderVideoMatch(dbModule.db, {
+    provider: "apple-music", providerVideoId: "transient-live-video",
+    providerEditionId: "planned-live-offer", recordingId: transientVideoId, title: "Pompeii (Live)", durationMs: 232000,
+  });
+  const refresh = refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
+  await dbModule.withSqliteWriteGate(() => {
+    dbModule.db.prepare("DELETE FROM Recordings WHERE id = ?").run(transientVideoId);
+  }, "test:delete-transient-video");
+  await refresh;
+  assert.deepEqual(links(), [{ target_recording_id: liveId }]);
 });
 
 test("provider refresh preserves previously probed video quality", () => {

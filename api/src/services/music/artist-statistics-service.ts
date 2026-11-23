@@ -1,5 +1,4 @@
-import { db, sqliteDataRevision, withSqliteWriteGate } from "../../database.js";
-import { prepareSqliteReadPlan } from "../../database/sqlite-read-plan.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { audioLibraryPredicate } from "./library-album-monitoring.js";
 
 export interface ArtistStatisticsRow {
@@ -380,8 +379,7 @@ export class ArtistStatisticsService {
     return rows;
   }
 
-  /** Commands plan outside the write gate, then admit a bounded, current projection.
-   * Changed inputs trigger a fresh plan instead of writing stale counters. */
+  /** Commands plan outside the write gate, then admit a bounded projection batch. */
   static async refreshAsync(
     artistIds?: Array<string | number | null | undefined>,
     options?: {
@@ -397,18 +395,13 @@ export class ArtistStatisticsService {
       if (options?.yieldToEventLoop) {
         await options.yieldToEventLoop();
       }
-      let committed = false;
-      for (let attempt = 0; attempt < 8 && !committed; attempt += 1) {
-        const plan = prepareSqliteReadPlan(() => calculateArtistStatisticsChunk(ids), sqliteDataRevision);
-        committed = await withSqliteWriteGate(() => db.transaction(() => {
-          if (!plan.isCurrent()) return false;
-          this.persistRows(plan.value, false);
-          return true;
-        })(), "statistics:projection-batch");
-        if (committed) rows.push(...plan.value);
-        await new Promise<void>(resolve => setImmediate(resolve));
-      }
-      if (!committed) throw new Error("Artist statistics inputs kept changing; retry the task");
+      const batch = calculateArtistStatisticsChunk(ids);
+      const persisted = await withSqliteWriteGate(
+        () => this.persistRows(batch, false),
+        "statistics:projection-batch",
+      );
+      rows.push(...persisted);
+      await new Promise<void>(resolve => setImmediate(resolve));
     }
     if ((artistIds === undefined || artistIds.length === 0) && !options?.isTimedOut?.()) {
       await withSqliteWriteGate(() => this.persistRows([], true), "statistics:orphan-cleanup");
@@ -416,13 +409,14 @@ export class ArtistStatisticsService {
     return rows;
   }
 
-  private static persistRows(rows: ArtistStatisticsRow[], isFullRefresh: boolean): void {
+  private static persistRows(rows: ArtistStatisticsRow[], isFullRefresh: boolean): ArtistStatisticsRow[] {
     const upsert = db.prepare(`
       INSERT INTO ArtistStatistics (
         library_id, artist_metadata_id, artist_mbid, album_count, monitored_album_count, downloaded_album_count,
         track_count, monitored_track_count, track_file_count, video_count, size_on_disk, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+      WHERE EXISTS (SELECT 1 FROM ArtistMetadata WHERE id = ?)
       ON CONFLICT(library_id, artist_metadata_id) DO UPDATE SET
         artist_mbid = excluded.artist_mbid,
         album_count = excluded.album_count,
@@ -436,7 +430,10 @@ export class ArtistStatisticsService {
         updated_at = CURRENT_TIMESTAMP
     `);
 
-    db.transaction(() => {
+    return db.transaction(() => {
+      const persisted: ArtistStatisticsRow[] = [];
+      const fallbackLibraries = (db.prepare(`SELECT id FROM Libraries WHERE enabled = 1 ORDER BY id LIMIT 1`).all() as Array<{ id: number }>)
+        .map((m) => m.id);
       for (const row of rows) {
         const metadataId = row.artist_metadata_id;
         if (metadataId == null) continue;
@@ -445,10 +442,10 @@ export class ArtistStatisticsService {
         `).all(metadataId) as Array<{ library_id: number }>;
         const libraryIds = memberships.length > 0
           ? memberships.map((m) => m.library_id)
-          : (db.prepare(`SELECT id FROM Libraries WHERE enabled = 1 ORDER BY id LIMIT 1`).all() as Array<{ id: number }>)
-              .map((m) => m.id);
+          : fallbackLibraries;
+        let wrote = false;
         for (const libraryId of libraryIds) {
-          upsert.run(
+          const result = upsert.run(
             libraryId,
             metadataId,
             row.artist_mbid,
@@ -460,8 +457,11 @@ export class ArtistStatisticsService {
             Number(row.track_file_count || 0),
             Number(row.video_count || 0),
             Number(row.size_on_disk || 0),
+            metadataId,
           );
+          if (result.changes > 0) wrote = true;
         }
+        if (wrote) persisted.push(row);
       }
 
       if (isFullRefresh) {
@@ -470,8 +470,8 @@ export class ArtistStatisticsService {
           WHERE artist_metadata_id NOT IN (SELECT id FROM ArtistMetadata)
         `).run();
       }
+      return persisted;
     })();
-
   }
 
   /**

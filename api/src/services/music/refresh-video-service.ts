@@ -1,5 +1,4 @@
-import { db, sqliteDataRevision, withSqliteWriteGate } from "../../database.js";
-import { prepareSqliteReadPlan } from "../../database/sqlite-read-plan.js";
+import { db, withSqliteWriteGate } from "../../database.js";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { streamingProviderManager } from "../providers/index.js";
 import type { RefreshOptions } from "./scan-types.js";
@@ -805,7 +804,10 @@ function upsertProviderVideoAudioRelation(input: {
         INSERT INTO RecordingRelations (
             source_recording_id, target_recording_id, source_foreign_recording_id,
             target_foreign_recording_id, relation_type, source, confidence, data, updated_at
-        ) VALUES (?, ?, ?, ?, 'provider_video_for', ?, ?, ?, CURRENT_TIMESTAMP)
+        )
+        SELECT ?, ?, ?, ?, 'provider_video_for', ?, ?, ?, CURRENT_TIMESTAMP
+        WHERE EXISTS (SELECT 1 FROM Recordings WHERE id = ? AND is_video = 1)
+          AND EXISTS (SELECT 1 FROM Recordings WHERE id = ? AND is_video = 0)
         ON CONFLICT(source_recording_id, target_recording_id, relation_type) DO UPDATE SET
             source_foreign_recording_id = COALESCE(excluded.source_foreign_recording_id, RecordingRelations.source_foreign_recording_id),
             target_foreign_recording_id = COALESCE(excluded.target_foreign_recording_id, RecordingRelations.target_foreign_recording_id),
@@ -824,6 +826,8 @@ function upsertProviderVideoAudioRelation(input: {
             method: input.audioMatch.method,
             evidence: input.audioMatch.evidence,
         }),
+        input.videoRecordingId,
+        input.audioMatch.id,
     );
 }
 
@@ -1881,11 +1885,11 @@ function repairProviderVideoRecordingAssignments(artistMbid: string, recordingId
  * veto can land after the first write, so a refresh replays the decision on
  * rows already in the database.
  */
-function planProviderVideoAudioRelations(artistMbid: string, recordingIds?: number[]): Array<() => void> {
-    // This pass changes video relations, never the audio catalog. Keep candidate
-    // reads local to the pass so each artist is loaded once, with no stale cache
-    // surviving a subsequent catalog refresh.
-    const audioCandidates = new Map<string, AudioRecordingCandidateRow[]>();
+function planProviderVideoAudioRelations(
+    artistMbid: string,
+    recordingIds?: number[],
+    audioCandidates = new Map<string, AudioRecordingCandidateRow[]>(),
+): Array<() => void> {
     const rows = db.prepare(`
         SELECT
             provider_item.provider,
@@ -2234,19 +2238,15 @@ export class RefreshVideoService {
                 if (changed === 0) break;
             }
             const ids = loadIds();
+            const audioCandidates = new Map<string, AudioRecordingCandidateRow[]>();
             for (let offset = 0; offset < ids.length; offset += batchSize) {
                 const batch = ids.slice(offset, offset + batchSize);
-                let committed = false;
-                for (let attempt = 0; attempt < 8 && !committed; attempt++) {
-                    const plan = prepareSqliteReadPlan(() => planProviderVideoAudioRelations(artist, batch), sqliteDataRevision);
-                    committed = await withSqliteWriteGate(() => db.transaction(() => {
-                        if (!plan.isCurrent()) return false;
-                        for (const apply of plan.value) apply();
-                        return true;
+                const operations = planProviderVideoAudioRelations(artist, batch, audioCandidates);
+                if (operations.length > 0) {
+                    await withSqliteWriteGate(() => db.transaction(() => {
+                        for (const apply of operations) apply();
                     })(), "videos:relation-batch");
-                    await yieldToEventLoop();
                 }
-                if (!committed) throw new Error("Video relation inputs kept changing; retry the artist refresh");
                 await yieldToEventLoop();
             }
             const cleanupIds = loadIds();

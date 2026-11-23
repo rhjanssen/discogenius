@@ -19,10 +19,6 @@ import {
     type ProviderEditorialText,
 } from "../providers/provider-editorial-text.js";
 import {
-    matchPlaylistTracksToCanonical,
-    PLAYLIST_TRACKLIST_COVERAGE_METHOD,
-} from "../providers/soundcloud/soundcloud-playlist-match.js";
-import {
     isSoundCloudTrackKnownUndownloadable,
 } from "../providers/soundcloud/soundcloud-downloadability.js";
 import {
@@ -36,7 +32,6 @@ import {
 import { RefreshVideoService } from "./refresh-video-service.js";
 
 const MUSICBRAINZ_MBID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SAME_RELEASE_SUPERSET_TRACKLIST_METHOD = "same-release-superset-track-coverage";
 
 function isMusicBrainzMbid(value: string | number | null | undefined): boolean {
     return MUSICBRAINZ_MBID_RE.test(String(value || "").trim());
@@ -241,22 +236,6 @@ export function providerAudioVariants(
     return variants;
 }
 
-function getAlbumIdentityStatusFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
-    if (!match || match.status === "unmatched") {
-        return null;
-    }
-    return match.status === "verified" ? "verified" : "ambiguous";
-}
-
-function primaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
-    return String(match?.releaseGroup?.primaryType || "").trim().toLowerCase() || null;
-}
-
-function secondaryTypeFromProviderMatch(match?: ProviderReleaseGroupMatch | null): string | null {
-    const secondaryTypes = match?.releaseGroup?.secondaryTypes || [];
-    return secondaryTypes.map((type) => String(type || "").trim().toLowerCase()).filter(Boolean)[0] || null;
-}
-
 export class RefreshAlbumService {
     private static getCanonicalAlbumLink(providerId: string, albumId: string): {
         releaseGroupMbid: string | null;
@@ -424,17 +403,21 @@ export class RefreshAlbumService {
             kind: "albumReview",
             candidates: [...extra, ...listReleaseGroupAlbumOfferCandidates(mbid)],
         });
-        if (lookup.editorial) {
-            this.storeCanonicalAlbumReview({
+        const { editorial } = lookup;
+        if (editorial) {
+            await withSqliteWriteGate(() => this.storeCanonicalAlbumReview({
                 releaseGroupMbid: mbid,
-                reviewText: lookup.editorial.text,
-                reviewSource: lookup.editorial.source,
+                reviewText: editorial.text,
+                reviewSource: editorial.source,
                 reviewLastUpdated: new Date().toISOString(),
-            });
-            return lookup.editorial;
+            }), "refresh-album:review");
+            return editorial;
         }
         if (lookup.attempted > 0) {
-            this.markEmptyAlbumReviewAttempt(mbid);
+            await withSqliteWriteGate(
+                () => this.markEmptyAlbumReviewAttempt(mbid),
+                "refresh-album:review-empty",
+            );
         }
         return null;
     }
@@ -561,12 +544,18 @@ export class RefreshAlbumService {
         };
         const resolution = await ProviderArtistIdentityService.resolve(providerId, artistIdentity);
         if (!resolution.mbid) {
-            ProviderArtistIdentityService.store(providerId, artistIdentity, resolution, null);
+            await withSqliteWriteGate(
+                () => ProviderArtistIdentityService.store(providerId, artistIdentity, resolution, null),
+                "refresh-album:artist-identity",
+            );
             return null;
         }
 
         const localArtistId = await this.ensureMusicBrainzArtist(resolution.mbid, false);
-        ProviderArtistIdentityService.store(providerId, artistIdentity, resolution, localArtistId);
+        await withSqliteWriteGate(
+            () => ProviderArtistIdentityService.store(providerId, artistIdentity, resolution, localArtistId),
+            "refresh-album:artist-identity",
+        );
         return localArtistId;
     }
 
@@ -690,18 +679,20 @@ export class RefreshAlbumService {
         });
         await MetadataIdentityService.resolveAlbum(albumId, { force: forceUpdate, provider: provider.id });
         const canonicalLink = this.getCanonicalAlbumLink(provider.id, albumId);
-        this.storeCanonicalAlbumSupplements({
-            releaseGroupMbid: canonicalLink.releaseGroupMbid,
-            releaseMbid: canonicalLink.releaseMbid,
-            album: albumData,
-        });
-        // Advance the offer freshness so adaptive refresh policy sees this scan.
-        db.prepare(`
-            UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
-            WHERE provider = ?
-              AND entity_type = 'release'
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        `).run(provider.id, albumId);
+        await withSqliteWriteGate(() => db.transaction(() => {
+            this.storeCanonicalAlbumSupplements({
+                releaseGroupMbid: canonicalLink.releaseGroupMbid,
+                releaseMbid: canonicalLink.releaseMbid,
+                album: albumData,
+            });
+            // Advance the offer freshness so adaptive refresh policy sees this scan.
+            db.prepare(`
+                UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
+                WHERE provider = ?
+                  AND entity_type = 'release'
+                  AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            `).run(provider.id, albumId);
+        })(), "refresh-album:offer-supplements");
 
         console.log(`[RefreshAlbumService] refreshOffer complete for ${albumId}`);
     }
@@ -818,23 +809,25 @@ export class RefreshAlbumService {
                 ? await provider.getAlbumTrackCredits(albumId)
                 : new Map<string, any[]>();
             if (trackCreditsMap.size > 0) {
-                db.transaction(() => {
+                await withSqliteWriteGate(() => db.transaction(() => {
                     for (const [trackId, credits] of trackCreditsMap) {
                         this.storeCanonicalTrackCredits(provider.id, String(trackId), credits);
                     }
-                })();
+                })(), "refresh-album:track-credits");
             }
         } catch (error) {
             console.warn(`[RefreshAlbumService] Failed to fetch per-track credits for album ${albumId}:`, error);
         }
 
         // Advance offer freshness for this detail refresh.
-        db.prepare(`
-            UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
-            WHERE provider = ?
-              AND entity_type = 'release'
-              AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
-        `).run(provider.id, albumId);
+        await withSqliteWriteGate(() => {
+            db.prepare(`
+                UPDATE ProviderItems SET updated_at = CURRENT_TIMESTAMP
+                WHERE provider = ?
+                  AND entity_type = 'release'
+                  AND CAST(provider_id AS TEXT) = CAST(? AS TEXT)
+            `).run(provider.id, albumId);
+        }, "refresh-album:details-timestamp");
 
         console.log(`[RefreshAlbumService] refreshDetails complete for ${albumId}`);
     }
@@ -1049,7 +1042,10 @@ export class RefreshAlbumService {
             const hadKnownUndownloadable = tracks.some((track) =>
                 isSoundCloudTrackKnownUndownloadable(track));
             if (hadKnownUndownloadable) {
-                this.markSoundCloudReleaseUndownloadable(String(albumId), "drm-only");
+                await withSqliteWriteGate(
+                    () => this.markSoundCloudReleaseUndownloadable(String(albumId), "drm-only"),
+                    "refresh-album:soundcloud-undownloadable",
+                );
             }
             return;
         }
@@ -1321,40 +1317,10 @@ export class RefreshAlbumService {
         void scanningArtistId;
 
         const matchedReleaseMbid = ProviderOfferReleaseLinkService.selectReleaseMbid(releaseGroupMatch);
-
-        const normalizedCatalog = new ProviderCatalogRepository(db);
-        const normalizedReleaseItemId = normalizedCatalog.upsertItem({
-            provider: providerId,
-            entityType: "release",
-            providerId: String(album.provider_id),
-            title: textOrNull(album.title),
-            version: textOrNull(album.version),
-            providerType: textOrNull(album.type),
-            upc: textOrNull(album.upc),
-            durationMs: positiveNumberOrNull(album.duration) == null
-                ? null
-                : Math.round(Number(album.duration) * 1000),
-            releaseDate: textOrNull(album.release_date),
-            explicit: album.explicit == null ? null : Boolean(album.explicit),
-            availability: "available",
-            checkedAt: new Date().toISOString(),
-            providerUrl: textOrNull(album.url),
-            coverId: /^https?:\/\//i.test(String(album.cover || ""))
-                ? null
-                : textOrNull(album.cover, album.image_id, album.imageId),
-            artworkUrl: /^https?:\/\//i.test(String(album.cover || ""))
-                ? textOrNull(album.cover)
-                : null,
-            volumeCount: positiveNumberOrNull(album.num_volumes),
-            copyright: textOrNull(album.copyright),
-        });
         const releaseVariants = providerAudioVariants(providerId, [
             ...(Array.isArray(album.qualityTags) ? album.qualityTags : []),
             album.quality,
         ]);
-        if (releaseVariants.length > 0) {
-            normalizedCatalog.replaceAudioVariants(normalizedReleaseItemId, releaseVariants, { provider: providerId });
-        }
         const releaseCredits = providerCredits(
             Array.isArray(album.artists) && album.artists.length > 0
                 ? album.artists
@@ -1362,32 +1328,64 @@ export class RefreshAlbumService {
                     ? [{ id: album.artist_id, name: album.artist_name }]
                     : []),
         );
-        if (releaseCredits) {
-            const artistIds = releaseCredits.map((credit) => normalizedCatalog.upsertItem({
-                provider: providerId,
-                entityType: "artist",
-                providerId: credit.providerId,
-                title: credit.name,
-                availability: "unknown",
-            }));
-            normalizedCatalog.replaceCredits(
-                normalizedReleaseItemId,
-                releaseCredits.map((credit, index) => ({
-                    artistItemId: artistIds[index],
-                    ordinal: credit.ordinal,
-                    creditedName: credit.name,
-                    joinPhrase: credit.joinPhrase || "",
-                    normalizedRole: credit.normalizedRole,
-                    providerRole: credit.providerRole,
-                })),
-            );
-        }
 
-        this.storeCanonicalAlbumSupplements({
-            releaseGroupMbid: matchedReleaseGroup?.mbid || null,
-            releaseMbid: matchedReleaseMbid,
-            album,
-        });
+        await withSqliteWriteGate(() => db.transaction(() => {
+            const normalizedCatalog = new ProviderCatalogRepository(db);
+            const normalizedReleaseItemId = normalizedCatalog.upsertItem({
+                provider: providerId,
+                entityType: "release",
+                providerId: String(album.provider_id),
+                title: textOrNull(album.title),
+                version: textOrNull(album.version),
+                providerType: textOrNull(album.type),
+                upc: textOrNull(album.upc),
+                durationMs: positiveNumberOrNull(album.duration) == null
+                    ? null
+                    : Math.round(Number(album.duration) * 1000),
+                releaseDate: textOrNull(album.release_date),
+                explicit: album.explicit == null ? null : Boolean(album.explicit),
+                availability: "available",
+                checkedAt: new Date().toISOString(),
+                providerUrl: textOrNull(album.url),
+                coverId: /^https?:\/\//i.test(String(album.cover || ""))
+                    ? null
+                    : textOrNull(album.cover, album.image_id, album.imageId),
+                artworkUrl: /^https?:\/\//i.test(String(album.cover || ""))
+                    ? textOrNull(album.cover)
+                    : null,
+                volumeCount: positiveNumberOrNull(album.num_volumes),
+                copyright: textOrNull(album.copyright),
+            });
+            if (releaseVariants.length > 0) {
+                normalizedCatalog.replaceAudioVariants(normalizedReleaseItemId, releaseVariants, { provider: providerId });
+            }
+            if (releaseCredits) {
+                const artistIds = releaseCredits.map((credit) => normalizedCatalog.upsertItem({
+                    provider: providerId,
+                    entityType: "artist",
+                    providerId: credit.providerId,
+                    title: credit.name,
+                    availability: "unknown",
+                }));
+                normalizedCatalog.replaceCredits(
+                    normalizedReleaseItemId,
+                    releaseCredits.map((credit, index) => ({
+                        artistItemId: artistIds[index],
+                        ordinal: credit.ordinal,
+                        creditedName: credit.name,
+                        joinPhrase: credit.joinPhrase || "",
+                        normalizedRole: credit.normalizedRole,
+                        providerRole: credit.providerRole,
+                    })),
+                );
+            }
+
+            this.storeCanonicalAlbumSupplements({
+                releaseGroupMbid: matchedReleaseGroup?.mbid || null,
+                releaseMbid: matchedReleaseMbid,
+                album,
+            });
+        })(), `refresh-album:upsert-offer:${providerId}`);
 
         if (options.resolveMusicBrainz !== false) {
             await MetadataIdentityService.resolveAlbum(String(album.provider_id), {
@@ -1397,38 +1395,6 @@ export class RefreshAlbumService {
         }
 
         return !offerExisted;
-    }
-
-    private static getMusicBrainzPrimary(tidalType: string | undefined, module: string | undefined, title: string = ""): string {
-        if (this.getMusicBrainzSecondary(tidalType, module, title) !== null) {
-            return "album";
-        }
-        const type = (tidalType || "ALBUM").toUpperCase();
-        switch (type) {
-            case "SINGLE": return "single";
-            case "EP": return "ep";
-            case "ALBUM":
-            default: return "album";
-        }
-    }
-
-    private static getMusicBrainzSecondary(tidalType: string | undefined, module: string | undefined, title: string = ""): string | null {
-        const normalizedModule = (module || "").toUpperCase();
-        const lowerTitle = (title || "").toLowerCase();
-
-        if (normalizedModule === "LIVE" || normalizedModule === "ARTIST_LIVE_ALBUMS") return "live";
-        if (normalizedModule === "COMPILATION" || normalizedModule === "ARTIST_COMPILATIONS") return "compilation";
-        if (normalizedModule === "DJ_MIXES") return "dj-mix";
-        if (normalizedModule === "APPEARS_ON") return null;
-
-        if (lowerTitle.includes("soundtrack") || lowerTitle.includes("o.s.t.") || lowerTitle.includes("original score") || lowerTitle.includes("motion picture")) {
-            return "soundtrack";
-        }
-        if (lowerTitle.includes("remix") || lowerTitle.includes("remixed") || lowerTitle.includes("remixes")) {
-            return "remix";
-        }
-
-        return null;
     }
 }
 
