@@ -719,40 +719,45 @@ test("an older automatic match still downloads, and one shared item is planned f
   }
 });
 
-test("a stored plan is blocked when the same edition still accepts that item for another track", async () => {
-  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-same-edition-share-"));
+test("a plan that reuses a sibling edition's track matches by recording_id is ready to download", async () => {
+  const folder = mkdtempSync(path.join(tmpdir(), "discogenius-plan-sibling-recording-reuse-"));
   const db = new Database(path.join(folder, "test.db"));
   try {
     db.pragma("foreign_keys = ON");
     await createActiveSchema(db);
     seedStandardDeluxeFixture(db);
-    db.prepare("UPDATE ProviderTrackMatches SET matcher_version = 4").run();
+    db.prepare(`
+      INSERT INTO AlbumEditions (id, mbid, release_group_id, title, release_group_mbid, artist_mbid)
+      VALUES (2, 'release-b', 1, 'Album A (Sibling Edition)', 'group-a', 'artist-a')
+    `).run();
+    for (let index = 1; index <= 4; index += 1) {
+      db.prepare(`
+        INSERT INTO Tracks (
+          id, mbid, album_edition_id, recording_id, medium_position, position, title,
+          release_mbid, recording_mbid
+        ) VALUES (?, ?, 2, ?, 1, ?, ?, 'release-b', ?)
+      `).run(10 + index, `track-b-${index}`, index, index, `Track ${index}`, `recording-${index}`);
+    }
+    db.prepare(`
+      UPDATE LibraryEditions SET edition_id = 2, preferred_plan_key = NULL WHERE id = 1
+    `).run();
     const planId = new AcquisitionPlanningService(db).compute({
-      libraryId: 1, editionId: 1, providerPriority: ["tidal"], plannerVersion: 1,
+      libraryId: 1, editionId: 2, providerPriority: ["tidal"], plannerVersion: 3,
     });
     assert.ok(planId);
-    db.prepare(`
-      INSERT INTO ProviderEditionMembers (
-        id, provider_edition_item_id, member_item_id, medium_position, position
-      ) VALUES (1099, 10, 101, 1, 9)
-    `).run();
-    db.prepare(`
-      INSERT INTO ProviderTrackMatches (
-        id, provider_track_item_id, provider_edition_member_id, provider_edition_match_id, track_id,
-        recording_id, match_state, decision_source, confidence, method, matcher_version
-      ) VALUES (5099, 101, 1099, 10, 1, 1, 'accepted', 'automatic', 1, 'fixture', 4)
-    `).run();
+    const mismatchCount = (db.prepare(`
+      SELECT COUNT(*) AS n
+      FROM AcquisitionPlanTracks plan_track
+      JOIN ProviderTrackMatches track_match ON track_match.id = plan_track.provider_track_match_id
+      WHERE plan_track.plan_id = ?
+        AND track_match.track_id != plan_track.track_id
+    `).get(planId) as { n: number }).n;
+    assert.equal(mismatchCount, 4);
     assert.equal(
       evaluateAcquisitionDownload(db, planId!, { allowUnverifiedProjection: true }).status,
       "ready",
-      "a duplicate listing of the same track is not a shared-item conflict",
     );
-    db.prepare("UPDATE ProviderTrackMatches SET track_id = 2, recording_id = 2 WHERE id = 5099").run();
-    assert.deepEqual(
-      evaluateAcquisitionDownload(db, planId!, { allowUnverifiedProjection: true }),
-      { status: "blocked", reason: "ambiguous_offer" },
-    );
-    assert.equal(buildAcquisitionDownloadCommand(db, planId!), null);
+    assert.ok(buildAcquisitionDownloadCommand(db, planId!));
   } finally {
     db.close();
     rmSync(folder, { recursive: true, force: true });
