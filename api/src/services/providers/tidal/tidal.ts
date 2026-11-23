@@ -9,6 +9,8 @@ import {
   isTidalRefreshPaused,
   tidalUnauthorizedRejectsToken,
   type TidalRefreshRequest,
+  TidalSessionUnavailableError,
+  TIDAL_SESSION_WAIT_MESSAGE,
 } from "./tidal-auth.js";
 import { tidalVideoQualityTag } from "./tidal-quality.js";
 import { resolveTidalVideoQualityTag } from "./tidal-video-probe.js";
@@ -108,15 +110,7 @@ let unrefreshableRejectedAccessToken: string | null = null;
 // An access token this close to its expiry is treated as expired.
 const ACCESS_TOKEN_EXPIRY_SKEW_SECONDS = 30;
 
-/** No usable TIDAL access token right now; the refresh token may still be fine. */
-export class TidalSessionUnavailableError extends Error {
-  readonly status = 401;
-
-  constructor(message = "TIDAL session is not available yet; waiting for a token refresh") {
-    super(message);
-    this.name = "TidalSessionUnavailableError";
-  }
-}
+export { TidalSessionUnavailableError, TIDAL_SESSION_WAIT_MESSAGE };
 
 export function resetTidalSessionStateForTests(): void {
   unrefreshableRejectedAccessToken = null;
