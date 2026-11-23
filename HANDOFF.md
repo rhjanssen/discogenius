@@ -1,57 +1,19 @@
 # Session Handoff
 
-- **Branch**: `claude/sweet-hypatia-nywmuu`, from `main` 2.26.11. No PR opened. It covers the audit, the Primula live reports (21 Nov) and the PO's approval of all recommendations.
-- **Done** (each has a test that fails without the change, unless noted):
-  - **Retry of failed downloads** (live 404): the History panel retries by command id (`source=history`). An unqueueable job answers 422 with its reason, real errors come back as 503/500 with their message, and the API client shows a body's `error` field.
-  - **Readable failures**: `presentFailure` (`api/src/services/commands/failure-presentation.ts`) gives queue, history and activity items a `failure` with category, summary, hint, optional action and the raw `detail`. `FailureNotice` shows the summary and hint, with the raw text behind Details. A failed fallback names the provider that actually failed.
-  - **Curation write gate** (57 s live hold): `processAll` computes each edition's plan under its own gate and holds the gate only for the decision and its persistence (`planning: "caller"`).
-  - **RefreshArtist stalls at 85%**: each provider reports its silent phases (`provider_phase`). When one finishes, the description names the providers still running and their phase.
-  - **HTTP-thread writes outside the gate**, which failed with "database is locked" during curation:
-    - file deletes (track, album, artist, video, track file, unmapped); these unlinked the file before the failing row delete;
-    - artist monitor, unmonitor and policy changes, and artist delete;
-    - video monitoring;
-    - artist path;
-    - provider reorder and disconnect (plans were never marked stale);
-    - manual artist match and ignore;
-    - task cancel;
-    - the CheckUpgrades queued by a quality change.
-  - **#167**: CheckUpgrades skips while ApplyCuration, DownloadMissing or DownloadMissingForce is live.
-  - **#159**: Deezer "no data" output (error 800, "Error getting downloadable data", "no media URL") becomes `ProviderUnavailableError`, so the offer is marked unavailable and replanned.
-    - Streamrip runs with `COLUMNS=400`, because rich wrapped its log lines.
-    - The classifier skips traceback source lines and matches only the whole word `dns`.
-    - A failed run leads with its Python exception line.
-  - **yt-dlp**: a bare `ERROR:` keeps the surrounding stderr; "This video is not available" marks that video unavailable.
-  - **Upgrade renames** release the replaced track's own lyrics and metadata (#42288's stray `.lrc`), keeping anything at the new file's stem.
-  - **UI** (`docs/UX_AUDIT.md`):
-    - nav labels and a System link;
-    - paused-downloads MessageBar;
-    - the provider warning as a MessageBar;
-    - full action labels on desktop;
-    - an empty queue as one line;
-    - Status shows problems first;
-    - an empty library offers "Add an artist", which focuses search;
-    - Settings toasts give the reason.
-- **Not done / proposals** (details in `docs/UX_AUDIT.md`):
-  - a Wanted view (why each monitored album isn't downloading);
-  - a log viewer;
-  - splitting the Dashboard into Activity / Wanted / Library import / System;
-  - `title=` to Fluent `Tooltip` (117 places);
-  - "Retry all failed";
-  - a health dot in the nav, which needs a cheap endpoint.
-- **Not done / open questions**:
-  - #42288 is solved: `HDDs/Music` (and `HDDs/Media`, `HDDs/Videos`, `/config/media-cover`) is case-insensitive ZFS, and the upgrade renamed track 12 only in case (`2 meter sessie` → `2 Meter Sessie`). Retiring the old row (5460) compared paths as text and deleted the new file (history 203873, 18:06:31). Fixed in `19ff147` (retire by inode). The same text compare in the lyric cleanup and the organizer's sidecar relocation would have deleted the new lyrics, also fixed. Affected live files are lost and need a re-download: retry #42288. Other case-only upgrade renames since the upgrader started may have lost files the same way. Find them with `TrackFileDeleted` events whose `deletedPath` equals `replacementPath` ignoring case.
-  - Apple "Failed to get album response" (exit 0) repeats for albums 1121490551 and 674064561. They are not marked unavailable: one failure is too little evidence.
-  - API auth is disabled while port 3737 is open on all interfaces. That is a product decision.
-  - Deploys kill imports that are already moving files; they fail closed by design. Pause downloads and let running imports finish before deploying.
-  - Open PRs `rhjanssen/discogenius#164` (#156) and `rhjanssen/discogenius#160` (#152) belong to Gemini. #160 overlaps the refresh-progress change in `refresh-artist-service.ts` and will need a rebase.
-- **Verification** (final tree): `yarn lint`, `yarn typecheck` and `yarn build` exit 0. `yarn test:app`: 52 files, 204 tests passed. `yarn test:api`: 2800 tests, 2790 pass, 6 skipped (the same skips as `main`), 4 fail. No failure is new against the `main` baseline (names compared). The 4 are tests that fail in this sandbox on `main` as well:
-  - "local search answers on an empty catalog" and "artist album upsert stores allowed provider supplements…" need DNS for `api.lidarr.audio`;
-  - "a read-only album directory reports the permission cause" cannot fail as root;
-  - whole files that hit "Unable to deserialize cloned data" pass when rerun in isolation (`metadata-files.test.ts` here: 11/11 on two clean runs).
-- **Live-verified**: nothing; no LAN access. The UI was checked in Chromium against a scratch database seeded with the live failure texts.
-- **Live checks after deploy** (Bastille / Bakermat):
-  1. Retry a failed album from History: it queues; an unqueueable job shows its reason.
-  2. During a curation pass, `sqliteWriteLock.longestHoldMs` stays at a few seconds, not ~57 s. Deleting files and unmonitoring an artist succeed.
-  3. A refresh killed by the watchdog names the provider and phase it was waiting on.
-  4. A delisted Deezer album fails once and is then not requeued. `KLW0TLSmdr4` is marked unavailable.
-  5. Failed items read as a cause and a next step, with the raw text behind Details.
+- **Branch**: `agent/issue-178`, from `main` (v2.27.0).
+- **Done**:
+  - **Deleted witness-replay read planning (`api/src/database/sqlite-read-plan.ts`)**: removed `prepareSqliteReadPlan`, `recordSqlitePlanRead`, `assertOutsideSqliteReadPlan`, `sqliteDataRevision`, and the `db.prepare` / `db.transaction` / `db.exec` / `db.pragma` read-plan hooks in `api/src/database.ts`. Read queries are no longer recorded via `AsyncLocalStorage` / `v8.serialize` or replayed inside `BEGIN IMMEDIATE` under `withSqliteWriteGate`.
+  - **Replaced video relation and artist statistics read-plan replay with bounded idempotent writes**:
+    - `RefreshVideoService.repairVideoRecordsInBatches` (`videos:relation-batch`) plans relation updates in batches of 10 outside `withSqliteWriteGate` (sharing the artist's audio candidate map across batches of the pass), skips acquiring the write gate when a batch has no relation changes, and uses conditional `WHERE EXISTS (SELECT 1 FROM Recordings ...)` with `ON CONFLICT(source_recording_id, target_recording_id, relation_type) DO UPDATE` inside the gate.
+    - `ArtistStatisticsService.refreshAsync` (`statistics:projection-batch`) computes each 20-artist chunk outside `withSqliteWriteGate` and persists under the gate using conditional `WHERE EXISTS (SELECT 1 FROM ArtistMetadata WHERE id = ?)` with `ON CONFLICT(library_id, artist_metadata_id) DO UPDATE`.
+  - **Gated `RefreshAlbumService` writes**: wrapped `storeCanonicalAlbumReview` (`refresh-album:review`), `markEmptyAlbumReviewAttempt` (`refresh-album:review-empty`), `ProviderArtistIdentityService.store` (`refresh-album:artist-identity`), `refreshOffer` supplements/timestamp (`refresh-album:offer-supplements`), `refreshDetails` track credits/timestamp (`refresh-album:track-credits`, `refresh-album:details-timestamp`), SoundCloud DRM-only release rejection (`refresh-album:soundcloud-undownloadable`), and `upsertArtistAlbum` (`refresh-album:upsert-offer:<provider>`) in `withSqliteWriteGate`, and removed dead helper functions from `refresh-album-service.ts`.
+  - **Regression tests**:
+    - `api/src/services/music/refresh-album-service.test.ts`: verifies `refreshCanonicalAlbumReview` waits on `withSqliteWriteGate` for both review persistence and empty-attempt watermarking instead of throwing `SQLITE_BUSY` when another writer holds the gate.
+    - `api/src/services/music/refresh-video-service.test.ts`: verifies `videos:relation-batch` safely skips a recording deleted while waiting for `withSqliteWriteGate` via conditional `WHERE EXISTS`.
+- **Half-done**: none.
+- **Verification**:
+  - `yarn ci` (`yarn lint && yarn typecheck && yarn test:api && yarn build`) exits 0.
+  - `yarn test:api`: 2801 tests run in a single pass with no clone-flake retry needed — 2798 passed, 0 failed, 3 skipped.
+  - Net diff removes 119 lines across the codebase (excluding `HANDOFF.md`).
+- **Live-verified**: not live-verified (cloud runner has no LAN access to the live container).
+- **Open questions for PO**: none.

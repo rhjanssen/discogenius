@@ -859,6 +859,79 @@ test("refreshCanonicalAlbumReview timestamps a failed attempt so page reads stop
   }
 });
 
+test("refreshCanonicalAlbumReview gates review and empty-attempt writes against concurrent writers", async () => {
+  const artistMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const reviewMbid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const emptyMbid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)").run(artistMbid, "Bastille");
+  for (const [rgMbid, relMbid, offerId] of [
+    [reviewMbid, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "offer-with-review"],
+    [emptyMbid, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "offer-empty-review"],
+  ] as const) {
+    dbModule.db.prepare("INSERT INTO Albums (mbid, artist_mbid, title, primary_type) VALUES (?, ?, 'Gated Album', 'album')").run(rgMbid, artistMbid);
+    const editionId = (dbModule.db.prepare(
+      "INSERT INTO AlbumEditions (mbid, release_group_mbid, artist_mbid, title, status) VALUES (?, ?, ?, 'Gated Album', 'Official') RETURNING id",
+    ).get(relMbid, rgMbid, artistMbid) as { id: number }).id;
+    const itemId = (dbModule.db.prepare(
+      "INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability) VALUES ('tidal', 'release', ?, 'Gated Album', 'available') RETURNING id",
+    ).get(offerId) as { id: number }).id;
+    dbModule.db.prepare(`
+      INSERT INTO ProviderEditionMatches (
+        provider_edition_item_id, edition_id, relation, match_state, decision_source, confidence, method, matcher_version
+      ) VALUES (?, ?, 'exact', 'accepted', 'automatic', 1, 'test', 1)
+    `).run(itemId, editionId);
+  }
+
+  const { streamingProviderManager } = await import("../providers/index.js");
+  const originalPriority = streamingProviderManager.getProviderPriority.bind(streamingProviderManager);
+  const originalGet = streamingProviderManager.getStreamingProvider.bind(streamingProviderManager);
+  let releaseGate!: () => void;
+  let gateAcquired!: () => void;
+  const gateReady = new Promise<void>((resolve) => { gateAcquired = resolve; });
+  const holdGate = dbModule.withSqliteWriteGate(async () => {
+    gateAcquired();
+    await new Promise<void>((resolve) => { releaseGate = resolve; });
+  }, "test:competing-writer");
+  await gateReady;
+
+  (streamingProviderManager as any).getProviderPriority = () => ["tidal"];
+  (streamingProviderManager as any).getStreamingProvider = () => ({
+    id: "tidal",
+    isAuthenticated: () => true,
+    capabilities: { editorialMetadata: true },
+    getAlbumReview: async (providerId: string) =>
+      providerId === "offer-with-review" ? "Gated editorial review." : null,
+  });
+
+  try {
+    const storePromise = refreshServiceModule.RefreshAlbumService.refreshCanonicalAlbumReview(reviewMbid);
+    const emptyPromise = refreshServiceModule.RefreshAlbumService.refreshCanonicalAlbumReview(emptyMbid);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    releaseGate();
+    await holdGate;
+
+    const [stored, empty] = await Promise.all([storePromise, emptyPromise]);
+    assert.equal(stored?.text, "Gated editorial review.");
+    assert.equal(empty, null);
+
+    const reviewRow = dbModule.db.prepare("SELECT review_text, review_source, review_last_updated FROM Albums WHERE mbid = ?")
+      .get(reviewMbid) as { review_text: string | null; review_source: string | null; review_last_updated: string | null };
+    const emptyRow = dbModule.db.prepare("SELECT review_text, review_last_updated FROM Albums WHERE mbid = ?")
+      .get(emptyMbid) as { review_text: string | null; review_last_updated: string | null };
+    assert.equal(reviewRow.review_text, "Gated editorial review.");
+    assert.equal(reviewRow.review_source, "tidal");
+    assert.ok(reviewRow.review_last_updated);
+    assert.equal(emptyRow.review_text, null);
+    assert.ok(emptyRow.review_last_updated);
+  } finally {
+    releaseGate?.();
+    await holdGate;
+    (streamingProviderManager as any).getProviderPriority = originalPriority;
+    (streamingProviderManager as any).getStreamingProvider = originalGet;
+  }
+});
+
 
 
 // Regression: explicit was hardcoded false here, and the hardcode also overrode
