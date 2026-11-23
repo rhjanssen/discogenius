@@ -389,6 +389,32 @@ function collectWalCheck(): HealthCheckResult {
   }
 }
 
+const SUPERSEDED_AFTER_SQL = `(
+  COALESCE(julianday(COALESCE(s.completed_at, s.updated_at)), 0)
+    > COALESCE(julianday(COALESCE(f.completed_at, f.updated_at)), 0)
+  OR (
+    COALESCE(julianday(COALESCE(s.completed_at, s.updated_at)), 0)
+      = COALESCE(julianday(COALESCE(f.completed_at, f.updated_at)), 0)
+    AND s.id > f.id
+  )
+)`;
+
+const DOWNLOAD_ALBUM_SUPERSEDED_SQL = `(
+  f.name = 'DownloadAlbum'
+  AND COALESCE(json_extract(f.payload, '$.releaseGroupMbid'), json_extract(f.payload, '$.albumId')) IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM commands s INDEXED BY idx_commands_status_name_completed
+    WHERE s.status = 'completed'
+      AND s.name = 'DownloadAlbum'
+      AND COALESCE(json_extract(s.payload, '$.releaseGroupMbid'), json_extract(s.payload, '$.albumId'))
+        = COALESCE(json_extract(f.payload, '$.releaseGroupMbid'), json_extract(f.payload, '$.albumId'))
+      AND COALESCE(json_extract(s.payload, '$.libraryId'), 0)
+        = COALESCE(json_extract(f.payload, '$.libraryId'), 0)
+      AND ${SUPERSEDED_AFTER_SQL}
+  )
+)`;
+
 function parseSqliteTimestamp(value: string | null): number | null {
   if (!value) return null;
   const parsed = Date.parse(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
@@ -421,21 +447,18 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
         AND f.name IN (${commandNames.map(() => "?").join(", ")})
         AND f.completed_at >= datetime('now', '-24 hours')
         AND NOT (
-          f.ref_id IS NOT NULL
-          AND EXISTS (
-            SELECT 1
-            FROM commands s INDEXED BY idx_commands_name_status_ref_id
-            WHERE s.name = f.name
-              AND s.status = 'completed'
-              AND s.ref_id = f.ref_id
-              AND (
-                COALESCE(s.completed_at, s.updated_at, '') > COALESCE(f.completed_at, f.updated_at, '')
-                OR (
-                  COALESCE(s.completed_at, s.updated_at, '') = COALESCE(f.completed_at, f.updated_at, '')
-                  AND s.id > f.id
-                )
-              )
+          (
+            f.ref_id IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM commands s INDEXED BY idx_commands_name_status_ref_id
+              WHERE s.name = f.name
+                AND s.status = 'completed'
+                AND s.ref_id = f.ref_id
+                AND ${SUPERSEDED_AFTER_SQL}
+            )
           )
+          OR ${DOWNLOAD_ALBUM_SUPERSEDED_SQL}
         )
     `).get(...commandNames) as { count: number };
 
@@ -475,18 +498,27 @@ function collectCommandQueueCheck(runtime: RuntimeDiagnosticsSnapshot): HealthCh
       && activeBusyWorkers.length > 0
       && started > 0
     ) {
-      const oldestNonRefresh = db.prepare(`
-        SELECT MIN(created_at) AS oldest_created_at
+      const refreshProgress = db.prepare(`
+        SELECT
+          SUM(CASE WHEN status = 'started' AND name IN (?, ?) THEN 1 ELSE 0 END) AS started_refresh,
+          MIN(CASE
+            WHEN status = 'queued'
+             AND (retry_after IS NULL OR retry_after <= CURRENT_TIMESTAMP)
+             AND name NOT IN (?, ?)
+            THEN created_at END
+          ) AS oldest_non_refresh_created_at
         FROM commands
-        WHERE status = 'queued'
-          AND (retry_after IS NULL OR retry_after <= CURRENT_TIMESTAMP)
-          AND name NOT IN (?, ?)
-      `).get(CommandNames.RefreshArtist, CommandNames.MatchArtistProviders) as
-        | { oldest_created_at: string | null }
-        | undefined;
-      const nonRefreshTimestamp = parseSqliteTimestamp(oldestNonRefresh?.oldest_created_at ?? null);
+        WHERE status IN ('queued', 'started')
+      `).get(
+        CommandNames.RefreshArtist,
+        CommandNames.MatchArtistProviders,
+        CommandNames.RefreshArtist,
+        CommandNames.MatchArtistProviders,
+      ) as { started_refresh: number | null; oldest_non_refresh_created_at: string | null } | undefined;
+      const startedRefresh = Number(refreshProgress?.started_refresh) || 0;
+      const nonRefreshTimestamp = parseSqliteTimestamp(refreshProgress?.oldest_non_refresh_created_at ?? null);
       const nonRefreshAgeMs = nonRefreshTimestamp == null ? null : Math.max(0, nowMs - nonRefreshTimestamp);
-      if (nonRefreshAgeMs == null || nonRefreshAgeMs < warningAgeMs) {
+      if (startedRefresh > 0 && (nonRefreshAgeMs == null || nonRefreshAgeMs < warningAgeMs)) {
         drainingWave = true;
       }
     }
@@ -648,21 +680,18 @@ function collectImportCheck(): HealthCheckResult {
           OR json_extract(f.payload, '$.downloadState.state') = 'importFailed'
         )
         AND NOT (
-          f.ref_id IS NOT NULL
-          AND EXISTS (
-            SELECT 1
-            FROM commands s INDEXED BY idx_commands_ref_id
-            WHERE s.ref_id = f.ref_id
-              AND s.status = 'completed'
-              AND s.name IN (${placeholders})
-              AND (
-                COALESCE(s.completed_at, s.updated_at, '') > COALESCE(f.completed_at, f.updated_at, '')
-                OR (
-                  COALESCE(s.completed_at, s.updated_at, '') = COALESCE(f.completed_at, f.updated_at, '')
-                  AND s.id > f.id
-                )
-              )
+          (
+            f.ref_id IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM commands s INDEXED BY idx_commands_ref_id
+              WHERE s.ref_id = f.ref_id
+                AND s.status = 'completed'
+                AND s.name IN (${placeholders})
+                AND ${SUPERSEDED_AFTER_SQL}
+            )
           )
+          OR ${DOWNLOAD_ALBUM_SUPERSEDED_SQL}
         )
     `).get(...importCommandNames, ...importCommandNames) as { count: number; latest: string | null };
     const active = db.prepare(`

@@ -126,8 +126,8 @@ export function pathsDifferOnlyByCase(left: string, right: string): boolean {
 
 export function sameDirectoryEntry(left: string, right: string): boolean {
     try {
-        const source = fs.lstatSync(left);
-        const expected = fs.lstatSync(right);
+        const source = fs.lstatSync(left, { bigint: true });
+        const expected = fs.lstatSync(right, { bigint: true });
         return source.dev === expected.dev && source.ino === expected.ino;
     } catch {
         return false;
