@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.27.3] - 2026-11-23
+
+### Changed
+- fix(download): stop replanning repeated deterministic offer failures (#173) (#174)
+- fix(tidal): hold download on token refresh window instead of fallback (#156) (#164)
+- fix(refresh): skip disabled libraries, order own catalog before collaborations, add catalog/tracklist TTLs and rate-limit retry (#152) (#160)
+- fix: system health (#171), library/queue/FTS5 startup (#172), ZFS safety, and frontend/SSE audit fixes (#176)
+
 ## [2.27.2] - 2026-11-23
 
 ### Fixed
