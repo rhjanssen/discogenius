@@ -185,7 +185,7 @@ export function clearOfferFailureStateOnSuccess(
   database.prepare(`
     UPDATE ProviderItems
     SET availability = 'available', availability_reason = NULL, checked_at = ?
-    WHERE provider = ? AND entity_type = ? AND provider_id = ? AND availability = 'needs_cookies'
+    WHERE provider = ? AND entity_type = ? AND provider_id = ? AND availability IN ('needs_cookies', 'unavailable')
   `).run(new Date().toISOString(), provider, entityType, providerId);
 }
 
