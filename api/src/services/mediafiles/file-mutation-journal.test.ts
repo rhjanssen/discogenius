@@ -161,3 +161,51 @@ test("changed database identity prevents acknowledgement and preserves recovery 
     assert.equal(fs.existsSync(target), true);
     assert.equal(journal.hasPending(), true);
 });
+
+test("recovery never unlinks a single file when source and destination alias the same directory entry", async (t) => {
+    const casedTarget = path.join(path.dirname(source), "SOURCE.flac");
+    const stat = fs.lstatSync(source, { bigint: true });
+    const sourceStat = JSON.stringify({
+        dev: String(stat.dev),
+        ino: String(stat.ino),
+        size: String(stat.size),
+        mtime: String(stat.mtimeNs),
+    });
+    const row = database.db.prepare("SELECT * FROM TrackFiles WHERE id = ?").get(fileId) as Record<string, unknown>;
+    const identityFields = ["file_path", "relative_path", "library_root", "library_slot", "artist_id", "artist_metadata_id",
+        "recording_id", "track_id", "album_edition_id", "release_group_id", "canonical_artist_mbid",
+        "canonical_recording_mbid", "canonical_track_mbid", "canonical_release_mbid", "canonical_release_group_mbid"];
+    const rowSnapshot = JSON.stringify(Object.fromEntries(identityFields.map((k) => [k, row[k] ?? null])));
+
+    database.db.prepare(`INSERT INTO FileMutationJournal
+        (id, table_name, row_id, operation, source_path, destination_path, temporary_path, source_stat, row_snapshot)
+        VALUES ('case-alias-intent', 'TrackFiles', ?, 'move', ?, ?, ?, ?, ?)`).run(
+        fileId,
+        source,
+        casedTarget,
+        path.join(path.dirname(source), ".discogenius-move-case-alias.partial"),
+        sourceStat,
+        rowSnapshot,
+    );
+
+    // Simulate case-insensitive ZFS where casedTarget resolves to source's single entry.
+    const origExists = fs.existsSync.bind(fs);
+    const origLstat = fs.lstatSync.bind(fs);
+    t.mock.method(fs, "existsSync", (targetPath: fs.PathLike) => {
+        if (path.resolve(String(targetPath)) === path.resolve(casedTarget)) {
+            return origExists(source);
+        }
+        return origExists(targetPath);
+    });
+    t.mock.method(fs, "lstatSync", ((targetPath: fs.PathLike, options?: any) => {
+        if (path.resolve(String(targetPath)) === path.resolve(casedTarget)) {
+            return origLstat(source, options);
+        }
+        return origLstat(targetPath, options);
+    }) as typeof fs.lstatSync);
+
+    assert.deepEqual(await journal.recoverPending(), []);
+    assert.equal(origExists(source), true, "sole copy on disk must never be unlinked when source and target alias the same entry");
+    assert.equal(fs.readFileSync(source, "utf8"), "untouched audio file fixture");
+});
+

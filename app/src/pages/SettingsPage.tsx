@@ -165,11 +165,11 @@ const useStyles = makeStyles({
         backgroundColor: "transparent",
         boxShadow: "none",
         minHeight: "40px",
-        "& .fui-Button__content": {
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-        },
+    },
+    mobileNavButtonLabel: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
     },
     desktopNav: {
         display: "none",
@@ -522,7 +522,7 @@ const SettingsPage = () => {
                                     className={styles.mobileNavButton}
                                     data-testid="settings-category-menu"
                                 >
-                                    {activeSectionLabel}
+                                    <span className={styles.mobileNavButtonLabel}>{activeSectionLabel}</span>
                                 </Button>
                             </MenuTrigger>
                             <MenuPopover>

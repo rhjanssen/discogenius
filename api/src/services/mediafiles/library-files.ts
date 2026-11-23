@@ -27,6 +27,7 @@ import {
 import { cleanPathLabel, extractNamingMbid } from "./import-discovery.js";
 import {
   comparablePathColumnSql,
+  isCaseInsensitivePath,
   normalizeComparablePath,
   normalizeResolvedPath,
   resolvedPathIsInsideRoot,
@@ -3364,7 +3365,7 @@ export class LibraryFilesService {
     });
     const deleteIds = new Set(decisions.filter((decision) => decision.delete).map((decision) => decision.id));
     const rows = candidates.filter((row) => deleteIds.has(row.id));
-    const prunedDirectories = new Map<string, string>();
+    const prunedDirectories = new Map<string, { directory: string; libraryRoot: string }>();
 
     if (rows.length === 0) {
       if (options?.filesOnly) return { deleted: 0, missing: 0, errors: 0 };
@@ -3446,8 +3447,9 @@ export class LibraryFilesService {
       const root = resolveLibraryRootPath(row.library_root, row.file_path);
 
       if (root) {
-        prunedDirectories.set(normalizeResolvedPath(path.dirname(resolvedFilePath)), row.library_root);
-        removeEmptyParents(path.dirname(resolvedFilePath), root);
+        const directory = path.dirname(resolvedFilePath);
+        prunedDirectories.set(normalizeResolvedPath(directory), { directory, libraryRoot: row.library_root });
+        removeEmptyParents(directory, root);
       }
     }
 
@@ -3485,17 +3487,19 @@ export class LibraryFilesService {
   ]);
 
   private static directoryHasMonitoredAudio(directory: string): boolean {
-    const normalizedDir = normalizeComparablePath(directory);
+    const caseInsensitive = process.platform === "win32" || isCaseInsensitivePath(directory);
+    const normalizedDir = normalizeComparablePath(directory, caseInsensitive);
     if (!normalizedDir) return false;
+    const comparableCol = comparablePathColumnSql("lf.file_path", caseInsensitive);
     const rows = db.prepare(`
       SELECT lf.file_path, lf.library_id, lf.album_edition_id
       FROM TrackFiles lf
       WHERE lf.file_type IN ('track', 'video')
-        AND ${comparablePathColumnSql("lf.file_path")} >= ?
-        AND ${comparablePathColumnSql("lf.file_path")} < ?
+        AND ${comparableCol} >= ?
+        AND ${comparableCol} < ?
     `).all(`${normalizedDir}/`, `${normalizedDir}0`) as Array<{ file_path: string; library_id: number | null; album_edition_id: number | null }>;
     return rows.some((row) => {
-      if (normalizeComparablePath(path.dirname(row.file_path)) !== normalizedDir) return false;
+      if (normalizeComparablePath(path.dirname(row.file_path), caseInsensitive) !== normalizedDir) return false;
       if (row.library_id == null || row.album_edition_id == null) return false;
       const monitored = db.prepare(`
         SELECT 1 FROM LibraryEditions
@@ -3504,6 +3508,24 @@ export class LibraryFilesService {
       `).get(row.library_id, row.album_edition_id);
       return Boolean(monitored);
     });
+  }
+
+  private static directoryHasTrackedMedia(directory: string, includeSubdirectories = false): boolean {
+    const caseInsensitive = process.platform === "win32" || isCaseInsensitivePath(directory);
+    const normalizedDir = normalizeComparablePath(directory, caseInsensitive);
+    if (!normalizedDir) return false;
+    const comparableCol = comparablePathColumnSql("file_path", caseInsensitive);
+    const rows = db.prepare(`
+      SELECT file_path
+      FROM TrackFiles
+      WHERE file_type IN ('track', 'video')
+        AND ${comparableCol} >= ?
+        AND ${comparableCol} < ?
+    `).all(`${normalizedDir}/`, `${normalizedDir}0`) as Array<{ file_path: string }>;
+    if (includeSubdirectories) {
+      return rows.length > 0;
+    }
+    return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path), caseInsensitive) === normalizedDir);
   }
 
   private static deleteLeftoverPath(filePath: string, libraryRoot: string): boolean {
@@ -3526,16 +3548,16 @@ export class LibraryFilesService {
 
   /**
    * After tracked unmonitored files are gone, wipe leftover sidecars/media in
-   * those album folders when no monitored-edition audio remains there.
+   * those album folders when no tracked or monitored audio remains there.
    */
   private static pruneLeftoversInEditionDirectories(
-    directories: Map<string, string>,
+    directories: Map<string, { directory: string; libraryRoot: string }>,
   ): { deleted: number; missing: number; errors: number } {
     let deleted = 0;
     let missing = 0;
     let errors = 0;
-    for (const [directory, libraryRoot] of directories) {
-      if (this.directoryHasMonitoredAudio(directory)) continue;
+    for (const { directory, libraryRoot } of directories.values()) {
+      if (this.directoryHasMonitoredAudio(directory) || this.directoryHasTrackedMedia(directory)) continue;
       if (!fs.existsSync(directory)) continue;
       try {
         const entries = fs.readdirSync(directory, { withFileTypes: true });
@@ -3613,19 +3635,11 @@ export class LibraryFilesService {
         const withMbid = names.filter((name) => extractNamingMbid(name));
         const withoutMbid = names.filter((name) => !extractNamingMbid(name));
         if (withMbid.length === 0 || withoutMbid.length === 0) continue;
-        const imported = withMbid.some((name) => {
-          const folder = path.join(artistDir, name);
-          const row = db.prepare(`
-            SELECT 1 FROM TrackFiles
-            WHERE file_type = 'track'
-              AND (file_path = ? OR file_path LIKE ?)
-            LIMIT 1
-          `).get(folder, `${folder}${path.sep}%`);
-          return Boolean(row);
-        });
+        const imported = withMbid.some((name) => this.directoryHasTrackedMedia(path.join(artistDir, name), true));
         if (!imported) continue;
         for (const leftoverName of withoutMbid) {
           const leftoverDir = path.join(artistDir, leftoverName);
+          if (this.directoryHasTrackedMedia(leftoverDir, true)) continue;
           const result = this.wipeDirectoryContents(leftoverDir, root);
           deleted += result.deleted;
           missing += result.missing;
@@ -3702,7 +3716,7 @@ export class LibraryFilesService {
       album_edition_id: number;
     }>;
 
-    const directories = new Map<string, string>();
+    const directories = new Map<string, { directory: string; libraryRoot: string }>();
     for (const row of rows) {
       const resolved = resolveStoredLibraryPath({
         filePath: row.file_path,
@@ -3710,20 +3724,23 @@ export class LibraryFilesService {
       });
       const directory = path.dirname(resolved);
       if (this.directoryHasMonitoredAudio(directory)) continue;
-      directories.set(normalizeResolvedPath(directory), row.library_root);
+      directories.set(normalizeResolvedPath(directory), { directory, libraryRoot: row.library_root });
     }
 
     let deleted = 0;
     let missing = 0;
     let errors = 0;
-    for (const [directory, libraryRoot] of directories) {
+    for (const { directory, libraryRoot } of directories.values()) {
       if (!fs.existsSync(directory)) continue;
+      const caseInsensitive = process.platform === "win32" || isCaseInsensitivePath(directory);
+      const normalizedDir = normalizeComparablePath(directory, caseInsensitive);
+      const comparableCol = comparablePathColumnSql("file_path", caseInsensitive);
       const tracked = new Set(
         (db.prepare(`
           SELECT file_path FROM TrackFiles
-          WHERE ${comparablePathColumnSql("file_path")} LIKE ? ESCAPE '\\'
-        `).all(`${normalizeComparablePath(directory).replace(/([\\%_])/g, "\\$1")}/%`) as Array<{ file_path: string }>)
-          .filter((row) => normalizeComparablePath(path.dirname(row.file_path)) === normalizeComparablePath(directory))
+          WHERE ${comparableCol} >= ? AND ${comparableCol} < ?
+        `).all(`${normalizedDir}/`, `${normalizedDir}0`) as Array<{ file_path: string }>)
+          .filter((row) => normalizeComparablePath(path.dirname(row.file_path), caseInsensitive) === normalizedDir)
           .map((row) => normalizeResolvedPath(row.file_path)),
       );
       try {

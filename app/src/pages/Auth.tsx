@@ -1036,24 +1036,25 @@ const Auth = () => {
     setManualProvider(provider.id);
   }, []);
 
-  // Banner links land here. Deezer opens the ARL field. Tidal only focuses
-  // the connect button: selectProvider would start device login immediately.
+  // Banner links land here. Credential-based providers (Deezer, Apple Music,
+  // YouTube Music, etc.) open their setup panel; device-login providers like
+  // Tidal only focus their connect button so we don't start device auth unprompted.
   useEffect(() => {
-    if (providerDeepLinkApplied.current || providersLoading) return;
-    if (requestedProvider === "deezer") {
-      const provider = streamingProviders.find((item) => item.id === "deezer");
-      if (!provider) return;
+    if (providerDeepLinkApplied.current || providersLoading || !requestedProvider) return;
+    const provider = streamingProviders.find((item) => item.id === requestedProvider);
+    if (!provider) return;
+    const hasManualPanel = provider.id === "apple-music"
+      || (provider.manifest?.auth.credentialFields?.length ?? 0) > 0;
+    if (hasManualPanel) {
       providerDeepLinkApplied.current = true;
       openCredentialProvider(provider);
       return;
     }
-    if (requestedProvider === "tidal") {
-      const button = document.getElementById("provider-connect-tidal");
-      if (!button) return;
-      providerDeepLinkApplied.current = true;
-      button.scrollIntoView({ block: "center" });
-      button.focus();
-    }
+    const button = document.getElementById(`provider-connect-${provider.id}`);
+    if (!button) return;
+    providerDeepLinkApplied.current = true;
+    button.scrollIntoView({ block: "center" });
+    button.focus();
   }, [openCredentialProvider, providersLoading, requestedProvider, streamingProviders]);
 
   useEffect(() => {
@@ -1264,24 +1265,33 @@ const Auth = () => {
     <>
       <UltraBlurBackground colors={colors} isDarkMode={isDarkMode} />
       <div className={styles.container}>
-        <div className={styles.themeToggle}>
+        <div className={styles.themeToggle} role="group" aria-label="Theme">
           <Button
             appearance={theme === "light" ? "primary" : "subtle"}
             icon={<WeatherSunny24 />}
             onClick={() => setTheme("light")}
             size="small"
+            title="Light theme"
+            aria-label="Light theme"
+            aria-pressed={theme === "light"}
           />
           <Button
             appearance={theme === "dark" ? "primary" : "subtle"}
             icon={<WeatherMoon24 />}
             onClick={() => setTheme("dark")}
             size="small"
+            title="Dark theme"
+            aria-label="Dark theme"
+            aria-pressed={theme === "dark"}
           />
           <Button
             appearance={theme === "system" ? "primary" : "subtle"}
             icon={<DesktopMac24 />}
             onClick={() => setTheme("system")}
             size="small"
+            title="System theme"
+            aria-label="System theme"
+            aria-pressed={theme === "system"}
           />
         </div>
 

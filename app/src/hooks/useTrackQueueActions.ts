@@ -65,7 +65,7 @@ export function useTrackQueueActions() {
         successTitle: "Track added to queue",
         successDescription: `${trackTitle} will be downloaded shortly`,
         payload: {
-          provider: track.preview_provider ?? "tidal",
+          ...(track.preview_provider ? { provider: track.preview_provider } : {}),
           ...(providerTrackId ? { providerId: providerTrackId } : {}),
           canonicalTrackMbid,
           canonicalRecordingMbid,

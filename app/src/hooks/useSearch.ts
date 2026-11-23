@@ -72,6 +72,8 @@ export const useSearch = () => {
 
         if (item.type === 'artist') {
             queryClient.invalidateQueries({ queryKey: ["artistPage", item.providerId] });
+        } else if (item.type === 'album') {
+            queryClient.invalidateQueries({ queryKey: ["albumPage", item.providerId] });
         }
 
         queryClient.invalidateQueries({ queryKey: ["artists"] });
@@ -105,7 +107,8 @@ export const useSearch = () => {
             const formatItem = (item: SearchResultContract, type: 'artist' | 'album' | 'track' | 'video'): SearchResultItem => {
                 const getYear = (date?: string | null) => {
                     if (!date) return '';
-                    return new Date(date).getFullYear().toString();
+                    const match = /^(\d{4})/.exec(String(date).trim());
+                    return match ? match[1] : '';
                 };
 
                 const typeLabel = type.charAt(0).toUpperCase() + type.slice(1);

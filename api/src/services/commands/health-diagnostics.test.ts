@@ -218,7 +218,10 @@ test("bounded diagnostics flag aging work, failed imports, and overdue tasks", (
   try {
     const snapshot = healthModule.collectHealthDiagnosticsSnapshot();
     assert.equal(snapshot.subsystems.commandQueue.status, "warning");
-    assert.equal(snapshot.subsystems.imports.status, "warning");
+    assert.match(snapshot.subsystems.commandQueue.message, /oldest eligible queued command has waited/i);
+    assert.equal(snapshot.subsystems.imports.status, "ok");
+    assert.equal(snapshot.subsystems.imports.details?.failedLast7Days, 1);
+    assert.match(snapshot.subsystems.imports.message, /1 unresolved failure/i);
     assert.equal(snapshot.subsystems.scheduledTasks.status, "warning");
     assert.equal(snapshot.subsystems.statistics.status, "ok");
     assert.deepEqual(
@@ -229,6 +232,76 @@ test("bounded diagnostics flag aging work, failed imports, and overdue tasks", (
     delete process.env.DISCOGENIUS_QUEUE_AGE_WARNING_MS;
     delete process.env.DISCOGENIUS_QUEUE_AGE_ERROR_MS;
   }
+});
+
+test("superseded past failures do not count and past failures alone do not degrade health (#171)", () => {
+  // Record a passing deep check so only command/import health determines overall status.
+  healthModule.runDeepDatabaseHealthCheck();
+
+  dbModule.db.prepare(`
+    INSERT INTO commands (
+      name, ref_id, payload, status, priority, created_at, completed_at, updated_at
+    ) VALUES
+      (
+        'DownloadAlbum',
+        'rg-resolved:stereo',
+        '{"downloadState":{"state":"importFailed"}}',
+        'failed',
+        0,
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours')
+      ),
+      (
+        'DownloadAlbum',
+        'rg-resolved:stereo',
+        '{"downloadState":{"state":"completed"}}',
+        'completed',
+        0,
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour')
+      ),
+      (
+        'DownloadAlbum',
+        'rg-still-failed:stereo',
+        '{"downloadState":{"state":"importFailed"}}',
+        'failed',
+        0,
+        datetime('now', '-30 minutes'),
+        datetime('now', '-30 minutes'),
+        datetime('now', '-30 minutes')
+      )
+  `).run();
+
+  const snapshot = healthModule.collectHealthDiagnosticsSnapshot();
+  assert.match(snapshot.version, /^\d+\.\d+\.\d+/);
+  assert.equal(snapshot.subsystems.commandQueue.status, "ok");
+  assert.equal(snapshot.subsystems.commandQueue.details?.failedLast24h, 1);
+  assert.equal(snapshot.subsystems.imports.status, "ok");
+  assert.equal(snapshot.subsystems.imports.details?.failedLast7Days, 1);
+  assert.equal(snapshot.status, "healthy");
+
+  // Once the remaining item also succeeds, unresolved failure counts drop to 0.
+  dbModule.db.prepare(`
+    INSERT INTO commands (
+      name, ref_id, payload, status, priority, created_at, completed_at, updated_at
+    ) VALUES (
+      'DownloadAlbum',
+      'rg-still-failed:stereo',
+      '{"downloadState":{"state":"completed"}}',
+      'completed',
+      0,
+      datetime('now', '-5 minutes'),
+      datetime('now', '-5 minutes'),
+      datetime('now', '-5 minutes')
+    )
+  `).run();
+
+  const resolvedSnapshot = healthModule.collectHealthDiagnosticsSnapshot();
+  assert.equal(resolvedSnapshot.subsystems.commandQueue.details?.failedLast24h, 0);
+  assert.equal(resolvedSnapshot.subsystems.imports.details?.failedLast7Days, 0);
+  assert.equal(resolvedSnapshot.subsystems.imports.details?.latestFailureAt, null);
 });
 
 test("import health measures import progress rather than download start or pending time", () => {

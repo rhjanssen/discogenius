@@ -12,9 +12,12 @@ export async function aggregateProviderAuthStatus(
   providers: StreamingProvider[],
 ): Promise<ProviderAuthStatus> {
   let connected = false;
+  let tokenExpired = false;
+  let refreshTokenExpired = false;
   let remoteCatalogAvailable = false;
   let canAuthenticate = false;
   let message = "Connect a provider to access remote features.";
+  let expiredMessage: string | null = null;
   let user: ProviderAuthStatus["user"] = null;
   let refreshing = false;
   let hoursUntilExpiry = 0;
@@ -35,6 +38,12 @@ export async function aggregateProviderAuthStatus(
     refreshing = refreshing || Boolean(status.refreshing);
     hoursUntilExpiry = Math.max(hoursUntilExpiry, Number(status.hoursUntilExpiry) || 0);
 
+    if (status.tokenExpired) tokenExpired = true;
+    if (status.refreshTokenExpired) refreshTokenExpired = true;
+    if (!expiredMessage && (status.tokenExpired || status.refreshTokenExpired) && status.message) {
+      expiredMessage = status.message;
+    }
+
     if (status.connected && !connected) {
       connected = true;
       message = status.message || `Connected to ${provider.name}`;
@@ -46,8 +55,8 @@ export async function aggregateProviderAuthStatus(
 
   return {
     connected,
-    tokenExpired: false,
-    refreshTokenExpired: false,
+    tokenExpired: !connected && tokenExpired,
+    refreshTokenExpired: !connected && refreshTokenExpired,
     hoursUntilExpiry,
     canAccessShell: true,
     canAccessLocalLibrary: true,
@@ -55,7 +64,7 @@ export async function aggregateProviderAuthStatus(
     canAuthenticate,
     refreshing,
     user,
-    message,
+    message: !connected && expiredMessage ? expiredMessage : message,
   };
 }
 

@@ -341,7 +341,7 @@ export function clearStoredTidalToken(): void {
         console.error("[TIDAL-AUTH] Failed to record auth state:", error instanceof Error ? error.message : "unknown");
     });
 
-    updateConfig("account", {
+    void withSqliteWriteGate(() => updateConfig("account", {
         userId: undefined,
         username: undefined,
         email: undefined,
@@ -350,6 +350,8 @@ export function clearStoredTidalToken(): void {
         fullName: undefined,
         countryCode: undefined,
         picture: undefined,
+    }), "tidal:clear-account").catch((error) => {
+        console.warn("[TIDAL-AUTH] Non-fatal: Failed to clear cached account info:", error);
     });
 }
 

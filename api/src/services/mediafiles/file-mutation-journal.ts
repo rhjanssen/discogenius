@@ -7,6 +7,7 @@ import { tableIdColumn, type RenameTableName } from "./rename-track-file-paths.j
 import { LibraryCleanupJournal } from "./library-cleanup-journal.js";
 import { ArtworkMutationJournal } from "../metadata/artwork-mutation-journal.js";
 import { hasPendingInPlaceTagUndo, recoverInPlaceTagUndos } from "./in-place-tag-undo.js";
+import { isSameFilesystemLink, pathsDifferOnlyByCase, renameToCanonicalCase } from "./path-utils.js";
 
 type Intent = {
     id: string; table_name: RenameTableName; row_id: number;
@@ -142,8 +143,15 @@ export class FileMutationJournal {
             if (targetExists && !await this.matches(intent, intent.destination_path)) throw new Error(`Mutation target changed: ${intent.destination_path}`);
             if (!sourceExists && !targetExists) throw new Error(`Both mutation paths are missing for ${intent.id}`);
             if (targetExists) {
-                if (sourceExists) fs.unlinkSync(intent.destination_path);
-                else {
+                if (sourceExists) {
+                    if (isSameFilesystemLink(intent.source_path, intent.destination_path)) {
+                        if (pathsDifferOnlyByCase(intent.source_path, intent.destination_path)) {
+                            renameToCanonicalCase(intent.destination_path, intent.source_path);
+                        }
+                    } else {
+                        fs.unlinkSync(intent.destination_path);
+                    }
+                } else {
                     fs.mkdirSync(path.dirname(intent.source_path), { recursive: true });
                     try {
                         fs.linkSync(intent.destination_path, intent.source_path);

@@ -223,3 +223,61 @@ test("task-schedule PATCH goes through SQLite write gate without database is loc
   const result = await patchPromise;
   assert.equal(result.enabled, false);
 });
+
+test("housekeeping repairs TrackFiles rows whose library_root stored a label key (#172)", async () => {
+  const { Config } = await import("../config/config.js");
+  const prevMusicPath = process.env.MUSIC_PATH;
+  const musicRoot = path.join(root, "default-music-root");
+  process.env.MUSIC_PATH = musicRoot;
+  try {
+  const customRoot = path.join(root, "custom-stereo-root");
+  assert.equal(Config.getMusicPath(), musicRoot);
+  const customFile = path.join(customRoot, "Artist", "Album", "01 - Track.flac");
+  const defaultFile = path.join(musicRoot, "Artist", "Album", "02 - Track.flac");
+  fs.mkdirSync(path.dirname(customFile), { recursive: true });
+  fs.mkdirSync(path.dirname(defaultFile), { recursive: true });
+  fs.writeFileSync(customFile, "fixture");
+  fs.writeFileSync(defaultFile, "fixture");
+
+  const metaProfileId = (database.db.prepare("SELECT id FROM MetadataProfiles LIMIT 1").get() as { id: number }).id;
+  const qualityProfileId = (database.db.prepare("SELECT id FROM quality_profiles LIMIT 1").get() as { id: number }).id;
+  const libId = Number(database.db.prepare(`
+    INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id, enabled)
+    VALUES ('Custom Stereo', ?, ?, ?, 1)
+  `).run(customRoot, metaProfileId, qualityProfileId).lastInsertRowid);
+
+  const customRowId = Number(database.db.prepare(`
+    INSERT INTO TrackFiles (
+      library_id, file_path, filename, relative_path, library_root, extension, file_type, library_slot
+    ) VALUES (?, ?, '01 - Track.flac', 'wrong', 'music', 'flac', 'track', 'stereo')
+  `).run(libId, customFile).lastInsertRowid);
+
+  const defaultRowId = Number(database.db.prepare(`
+    INSERT INTO TrackFiles (
+      file_path, filename, relative_path, library_root, extension, file_type, library_slot
+    ) VALUES (?, '02 - Track.flac', 'wrong', 'music', 'flac', 'track', 'stereo')
+  `).run(defaultFile).lastInsertRowid);
+
+  const summary = await maintenance.runRuntimeMaintenance();
+  assert.equal(summary.libraryRootsRepaired, 2);
+
+  const repairedCustom = database.db.prepare(
+    "SELECT library_root, relative_path FROM TrackFiles WHERE id = ?",
+  ).get(customRowId) as { library_root: string; relative_path: string };
+  assert.equal(repairedCustom.library_root, customRoot);
+  assert.equal(repairedCustom.relative_path, path.join("Artist", "Album", "01 - Track.flac"));
+
+  const repairedDefault = database.db.prepare(
+    "SELECT library_root, relative_path FROM TrackFiles WHERE id = ?",
+  ).get(defaultRowId) as { library_root: string; relative_path: string };
+  assert.equal(repairedDefault.library_root, musicRoot);
+  assert.equal(repairedDefault.relative_path, path.join("Artist", "Album", "02 - Track.flac"));
+
+  // Second run is a no-op once repaired.
+  assert.equal(maintenance.repairTrackFileLibraryRootLabels(), 0);
+  } finally {
+    if (prevMusicPath === undefined) delete process.env.MUSIC_PATH;
+    else process.env.MUSIC_PATH = prevMusicPath;
+  }
+});
+

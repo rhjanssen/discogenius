@@ -1655,7 +1655,10 @@ const ArtistPage = () => {
     if (!artistId) return;
     setDeleteFilesApplying(true);
     try {
-      const result: any = await api.deleteArtistFiles(artistId, { unmonitor: deleteFilesUnmonitor });
+      const result: any = await api.deleteArtistFiles(artistId, {
+        unmonitor: deleteFilesUnmonitor,
+        allLibraries: true,
+      });
       toast({
         title: "Artist files deleted",
         description: `Removed ${result?.deleted ?? 0} file(s)${result?.unmonitored ? " and unmonitored the artist" : ""}.`,

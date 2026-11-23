@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { QueueItemContract } from "@contracts/status";
 import { api } from "@/services/api";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
+import { ignoreProgressTickEvents } from "@/hooks/useDashboardInfiniteFeed";
 import { ACTIVITY_REFRESH_EVENT } from "@/utils/appEvents";
 
 type UseQueueDetailsOptions = {
@@ -42,6 +43,7 @@ export function useQueueDetails({
     windowEvents: [ACTIVITY_REFRESH_EVENT],
     debounceMs: 400,
     enabled: isEnabled,
+    globalEventFilter: ignoreProgressTickEvents,
   });
 
   const query = useQuery<QueueItemContract[]>({

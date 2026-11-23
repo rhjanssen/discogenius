@@ -190,6 +190,7 @@ export function useTrackPlayback() {
 
   const toggleTrackPlayback = useCallback(async (track: PlayableTrack, event?: MouseEvent) => {
     event?.stopPropagation();
+    fallbackRetryTrackIdsRef.current.delete(track.id);
 
     if (playingTrackId === track.id) {
       setPlayingTrackId(null);
@@ -244,6 +245,7 @@ export function useTrackPlayback() {
 
   const handleTrackPlaybackError = useCallback(async (track: PlayableTrack) => {
     if (fallbackRetryTrackIdsRef.current.has(track.id)) {
+      fallbackRetryTrackIdsRef.current.delete(track.id);
       setPlayingTrackId(null);
       toast({
         title: "Playback failed",
@@ -293,14 +295,13 @@ export function useTrackPlayback() {
       });
     } catch (error) {
       console.error("Failed to recover playback after playback error:", error);
+      fallbackRetryTrackIdsRef.current.delete(track.id);
       setPlayingTrackId(null);
       toast({
         title: "Playback failed",
         description: "Could not switch to a compatible stream",
         variant: "destructive",
       });
-    } finally {
-      fallbackRetryTrackIdsRef.current.delete(track.id);
     }
   }, [
     ensureSignedStreamUrl,

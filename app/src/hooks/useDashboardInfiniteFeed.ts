@@ -86,7 +86,7 @@ export function useDashboardInfiniteFeed<TItem>({
         refetchOnMount,
         refetchOnWindowFocus: false,
         refetchInterval: refetchIntervalMs,
-        refetchIntervalInBackground: Boolean(refetchIntervalMs),
+        refetchIntervalInBackground: false,
         retry: 1,
         placeholderData: (previousData) => previousData,
         enabled,

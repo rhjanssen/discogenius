@@ -292,9 +292,11 @@ const useStyles = makeStyles({
         whiteSpace: "nowrap",
         "@media (max-width: 639px)": {
             minWidth: "32px",
-            "& .fui-Button__content": {
-                display: "none",
-            },
+        },
+    },
+    queueActionButtonLabel: {
+        "@media (max-width: 639px)": {
+            display: "none",
         },
     },
     tabContentPanel: {
@@ -677,15 +679,24 @@ const Dashboard = () => {
                             icon={<Pause24 />}
                             onClick={handlePauseResume}
                             size="small"
+                            title="Pause downloads"
+                            aria-label="Pause downloads"
                         >
-                            Pause downloads
+                            <span className={styles.queueActionButtonLabel}>Pause downloads</span>
                         </Button>
                     )}
                     {mobileTab === "activity" && (
                         <Menu>
                             <MenuTrigger disableButtonEnhancement>
-                                <Button className={styles.queueActionButton} appearance="outline" icon={<Filter24 />} size="small" title="Filter Activity">
-                                    Filter
+                                <Button
+                                    className={styles.queueActionButton}
+                                    appearance="outline"
+                                    icon={<Filter24 />}
+                                    size="small"
+                                    title="Filter Activity"
+                                    aria-label="Filter activity"
+                                >
+                                    <span className={styles.queueActionButtonLabel}>Filter</span>
                                 </Button>
                             </MenuTrigger>
                             <MenuPopover>

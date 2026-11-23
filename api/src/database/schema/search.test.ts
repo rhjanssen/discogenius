@@ -89,3 +89,15 @@ test("substring search rebuild uses canonical rows and retains infix matches", (
   assert.equal(count("SELECT COUNT(*) AS n FROM CatalogSubstringSearch"), 3);
   assert.deepEqual(ensureSearchIndexes(db), []);
 });
+
+test("startup ensureSearchIndexes does not issue FTS5 integrity-check writes on an up-to-date database (#172)", () => {
+  // PRAGMA query_only makes SQLite reject any write statement, including
+  // INSERT INTO TrackSearch(TrackSearch) VALUES('integrity-check').
+  db.pragma("query_only = ON");
+  try {
+    assert.deepEqual(ensureSearchIndexes(db), []);
+  } finally {
+    db.pragma("query_only = OFF");
+  }
+});
+

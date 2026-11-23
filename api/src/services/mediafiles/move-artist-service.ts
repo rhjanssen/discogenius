@@ -13,6 +13,7 @@ import { LibraryFilesService, removeEmptyParents, type RenameStatusSummary } fro
 import {CommandNames} from "../commands/command-names.js";
 import {CommandQueueManager} from "../commands/command-queue-manager.js";
 import { RenameTrackFileService } from "./rename-track-file-service.js";
+import { pathsDifferOnlyByCase, renameToCanonicalCase, sameDirectoryEntry } from "./path-utils.js";
 
 type ArtistPathRow = {
   id: number;
@@ -87,12 +88,25 @@ function resolveRequestedArtistPath(artist: ArtistPathRow, options: MoveArtistOp
   }
 }
 
+function isCaseOnlySameDirectory(sourcePath: string, destinationPath: string): boolean {
+  return pathsDifferOnlyByCase(sourcePath, destinationPath)
+    && sameDirectoryEntry(sourcePath, destinationPath);
+}
+
 function moveDirectoryCrossDevice(sourcePath: string, destinationPath: string): void {
+  if (isCaseOnlySameDirectory(sourcePath, destinationPath)) {
+    renameToCanonicalCase(sourcePath, destinationPath);
+    return;
+  }
+
   fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
 
   try {
     fs.renameSync(sourcePath, destinationPath);
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "EXDEV" || sameDirectoryEntry(sourcePath, destinationPath)) {
+      throw error;
+    }
     fs.cpSync(sourcePath, destinationPath, { recursive: true, force: true });
     fs.rmSync(sourcePath, { recursive: true, force: true });
   }
@@ -207,7 +221,7 @@ export class MoveArtistService {
           continue;
         }
 
-        if (fs.existsSync(destinationDir)) {
+        if (fs.existsSync(destinationDir) && !isCaseOnlySameDirectory(sourceDir, destinationDir)) {
           const existingEntries = fs.readdirSync(destinationDir);
           if (existingEntries.length > 0) {
             throw new Error(`Destination artist folder already exists in ${libraryRoot.key}: ${destinationDir}`);

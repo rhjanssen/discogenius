@@ -224,3 +224,51 @@ test("video refresh policy reads canonical ProviderItems for the artist", () => 
     .run(daysAgo(70), "provider-video");
   assert.equal(refreshPolicyModule.shouldRefreshVideos({ artistId: "artist-mbid" }), true);
 });
+
+test("video refresh policy ignores unrelated videos and parses SQLite UTC timestamps without local-offset drift", () => {
+  seedArtist();
+  dbModule.db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+    .run("other-artist-mbid", "Other Artist");
+
+  const otherRecording = dbModule.db.prepare(`
+    INSERT INTO Recordings (
+      mbid, artist_mbid, artist_metadata_id, title, is_video, metadata_status
+    ) VALUES (
+      'other-video-rec',
+      'other-artist-mbid',
+      (SELECT id FROM ArtistMetadata WHERE mbid = 'other-artist-mbid'),
+      'Other Video',
+      1,
+      'musicbrainz'
+    )
+    RETURNING id
+  `).get() as { id: number };
+
+  const otherVideoItemId = insertProviderItem({
+    entity_type: "video",
+    provider_id: "other-provider-video",
+    title: "Other Video",
+    updated_at: new Date().toISOString().replace("T", " ").slice(0, 19),
+  });
+  dbModule.db.prepare(`
+    INSERT INTO ProviderVideoMatches (
+      provider_video_item_id, recording_id, match_state, decision_source,
+      confidence, method, matcher_version
+    ) VALUES (?, ?, 'accepted', 'automatic', 1, 'test', 1)
+  `).run(otherVideoItemId, otherRecording.id);
+
+  // Target artist has no videos yet even though another artist has a fresh one.
+  assert.equal(refreshPolicyModule.shouldRefreshVideos({ artistId: "artist-mbid" }), true);
+
+  // SQLite CURRENT_TIMESTAMP format ("YYYY-MM-DD HH:MM:SS" in UTC) must parse as fresh UTC.
+  const sqliteUtcNow = new Date(Date.now() - 60_000).toISOString().replace("T", " ").slice(0, 19);
+  assert.equal(
+    refreshPolicyModule.shouldRefreshArtist({
+      artistId: "artist-mbid",
+      lastScanned: sqliteUtcNow,
+      refreshDays: 1,
+    }),
+    false,
+  );
+});
+

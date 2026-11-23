@@ -362,3 +362,39 @@ test("activity events page pagination returns limit/offset/hasMore consistently"
     assert.equal(secondPage.hasMore, false);
     assert.equal(secondPage.items[0]?.id, `task:${taskId}`);
 });
+
+test("activity page surfaces started tasks ahead of >100 newer queued tasks on default /queue/tasks query (#172)", () => {
+    const startedId = queueModule.CommandQueueManager.push(
+        queueModule.CommandNames.RefreshAlbum,
+        { albumId: "album-started" },
+        "album-started",
+    );
+    queueModule.CommandQueueManager.markProcessing(startedId);
+    dbModule.db.prepare("UPDATE commands SET created_at = '2024-05-01 08:00:00', started_at = '2024-05-01 08:00:05' WHERE id = ?")
+        .run(startedId);
+
+    for (let i = 0; i < 105; i++) {
+        const queuedId = queueModule.CommandQueueManager.push(
+            queueModule.CommandNames.RefreshAlbum,
+            { albumId: `album-queued-${i}` },
+            `album-queued-${i}`,
+        );
+        const sec = String(i % 60).padStart(2, "0");
+        const min = String(Math.floor(i / 60) + 1).padStart(2, "0");
+        dbModule.db.prepare("UPDATE commands SET created_at = ? WHERE id = ?")
+            .run(`2024-05-01 08:${min}:${sec}`, queuedId);
+    }
+
+    const page = commandHistoryModule.getActivityPage({
+        statuses: ["queued", "started", "completed", "failed", "cancelled"],
+        categories: ["scans", "other"],
+        limit: 100,
+        offset: 0,
+    });
+
+    assert.equal(page.total, 106);
+    assert.equal(page.items.length, 100);
+    assert.equal(page.items[0]?.id, startedId);
+    assert.equal(page.items[0]?.status, "started");
+});
+

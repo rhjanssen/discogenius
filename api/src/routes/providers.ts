@@ -122,13 +122,14 @@ router.put("/priority", async (req, res) => {
       return res.status(400).json({ detail: "order must contain at least one registered provider id" });
     }
 
-    updateConfig("streaming", {
-      ...Config.getStreamingConfig(),
-      provider_priority: order,
-      default_provider: order[0],
+    await withDbWrite(() => {
+      updateConfig("streaming", {
+        ...Config.getStreamingConfig(),
+        provider_priority: order,
+        default_provider: order[0],
+      });
+      markAcquisitionPlanningStale();
     });
-
-    await withDbWrite(() => markAcquisitionPlanningStale());
 
     res.json({
       providerPriority: streamingProviderManager.getProviderPriority(),
@@ -280,12 +281,14 @@ router.post("/:providerId/logout", async (req, res) => {
     );
     let plansPendingCuration = false;
     if (repairedPreference) {
-      updateConfig("streaming", {
-        ...Config.getStreamingConfig(),
-        provider_priority: repairedPreference.providerPriority,
-        default_provider: repairedPreference.defaultProviderId,
+      await withDbWrite(() => {
+        updateConfig("streaming", {
+          ...Config.getStreamingConfig(),
+          provider_priority: repairedPreference.providerPriority,
+          default_provider: repairedPreference.defaultProviderId,
+        });
+        markAcquisitionPlanningStale();
       });
-      await withDbWrite(() => markAcquisitionPlanningStale());
       plansPendingCuration = true;
     }
 

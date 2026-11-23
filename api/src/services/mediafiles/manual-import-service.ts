@@ -6,7 +6,7 @@ import {
     updateArtistDownloadStatusFromMedia,
 } from "../download/download-state.js";
 import { loadArtistMetadataIdentity } from "../music/managed-artists.js";
-import { resolveStoredLibraryPath } from "./library-paths.js";
+import { resolveLibraryRootPath, resolveStoredLibraryPath } from "./library-paths.js";
 import { normalizeResolvedPath } from "./path-utils.js";
 import {
     finalizeImportedDirectories,
@@ -502,13 +502,23 @@ export class ManualImportService {
                         : undefined,
                 }), extension);
 
-                let rootPath = options?.libraryRootPath || Config.getMusicPath();
-                if (!options?.libraryRootPath && libraryRootKey === "videos") rootPath = Config.getVideoPath();
-                else if (!options?.libraryRootPath && isSpatialAudioQuality(quality)) rootPath = Config.getSpatialPath();
+                const resolveExplicitRoot = (value: string | null | undefined): string | null => {
+                    const trimmed = String(value || "").trim();
+                    if (!trimmed) return null;
+                    if (trimmed === "music" || trimmed === "spatial" || trimmed === "videos") {
+                        return resolveLibraryRootPath(trimmed, file.file_path);
+                    }
+                    return path.isAbsolute(trimmed) ? trimmed : resolveLibraryRootPath(trimmed, file.file_path);
+                };
 
-                const expectedPath = path.join(rootPath, expectedRelPath);
+                let expectedRootPath = resolveExplicitRoot(options?.libraryRootPath) || Config.getMusicPath();
+                if (!options?.libraryRootPath && libraryRootKey === "videos") expectedRootPath = Config.getVideoPath();
+                else if (!options?.libraryRootPath && (libraryRootKey === "spatial" || isSpatialAudioQuality(quality))) expectedRootPath = Config.getSpatialPath();
+
+                const rootPath = resolveExplicitRoot(file.library_root) || expectedRootPath;
+                const expectedPath = path.join(expectedRootPath, expectedRelPath);
                 const relativePath = path.relative(rootPath, file.file_path);
-                const needsRename = relativePath.split(path.sep).join("/") !== expectedRelPath.split(path.sep).join("/") ? 1 : 0;
+                const needsRename = normalizeResolvedPath(file.file_path) !== normalizeResolvedPath(expectedPath) ? 1 : 0;
 
                 collected.push({
                     id: item.id,
@@ -747,7 +757,7 @@ export class ManualImportService {
                         c.canonicalRecordingId ? null : c.providerId,
                         c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
                         c.file.file_path, c.relativePath,
-                        c.libraryRootKey, c.file.filename, c.extension, c.stats.size,
+                        c.rootPath, c.file.filename, c.extension, c.stats.size,
                         c.trackData.duration || 0, c.fileType, c.quality, c.needsRename,
                         c.fullPathTemplate, c.expectedPath, c.file.filename,
                         c.fingerprint, c.stats.mtime.toISOString(),
@@ -806,6 +816,8 @@ export class ManualImportService {
                             provider_id = COALESCE(excluded.provider_id, provider_id),
                             library_slot = COALESCE(excluded.library_slot, library_slot),
                             source_provider = CASE WHEN source_provider IS NULL OR source_provider = 'unknown' THEN 'external' ELSE source_provider END,
+                            relative_path = excluded.relative_path,
+                            library_root = excluded.library_root,
                             artist_metadata_id = excluded.artist_metadata_id, needs_rename = excluded.needs_rename,
                             expected_path = excluded.expected_path, fingerprint = excluded.fingerprint,
                             -- Probed technical facts describe the bytes on disk, so a
@@ -835,7 +847,7 @@ export class ManualImportService {
                         providerIdValue: c.canonicalRecordingId ? null : c.providerId,
                         librarySlot: c.libraryRootKey === "spatial" ? "spatial" : c.isVideo ? "video" : "stereo",
                         filePath: c.file.file_path, relativePath: c.relativePath,
-                        libraryRoot: c.libraryRootKey, filename: c.file.filename,
+                        libraryRoot: c.rootPath, filename: c.file.filename,
                         extension: c.extension, fileSize: c.stats.size,
                         // The probed duration is the file's own; fall back to the
                         // provider's only when the probe could not read one.

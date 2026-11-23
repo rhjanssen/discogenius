@@ -6,6 +6,7 @@ import { Config, CONFIG_DIR } from "../config/config.js";
 import { invalidateAllDownloadState } from "../download/download-state.js";
 import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-files.js";
+import { resolveLibraryRootPath } from "../mediafiles/library-paths.js";
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { buildLibraryArtistMonitoredExistsSql } from "../music/managed-artists.js";
@@ -24,6 +25,8 @@ export interface RuntimeMaintenanceSummary {
   staleTempDirsRemoved: number;
   /** Video files whose quality tag was corrected from stored dimensions */
   videoQualitiesCorrected: number;
+  /** TrackFiles rows whose library_root label ('music'/'spatial'/'videos') was repaired to its filesystem path */
+  libraryRootsRepaired?: number;
   /** Files deleted because they belong to unmonitored albums/editions */
   unmonitoredFilesRemoved: number;
   /** True when the run stopped early due to reaching the hard time limit */
@@ -159,6 +162,37 @@ export function correctVideoQualitiesFromDimensions(): number {
   return corrected;
 }
 
+/**
+ * Repair TrackFiles rows whose library_root stored a root key label
+ * ('music', 'spatial', 'videos') instead of the configured filesystem path.
+ */
+export function repairTrackFileLibraryRootLabels(): number {
+  const rows = db.prepare(`
+    SELECT tf.id, tf.file_path, tf.library_root, l.root_path AS linked_root_path
+    FROM TrackFiles tf
+    LEFT JOIN Libraries l ON l.id = tf.library_id
+    WHERE tf.library_root IN ('music', 'spatial', 'videos')
+  `).all() as Array<{ id: number; file_path: string; library_root: string; linked_root_path: string | null }>;
+  if (rows.length === 0) return 0;
+
+  const update = db.prepare(`
+    UPDATE TrackFiles
+    SET library_root = ?, relative_path = ?
+    WHERE id = ?
+  `);
+  let repaired = 0;
+  for (const row of rows) {
+    const linkedRoot = String(row.linked_root_path || "").trim();
+    const resolvedRoot = (linkedRoot && path.isAbsolute(linkedRoot) ? linkedRoot : null)
+      || resolveLibraryRootPath(row.library_root, row.file_path);
+    if (!resolvedRoot) continue;
+    const relativePath = path.relative(resolvedRoot, row.file_path);
+    update.run(resolvedRoot, relativePath, row.id);
+    repaired += 1;
+  }
+  return repaired;
+}
+
 export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions): Promise<RuntimeMaintenanceSummary> {
   const summary: RuntimeMaintenanceSummary = {
     duplicateLibraryFilesRemoved: 0,
@@ -170,6 +204,7 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
     orphanDownloadFoldersRemoved: 0,
     staleTempDirsRemoved: 0,
     videoQualitiesCorrected: 0,
+    libraryRootsRepaired: 0,
     unmonitoredFilesRemoved: 0,
     timedOut: false,
   };
@@ -261,6 +296,7 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
   await yieldFn();
   reportProgress(55, "Correcting video qualities");
   summary.videoQualitiesCorrected = await withSqliteWriteGate(correctVideoQualitiesFromDimensions, "housekeeping:video-quality");
+  summary.libraryRootsRepaired = await withSqliteWriteGate(repairTrackFileLibraryRootLabels, "housekeeping:library-roots");
 
   // Step 6: Prune unmonitored files
   if (isTimedOut()) { summary.timedOut = true; return summary; }

@@ -205,6 +205,14 @@ test("/api/tasks defaults to queued+started+completed+failed+cancelled and suppo
     assert.equal(completedBody.items[0]?.status, "completed");
     assert.equal(typeof (completedBody.items[0] as any)?.description, "string");
     assert.equal(typeof (completedBody.items[0] as any)?.startTime, "number");
+
+    const runningRes = createMockResponse();
+    tasksHandler({ query: { status: "running" } }, runningRes);
+    assert.equal(runningRes.statusCode, 200);
+    const runningBody = runningRes.body as { items: Array<{ id: number; status: string }>; total: number };
+    assert.equal(runningBody.total, 1);
+    assert.equal(runningBody.items[0]?.id, processingId);
+    assert.equal(runningBody.items[0]?.status, "started");
 });
 
 test("/api/tasks rejects unsupported filters", () => {

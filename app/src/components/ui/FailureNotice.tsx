@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import {
   Button,
   Link,
@@ -97,6 +97,16 @@ export function FailureNotice({ failure, fallbackText, className }: FailureNotic
   const styles = useStyles();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<number | null>(null);
+
+  const clearCopiedTimer = () => {
+    if (copiedTimerRef.current !== null) {
+      window.clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => clearCopiedTimer, []);
 
   if (!failure) {
     const text = fallbackText?.trim();
@@ -118,8 +128,13 @@ export function FailureNotice({ failure, fallbackText, className }: FailureNotic
     try {
       await navigator.clipboard.writeText(failure.detail);
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 2_000);
+      clearCopiedTimer();
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopied(false);
+      }, 2_000);
     } catch {
+      clearCopiedTimer();
       setCopied(false);
     }
   };
@@ -135,7 +150,14 @@ export function FailureNotice({ failure, fallbackText, className }: FailureNotic
         {failure.action ? (
           <Link href={failure.action.href} onClick={openAction}>{failure.action.label}</Link>
         ) : null}
-        <Popover withArrow positioning="below-start" onOpenChange={() => setCopied(false)}>
+        <Popover
+          withArrow
+          positioning="below-start"
+          onOpenChange={() => {
+            clearCopiedTimer();
+            setCopied(false);
+          }}
+        >
           <PopoverTrigger disableButtonEnhancement>
             <Button appearance="transparent" size="small" className={styles.detailsButton}>
               Details

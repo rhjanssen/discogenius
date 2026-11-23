@@ -4,6 +4,8 @@ import {
     Button,
     Menu,
     MenuDivider,
+    MenuGroup,
+    MenuGroupHeader,
     MenuItemCheckbox,
     MenuList,
     MenuPopover,
@@ -178,13 +180,6 @@ function QueueHistoryFilterMenu({
         }
     };
 
-    const sectionLabelStyle = {
-        fontSize: tokens.fontSizeBase200,
-        fontWeight: tokens.fontWeightSemibold,
-        color: tokens.colorNeutralForeground3,
-        padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-    } as const;
-
     return (
         <Menu checkedValues={checkedValues} onCheckedValueChange={handleCheckedValueChange}>
             <MenuTrigger disableButtonEnhancement>
@@ -204,19 +199,23 @@ function QueueHistoryFilterMenu({
             </MenuTrigger>
             <MenuPopover>
                 <MenuList>
-                    <Text style={sectionLabelStyle}>OUTCOME</Text>
-                    {QUEUE_HISTORY_OUTCOME_OPTIONS.map((option) => (
-                        <MenuItemCheckbox key={option.value} name="outcome" value={option.value}>
-                            {option.label}
-                        </MenuItemCheckbox>
-                    ))}
+                    <MenuGroup>
+                        <MenuGroupHeader>Outcome</MenuGroupHeader>
+                        {QUEUE_HISTORY_OUTCOME_OPTIONS.map((option) => (
+                            <MenuItemCheckbox key={option.value} name="outcome" value={option.value}>
+                                {option.label}
+                            </MenuItemCheckbox>
+                        ))}
+                    </MenuGroup>
                     <MenuDivider />
-                    <Text style={sectionLabelStyle}>LIBRARY</Text>
-                    {QUEUE_HISTORY_MEDIA_KIND_OPTIONS.map((option) => (
-                        <MenuItemCheckbox key={option.value} name="mediaKind" value={option.value}>
-                            {option.label}
-                        </MenuItemCheckbox>
-                    ))}
+                    <MenuGroup>
+                        <MenuGroupHeader>Library</MenuGroupHeader>
+                        {QUEUE_HISTORY_MEDIA_KIND_OPTIONS.map((option) => (
+                            <MenuItemCheckbox key={option.value} name="mediaKind" value={option.value}>
+                                {option.label}
+                            </MenuItemCheckbox>
+                        ))}
+                    </MenuGroup>
                 </MenuList>
             </MenuPopover>
         </Menu>

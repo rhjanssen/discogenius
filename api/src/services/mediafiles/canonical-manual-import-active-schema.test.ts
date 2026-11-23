@@ -142,3 +142,66 @@ test("provider_item_id is a real FK to ProviderItems that survives item deletion
   assert.ok(after, "the file row must survive its provider item being deleted");
   assert.equal(after?.provider_item_id, null, "the dangling FK is cleared, not left pointing at a dead row");
 });
+
+test("ManualImportService writes the filesystem root path instead of the 'music' key into TrackFiles.library_root (#172)", async () => {
+  const { ManualImportService } = await import("./manual-import-service.js");
+  const { Config } = await import("../config/config.js");
+
+  const prevMusicPath = process.env.MUSIC_PATH;
+  const musicRoot = path.join(tempDir, "stereo-music");
+  process.env.MUSIC_PATH = musicRoot;
+  try {
+  assert.equal(Config.getMusicPath(), musicRoot);
+  const trackPath = path.join(musicRoot, "Bastille", "Bad Blood", "01 - Pompeii.flac");
+  fs.mkdirSync(path.dirname(trackPath), { recursive: true });
+  fs.writeFileSync(trackPath, "not-a-real-flac");
+
+  const artistMbid = "11111111-2222-3333-4444-555555555555";
+  const rgMbid = "22222222-2222-3333-4444-555555555555";
+  const releaseMbid = "33333333-2222-3333-4444-555555555555";
+  const recordingMbid = "44444444-2222-3333-4444-555555555555";
+  const trackMbid = "55555555-2222-3333-4444-555555555555";
+
+  const artistId = (db.prepare(`
+    INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Bastille') RETURNING id
+  `).get(artistMbid) as { id: number }).id;
+  const albumId = (db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+    VALUES (?, ?, ?, 'Bad Blood', 'Album') RETURNING id
+  `).get(rgMbid, artistMbid, artistId) as { id: number }).id;
+  const editionId = (db.prepare(`
+    INSERT INTO AlbumEditions (mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id, title)
+    VALUES (?, ?, ?, ?, ?, 'Bad Blood') RETURNING id
+  `).get(releaseMbid, rgMbid, albumId, artistMbid, artistId) as { id: number }).id;
+  const recordingId = (db.prepare(`
+    INSERT INTO Recordings (mbid, artist_mbid, artist_metadata_id, title, is_video)
+    VALUES (?, ?, ?, 'Pompeii', 0) RETURNING id
+  `).get(recordingMbid, artistMbid, artistId) as { id: number }).id;
+  db.prepare(`
+    INSERT INTO Tracks (mbid, release_mbid, album_edition_id, recording_mbid, recording_id, title, medium_position, position)
+    VALUES (?, ?, ?, ?, ?, 'Pompeii', 1, 1)
+  `).run(trackMbid, releaseMbid, editionId, recordingMbid, recordingId);
+
+  const unmappedId = Number(db.prepare(`
+    INSERT INTO UnmappedFiles (file_path, relative_path, library_root, filename, extension, file_size)
+    VALUES (?, ?, 'music', '01 - Pompeii.flac', 'flac', 15)
+  `).run(trackPath, path.join("Bastille", "Bad Blood", "01 - Pompeii.flac")).lastInsertRowid);
+
+  const summary = await new ManualImportService().bulkImportUnmapped(
+    [{ id: unmappedId, providerId: `mbid-${trackMbid}` }],
+  );
+  assert.equal(summary.imported, 1);
+
+  const stored = db.prepare(`
+    SELECT file_path, library_root, relative_path FROM TrackFiles WHERE canonical_track_mbid = ?
+  `).get(trackMbid) as { file_path: string; library_root: string; relative_path: string } | undefined;
+  assert.ok(stored);
+  assert.equal(stored.library_root, musicRoot);
+  assert.notEqual(stored.library_root, "music");
+  assert.equal(stored.relative_path, path.relative(musicRoot, stored.file_path));
+  } finally {
+    if (prevMusicPath === undefined) delete process.env.MUSIC_PATH;
+    else process.env.MUSIC_PATH = prevMusicPath;
+  }
+});
+

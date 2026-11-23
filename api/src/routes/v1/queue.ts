@@ -684,7 +684,7 @@ const defaultTaskStatuses: readonly CommandStatus[] = ['queued', 'started', 'com
 const taskCategories: readonly CommandQueueCategory[] = ['scans', 'other'];
 
 function normalizeTaskStatusFilterValue(status: string): string {
-  return status === 'running' ? 'processing' : status;
+  return status === 'running' ? 'started' : status;
 }
 
 /**
