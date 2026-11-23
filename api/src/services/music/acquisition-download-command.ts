@@ -46,7 +46,6 @@ interface PlanTrack {
   position: number;
   provider_track_id: string;
   provider_track_item_id: number;
-  shared_item_conflict: number;
   provider_release_id: string;
   provider_edition_item_id: number;
   provider_audio_variant_id: number;
@@ -213,16 +212,6 @@ export function evaluateAcquisitionDownload(
       track.position,
       member_item.provider_id AS provider_track_id,
       member_item.id AS provider_track_item_id,
-      CASE WHEN track_match.decision_source = 'automatic' AND EXISTS (
-        SELECT 1
-        FROM ProviderTrackMatches other_match
-        WHERE other_match.provider_edition_match_id = track_match.provider_edition_match_id
-          AND other_match.provider_track_item_id = member_item.id
-          AND other_match.match_state = 'accepted'
-          AND other_match.decision_source = 'automatic'
-          AND other_match.track_id IS NOT NULL
-          AND other_match.track_id != plan_track.track_id
-      ) THEN 1 ELSE 0 END AS shared_item_conflict,
       release_item.provider_id AS provider_release_id,
       release_item.id AS provider_edition_item_id,
       plan_track.provider_audio_variant_id,
@@ -272,14 +261,6 @@ export function evaluateAcquisitionDownload(
   }
 
   const missingTracks = tracks.filter((track) => !track.complete);
-  // Matcher version is not a download veto. An older stored plan is blocked
-  // only when this edition still accepts the same provider item for another
-  // canonical track. A duplicate listing of the same track is not a conflict.
-  // A compilation that reuses the item under a different edition match is not
-  // a conflict either: the check stays inside this provider edition match.
-  if (missingTracks.some((track) => track.shared_item_conflict === 1)) {
-    return { status: "blocked", reason: "ambiguous_offer" };
-  }
   const offeredProviderTracks = new Set<string>();
   for (const track of missingTracks) {
     const identity = `${header.provider}:${track.provider_track_id}`;
