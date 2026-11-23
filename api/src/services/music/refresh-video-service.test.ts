@@ -1262,20 +1262,74 @@ test("planned video repair removes a stale studio link and commits its live repl
   assert.deepEqual(links(), [{ target_recording_id: liveId }]);
   await refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
   assert.deepEqual(links(), [{ target_recording_id: liveId }]);
+});
 
-  // Deleting a recording while relation writes are queued must be a safe no-op via conditional WHERE EXISTS.
-  dbModule.db.prepare("DELETE FROM RecordingRelations WHERE source_recording_id = ?").run(videoId);
-  const transientVideoId = insertCanonicalVideo({ mbid: "transient-video", title: "Pompeii (Live)", variant: "live", lengthMs: 232000 });
-  seedAcceptedProviderVideoMatch(dbModule.db, {
-    provider: "apple-music", providerVideoId: "transient-live-video",
-    providerEditionId: "planned-live-offer", recordingId: transientVideoId, title: "Pompeii (Live)", durationMs: 232000,
-  });
-  const refresh = refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
-  await dbModule.withSqliteWriteGate(() => {
-    dbModule.db.prepare("DELETE FROM Recordings WHERE id = ?").run(transientVideoId);
-  }, "test:delete-transient-video");
-  await refresh;
-  assert.deepEqual(links(), [{ target_recording_id: liveId }]);
+test("planned video relation batch skips a recording deleted before write-gate admission", async () => {
+  for (const deleted of ["video", "audio"] as const) {
+    const liveId = seedStudioAudio({
+      recordingMbid: `planned-race-live-${deleted}`,
+      title: "Pompeii (Live)",
+      lengthMs: 232000,
+      albumMbid: `planned-race-live-album-${deleted}`,
+      editionMbid: `planned-race-live-edition-${deleted}`,
+    });
+    seedAcceptedProviderRecordingTrack(dbModule.db, {
+      provider: "tidal",
+      providerEditionId: `planned-race-live-offer-${deleted}`,
+      providerTrackId: `planned-race-live-track-${deleted}`,
+      recordingId: liveId,
+      title: "Pompeii (Live)",
+      durationMs: 232000,
+    });
+    const transientVideoId = insertCanonicalVideo({
+      mbid: `transient-video-${deleted}`,
+      title: "Pompeii (Live)",
+      variant: "live",
+      lengthMs: 232000,
+    });
+    seedAcceptedProviderVideoMatch(dbModule.db, {
+      provider: "tidal",
+      providerVideoId: `transient-live-video-${deleted}`,
+      providerEditionId: `planned-race-live-offer-${deleted}`,
+      recordingId: transientVideoId,
+      title: "Pompeii (Live)",
+      durationMs: 232000,
+    });
+
+    const refresh = refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
+    let acquired!: () => void;
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { acquired = resolve; });
+    const blocker = dbModule.withSqliteWriteGate(async () => {
+      acquired();
+      await new Promise<void>(resolve => { release = resolve; });
+      if (deleted === "video") {
+        dbModule.db.prepare("DELETE FROM Recordings WHERE id = ?").run(transientVideoId);
+      } else {
+        dbModule.db.prepare("DELETE FROM ProviderTrackMatches WHERE recording_id = ?").run(liveId);
+        dbModule.db.prepare("DELETE FROM Tracks WHERE recording_id = ?").run(liveId);
+        dbModule.db.prepare("DELETE FROM Recordings WHERE id = ?").run(liveId);
+      }
+    }, `test:delete-transient-${deleted}-after-plan`);
+
+    await ready;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    await blocker;
+    await refresh;
+
+    assert.equal(
+      (dbModule.db.prepare("SELECT COUNT(*) AS n FROM RecordingRelations WHERE source_recording_id = ?").get(transientVideoId) as { n: number }).n,
+      0,
+    );
+    dbModule.db.prepare("DELETE FROM RecordingRelations").run();
+    dbModule.db.prepare("DELETE FROM ProviderItems").run();
+    dbModule.db.prepare("DELETE FROM Tracks").run();
+    dbModule.db.prepare("DELETE FROM Recordings").run();
+    dbModule.db.prepare("DELETE FROM AlbumEditions").run();
+    dbModule.db.prepare("DELETE FROM Albums").run();
+  }
 });
 
 test("provider refresh preserves previously probed video quality", () => {

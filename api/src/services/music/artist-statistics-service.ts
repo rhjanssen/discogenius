@@ -395,9 +395,8 @@ export class ArtistStatisticsService {
       if (options?.yieldToEventLoop) {
         await options.yieldToEventLoop();
       }
-      const batch = calculateArtistStatisticsChunk(ids);
       const persisted = await withSqliteWriteGate(
-        () => this.persistRows(batch, false),
+        () => this.persistRows(calculateArtistStatisticsChunk(ids), false),
         "statistics:projection-batch",
       );
       rows.push(...persisted);
