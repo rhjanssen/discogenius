@@ -1,3 +1,4 @@
+import { db } from "../../database.js";
 import { CommandTrigger } from "../commands/command-trigger.js";
 import {
   CommandNames,
@@ -58,6 +59,7 @@ function enqueueWaitFromJob(job: CommandModel, position: "front" | "back" = "fro
   const payload = asRecord(job.payload);
   const resolved = asRecord(payload.resolved);
   const kind = mediaKindFromJob(job);
+  const provider = optionalString(payload.provider);
   const providerId = optionalString(payload.providerId)
     ?? optionalString(job.ref_id)
     ?? optionalString(resolved.providerId);
@@ -71,10 +73,37 @@ function enqueueWaitFromJob(job: CommandModel, position: "front" | "back" = "fro
     };
   }
 
+  const slot = optionalString(payload.slot) ?? optionalString(payload.librarySlot);
+  const releaseGroupMbid = optionalString(payload.releaseGroupMbid);
+  const refKey = optionalString(job.ref_id)
+    ?? (kind === "album" && releaseGroupMbid && slot ? `${releaseGroupMbid}:${slot}` : providerId);
+
+  const rawPlanId = Number(payload.acquisitionPlanId ?? payload.planId);
+  const planId = Number.isInteger(rawPlanId) && rawPlanId > 0
+    && Boolean(db.prepare("SELECT 1 FROM AcquisitionPlans WHERE id = ?").get(rawPlanId))
+    ? rawPlanId
+    : null;
+  const trackIds = Array.isArray(payload.trackIds)
+    ? payload.trackIds
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0)
+    : undefined;
+
+  const {
+    downloadState: _downloadState,
+    downloadImportHandoff: _downloadImportHandoff,
+    authHold: _authHold,
+    failedProvider: _failedProvider,
+    progress: _progress,
+    currentTrack: _currentTrack,
+    ...cleanPayload
+  } = payload;
+
   const retryPayload = {
-    ...payload,
+    ...cleanPayload,
+    provider: provider ?? undefined,
     providerId,
-    url: optionalString(payload.url) ?? buildStreamingMediaUrl(kind, providerId),
+    url: optionalString(payload.url) ?? buildStreamingMediaUrl(kind, providerId, provider ?? undefined),
     type: kind,
     title: optionalString(payload.title) ?? optionalString(resolved.title),
     artist: optionalString(payload.artist) ?? optionalString(resolved.artist),
@@ -85,10 +114,12 @@ function enqueueWaitFromJob(job: CommandModel, position: "front" | "back" = "fro
   };
 
   const queued = DownloadWaitQueue.enqueue({
-    refKey: providerId,
+    refKey,
     mediaKind: kind,
     commandName: commandNameForKind(kind),
-    provider: optionalString(payload.provider),
+    planId,
+    trackIds: trackIds && trackIds.length > 0 ? trackIds : undefined,
+    provider,
     providerId,
     artistId: retryPayload.artist_id,
     albumId: retryPayload.album_id,
@@ -96,10 +127,10 @@ function enqueueWaitFromJob(job: CommandModel, position: "front" | "back" = "fro
     artist: retryPayload.artist,
     cover: retryPayload.cover,
     quality: retryPayload.quality,
-    slot: optionalString(payload.slot) ?? optionalString(payload.librarySlot),
+    slot,
     payload: retryPayload,
     priority: job.priority,
-    trigger: job.trigger ?? CommandTrigger.Unspecified,
+    trigger: CommandTrigger.Manual,
     position,
   });
 

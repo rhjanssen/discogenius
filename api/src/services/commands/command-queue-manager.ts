@@ -711,7 +711,7 @@ LIMIT ? OFFSET ?
         statuses: readonly CommandStatus[],
         limit: number = 200,
         offset: number = 0,
-        options: { orderBy?: 'created_desc' | 'execution' | 'history' | 'live_activity' | 'download_activity' | 'queue_order' } = {},
+        options: { orderBy?: 'created_desc' | 'started_first_created_desc' | 'execution' | 'history' | 'live_activity' | 'download_activity' | 'queue_order' } = {},
     ): CommandModel[] {
         if (types.length === 0 || statuses.length === 0) {
             return [];
@@ -726,10 +726,12 @@ LIMIT ? OFFSET ?
                 : options.orderBy === 'download_activity'
                     ? buildLiveActivityOrderClause(undefined, "durable")
                     : options.orderBy === 'live_activity'
-                    ? buildLiveActivityOrderClause()
-                    : options.orderBy === 'queue_order'
-                        ? buildDurableQueueOrderClause()
-                        : 'created_at DESC, id DESC';
+                        ? buildLiveActivityOrderClause()
+                        : options.orderBy === 'queue_order'
+                            ? buildDurableQueueOrderClause()
+                            : options.orderBy === 'started_first_created_desc'
+                                ? "CASE WHEN status = 'started' THEN 0 ELSE 1 END ASC, created_at DESC, id DESC"
+                                : 'created_at DESC, id DESC';
         // Sort ids only, then fetch the page. Sorting full rows drags every
         // multi-KB payload through the sorter, which costs seconds once the
         // backlog reaches tens of thousands of commands.

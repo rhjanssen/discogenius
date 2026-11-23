@@ -1098,11 +1098,13 @@ export function getActivityPage(query: ActivityQuery = {}): ActivityPage {
         };
     }
 
-    const orderBy = statuses.every((status) => status === "queued" || status === "started")
-        ? "live_activity"
-        : statuses.length === 1 && statuses[0] === "queued"
-            ? "execution"
-            : "created_desc";
+    const orderBy = statuses.length === 1 && statuses[0] === "queued"
+        ? "execution"
+        : statuses.every((status) => status === "queued" || status === "started")
+            ? "live_activity"
+            : statuses.includes("started")
+                ? "started_first_created_desc"
+                : "created_desc";
     const total = CommandQueueManager.countJobsByTypesAndStatuses(filteredTypes, statuses);
     const jobs = CommandQueueManager.listJobsByTypesAndStatuses(filteredTypes, statuses, limit, offset, {
         orderBy,

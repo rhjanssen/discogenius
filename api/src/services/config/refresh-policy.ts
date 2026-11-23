@@ -14,7 +14,12 @@ export const INACTIVE_ARTIST_RELEASE_YEARS = 5;
 
 function parseTimestamp(raw: string | null | undefined): number | null {
   if (!raw) return null;
-  const parsed = Date.parse(raw);
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(trimmed)
+    ? `${trimmed.replace(" ", "T")}Z`
+    : trimmed;
+  const parsed = Date.parse(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -155,18 +160,20 @@ export function shouldRefreshVideos(options: {
       SELECT ?
     )
     SELECT
-      COUNT(video_item.provider_id) AS total_videos,
-      SUM(CASE WHEN video_item.provider_id IS NOT NULL AND video_item.updated_at IS NULL THEN 1 ELSE 0 END) AS missing_scans,
+      COUNT(video_item.id) AS total_videos,
+      SUM(CASE WHEN video_item.id IS NOT NULL AND video_item.updated_at IS NULL THEN 1 ELSE 0 END) AS missing_scans,
       MIN(video_item.updated_at) AS oldest_scan
     FROM target_artist target
-    LEFT JOIN ProviderItems video_item
-      ON video_item.entity_type = 'video'
-    LEFT JOIN ProviderVideoMatches video_match
-      ON video_match.provider_video_item_id = video_item.id
+    JOIN ArtistMetadata artist ON artist.mbid = target.mbid
+    JOIN Recordings recording
+      ON recording.artist_metadata_id = artist.id
+     AND recording.is_video = 1
+    JOIN ProviderVideoMatches video_match
+      ON video_match.recording_id = recording.id
      AND video_match.match_state = 'accepted'
-    LEFT JOIN Recordings recording ON recording.id = video_match.recording_id
-    LEFT JOIN ArtistMetadata artist ON artist.id = recording.artist_metadata_id
-    WHERE artist.mbid = target.mbid
+    JOIN ProviderItems video_item
+      ON video_item.id = video_match.provider_video_item_id
+     AND video_item.entity_type = 'video'
   `).get(identifier, identifier, identifier) as {
     total_videos?: number;
     missing_scans?: number;

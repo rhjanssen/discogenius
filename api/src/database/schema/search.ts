@@ -153,7 +153,12 @@ export function rebuildSearchIndex(db: Database.Database, table: SearchIndex): v
   })();
 }
 
-/** Startup only, before workers open connections. Rebuild obsolete index formats. */
+/**
+ * Startup only, before workers open connections. Rebuild obsolete index formats
+ * via a fast trigger-definition check without running a full FTS5
+ * integrity-check write scan at boot (deep integrity checks run off the main
+ * thread in CheckHealth and auto-rebuild damaged FTS tables).
+ */
 export function ensureSearchIndexes(db: Database.Database): string[] {
   const rebuilt: string[] = [];
   for (const [table, trigger] of [
@@ -164,16 +169,6 @@ export function ensureSearchIndexes(db: Database.Database): string[] {
     const definition = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
       .get(trigger) as { sql: string } | undefined;
     if (!definition?.sql.includes("WHERE rowid = OLD.id")) {
-      rebuildSearchIndex(db, table);
-      rebuilt.push(table);
-      continue;
-    }
-    try {
-      db.prepare(`INSERT INTO ${table}(${table}) VALUES('integrity-check')`).run();
-    } catch (error) {
-      // Lock/I/O errors do not establish damaged search content.
-      const code = (error as { code?: string }).code || "";
-      if (!code.startsWith("SQLITE_CORRUPT")) throw error;
       rebuildSearchIndex(db, table);
       rebuilt.push(table);
     }

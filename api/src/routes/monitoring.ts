@@ -98,22 +98,22 @@ router.post("/config", async (req, res) => {
 });
 
 // Start monitoring
-router.post("/start", (_, res) => {
+router.post("/start", async (_, res) => {
   try {
-    startMonitoring();
+    await runMonitoringUserWrite(() => startMonitoring());
     res.json({ success: true, message: "Monitoring started" });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(monitoringMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 
 // Stop monitoring
-router.post("/stop", (_, res) => {
+router.post("/stop", async (_, res) => {
   try {
-    stopMonitoring();
+    await runMonitoringUserWrite(() => stopMonitoring());
     res.json({ success: true, message: "Monitoring stopped" });
   } catch (error: any) {
-    res.status(500).json({ detail: error.message });
+    res.status(monitoringMutationHttpStatus(error)).json({ detail: error.message });
   }
 });
 

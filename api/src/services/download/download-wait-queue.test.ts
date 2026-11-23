@@ -712,3 +712,59 @@ test("missing rank shift leaves claimed rows untouched and preserves front enque
     "upgrade-3",
   ]);
 });
+
+test("retrying a failed history job strips transient failure state and preserves canonical identity", async () => {
+  const { retryDownloadQueueItem } = await import("./download-queue-retry.js");
+  const { CommandTrigger } = await import("../commands/command-trigger.js");
+  const { downloadProcessor } = await import("./download-processor.js");
+  const originalProcessQueue = downloadProcessor.processQueue;
+  downloadProcessor.processQueue = async () => {};
+
+  try {
+    const failedJobId = queueModule.CommandQueueManager.push(
+      queueModule.CommandNames.DownloadAlbum,
+      {
+        type: "album",
+        provider: "deezer",
+        providerId: "dz-album-123",
+        releaseGroupMbid: "rg-retry-test",
+        slot: "stereo",
+        acquisitionPlanId: 999999,
+        trackIds: [101, 102],
+        title: "Retry Album",
+        artist: "Bastille",
+        downloadState: { state: "failed", message: "stale error" },
+        downloadImportHandoff: { stagedDir: "/tmp/old" },
+        authHold: { reason: "expired" },
+        failedProvider: "deezer",
+        progress: 42,
+        currentTrack: "Old Track",
+      } as any,
+      "rg-retry-test:stereo",
+    );
+    queueModule.CommandQueueManager.fail(failedJobId, "transient network failure");
+
+    const result = retryDownloadQueueItem(failedJobId, "history");
+    assert.equal(result.status, 200);
+    const queuedId = Number(result.body.jobId);
+    const waitRow = waitQueueModule.DownloadWaitQueue.get(queuedId);
+    assert.ok(waitRow);
+    assert.equal(waitRow.ref_key, "rg-retry-test:stereo");
+    assert.equal(waitRow.provider, "deezer");
+    assert.equal(waitRow.plan_id, null, "non-existent AcquisitionPlans ID must be cleared instead of tripping FK");
+    assert.deepEqual(waitRow.track_ids, [101, 102]);
+    assert.equal(waitRow.trigger, CommandTrigger.Manual);
+
+    const parsedPayload = waitRow.payload as Record<string, unknown>;
+    assert.equal(parsedPayload.downloadState, undefined);
+    assert.equal(parsedPayload.downloadImportHandoff, undefined);
+    assert.equal(parsedPayload.authHold, undefined);
+    assert.equal(parsedPayload.failedProvider, undefined);
+    assert.equal(parsedPayload.progress, undefined);
+    assert.equal(parsedPayload.currentTrack, undefined);
+    assert.equal(parsedPayload.url, "https://www.deezer.com/album/dz-album-123");
+  } finally {
+    downloadProcessor.processQueue = originalProcessQueue;
+  }
+});
+
