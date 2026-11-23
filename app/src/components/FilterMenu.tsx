@@ -101,10 +101,8 @@ const useStyles = makeStyles({
         ...glassButtonStyles,
         flex: "0 0 auto",
         minWidth: "max-content",
-        "& .fui-Button__content": {
-            whiteSpace: "nowrap",
-            overflowWrap: "normal",
-        },
+        whiteSpace: "nowrap",
+        overflowWrap: "normal",
     },
     activeTriggerButton: {
         color: tokens.colorBrandForeground1,

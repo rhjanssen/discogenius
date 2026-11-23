@@ -1500,7 +1500,10 @@ const AlbumPage = () => {
     if (!albumId) return;
     setDeleteFilesApplying(true);
     try {
-      const result: any = await api.deleteAlbumFiles(albumId, { unmonitor: deleteFilesUnmonitor });
+      const result: any = await api.deleteAlbumFiles(albumId, {
+        unmonitor: deleteFilesUnmonitor,
+        allLibraries: true,
+      });
       toast({
         title: "Album files deleted",
         description: `Removed ${result?.deleted ?? 0} file(s)${result?.unmonitored ? " and unmonitored the album" : ""}.`,

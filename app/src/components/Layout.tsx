@@ -306,6 +306,10 @@ const useStyles = makeStyles({
     "::after": {
       display: "none",
     },
+    "@media (min-width: 1100px)": {
+      position: "static",
+      marginLeft: tokens.spacingHorizontalXS,
+    },
   },
   main: {
     maxWidth: "1320px",
@@ -543,7 +547,7 @@ const Layout = () => {
                   className={({ isActive }) => mergeClasses(
                     styles.navIconLink,
                     styles.navLabeledLink,
-                    isActive && styles.navIconLinkActive,
+                    (isActive || location.pathname === "/library") && styles.navIconLinkActive,
                   )}
                 >
                   <Library24Regular className="dg-nav-icon-regular" aria-hidden="true" />

@@ -502,7 +502,7 @@ const VideoPage = () => {
         if (!videoId) return;
         setDeleteFilesApplying(true);
         try {
-            const result: any = await api.deleteVideoFiles(videoId);
+            const result: any = await api.deleteVideoFiles(videoId, { allLibraries: true });
             toast({
                 title: "Video files deleted",
                 description: `Removed ${result?.deleted ?? 0} file(s) from disk and tracking.`,

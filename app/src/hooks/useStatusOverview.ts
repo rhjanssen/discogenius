@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
 import { ACTIVITY_REFRESH_EVENT } from "@/utils/appEvents";
 import { useDebouncedQueryInvalidation } from "@/hooks/useDebouncedQueryInvalidation";
+import { ignoreProgressTickEvents } from "@/hooks/useDashboardInfiniteFeed";
 import type {
     ActivityJobContract as ActiveJob,
     CommandStatsContract as CommandStats,
@@ -28,6 +29,7 @@ export function useStatusOverview() {
         ],
         windowEvents: [ACTIVITY_REFRESH_EVENT],
         debounceMs: 500,
+        globalEventFilter: ignoreProgressTickEvents,
     });
 
     const query = useQuery({

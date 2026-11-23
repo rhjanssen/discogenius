@@ -378,7 +378,7 @@ export const TrackInfoDialog: React.FC<TrackInfoDialogProps> = ({
         if (!trackId) return;
         setDeleteApplying(true);
         try {
-            const result: any = await api.deleteTrackFiles(trackId);
+            const result: any = await api.deleteTrackFiles(trackId, { allLibraries: true });
             toast({
                 title: "Track files deleted",
                 description: `Removed ${result?.deleted ?? 0} file(s) from disk and tracking.`,

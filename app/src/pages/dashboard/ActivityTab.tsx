@@ -201,7 +201,10 @@ const ActivityTab = ({
 
     const isRetryableJob = (job: ActivityJob) => {
         const type = job?.type || "";
-        return type.startsWith("Download") || type === "ImportDownload";
+        return type === "DownloadAlbum"
+            || type === "DownloadTrack"
+            || type === "DownloadVideo"
+            || type === "ImportDownload";
     };
 
     const hasSupersedingSuccess = useCallback((job: ActivityJob) => {
@@ -284,7 +287,6 @@ const ActivityTab = ({
             && Number.isFinite(retryJobId)
             && job.error
             && isRetryableJob(job)
-            && !hasMoreInFlightActivity
             && !hasSupersedingSuccess(job);
         const description = formatActivityDescription(job, source);
 

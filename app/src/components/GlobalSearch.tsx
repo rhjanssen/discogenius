@@ -612,7 +612,7 @@ const GlobalSearch = ({ initialQuery = "" }: GlobalSearchProps = {}) => {
                 payload: {
                     ...(item.type === "video"
                         ? { canonicalRecordingId: item.id }
-                        : { provider: "tidal" }),
+                        : {}),
                     providerId: item.providerId,
                     title: item.name,
                     artist: item.subtitle,

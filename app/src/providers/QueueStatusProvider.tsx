@@ -131,11 +131,17 @@ function useQueueStatusContextValue(): QueueStatusContextType {
   const fetchQueueStatus = useCallback(async () => {
     try {
       const nextStatus = await api.getQueueStatus();
+      if (isUnmountedRef.current) return;
       applyQueueStatus(nextStatus);
     } catch (error) {
+      if (isUnmountedRef.current) return;
       console.error("Error fetching queue status:", error);
       statusBackoffRef.current = Math.min(statusBackoffRef.current * 2, 30_000);
+      if (statusTimerRef.current) {
+        clearTimeout(statusTimerRef.current);
+      }
       statusTimerRef.current = setTimeout(() => {
+        statusTimerRef.current = null;
         void fetchQueueStatus();
       }, statusBackoffRef.current);
       setLoading(false);
@@ -297,11 +303,32 @@ function useQueueStatusContextValue(): QueueStatusContextType {
       );
     };
 
+    const handleVisibilityChange = () => {
+      if (isUnmountedRef.current || typeof document === "undefined" || document.visibilityState !== "visible") {
+        return;
+      }
+      if (!eventSourceRef.current || eventSourceRef.current.readyState === EventSource.CLOSED) {
+        if (sseReconnectTimer) {
+          clearTimeout(sseReconnectTimer);
+          sseReconnectTimer = null;
+        }
+        setupProgressStream();
+        void fetchQueueStatus();
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
     setupProgressStream();
     void fetchQueueStatus();
 
     return () => {
       isUnmountedRef.current = true;
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
       if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
       if (statusRefreshTimerRef.current) clearTimeout(statusRefreshTimerRef.current);
       if (sseReconnectTimer) clearTimeout(sseReconnectTimer);

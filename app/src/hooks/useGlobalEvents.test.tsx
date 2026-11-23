@@ -82,4 +82,34 @@ describe("useGlobalEvents", () => {
     });
     expect(streams).toHaveLength(10);
   });
+
+  it("reconnects a closed global stream when the tab becomes visible again", () => {
+    const EventSourceCtor = globalThis.EventSource ?? ({ CLOSED: 2 } as unknown as typeof EventSource);
+    (globalThis as unknown as { EventSource: typeof EventSource }).EventSource = EventSourceCtor;
+
+    const streams: Array<{ close: ReturnType<typeof vi.fn>; readyState: number }> = [];
+    vi.spyOn(api, "createGlobalEventStream").mockImplementation(() => {
+      const stream = { close: vi.fn(), readyState: 1 };
+      streams.push(stream);
+      return stream as unknown as EventSource;
+    });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(<GlobalEventConsumer />);
+    });
+    expect(streams).toHaveLength(1);
+
+    // Simulate stream dying while tab was hidden, then tab returning to visible.
+    streams[0].readyState = EventSource.CLOSED;
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(streams).toHaveLength(2);
+  });
 });
+

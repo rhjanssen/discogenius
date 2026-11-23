@@ -253,7 +253,6 @@ function createManagedEventSource(url: string): ManagedEventSource {
 
 function isExpectedEventSourceClose(eventSource: ManagedEventSource): boolean {
   return eventSource.__discogeniusClosed === true
-    || eventSource.readyState === EventSource.CLOSED
     || (typeof document !== "undefined" && document.visibilityState === "hidden");
 }
 
@@ -922,27 +921,47 @@ class ApiClient {
     });
   }
 
-  async deleteAlbumFiles(albumId: string, options?: { slot?: 'stereo' | 'spatial'; unmonitor?: boolean }) {
+  async deleteAlbumFiles(
+    albumId: string,
+    options?: { slot?: 'stereo' | 'spatial'; unmonitor?: boolean; libraryId?: number; allLibraries?: boolean },
+  ) {
     const params = new URLSearchParams();
     if (options?.slot) params.set('slot', options.slot);
     if (options?.unmonitor) params.set('unmonitor', 'true');
+    if (options?.libraryId !== undefined) params.set('libraryId', String(options.libraryId));
+    if (options?.allLibraries) params.set('allLibraries', 'true');
     const query = params.toString();
     return this.request(`/v1/album/${albumId}/files${query ? `?${query}` : ''}`, { method: 'DELETE' });
   }
 
-  async deleteArtistFiles(artistId: string, options?: { unmonitor?: boolean }) {
+  async deleteArtistFiles(
+    artistId: string,
+    options?: { unmonitor?: boolean; libraryId?: number; allLibraries?: boolean },
+  ) {
     return this.request(`/v1/artist/${artistId}/files`, {
       method: 'DELETE',
-      body: JSON.stringify({ unmonitor: options?.unmonitor === true }),
+      body: JSON.stringify({
+        unmonitor: options?.unmonitor === true,
+        ...(options?.libraryId !== undefined ? { libraryId: options.libraryId } : {}),
+        ...(options?.allLibraries ? { allLibraries: true } : {}),
+      }),
     });
   }
 
-  async deleteTrackFiles(trackId: string) {
-    return this.request(`/v1/track/${trackId}/files`, { method: 'DELETE' });
+  async deleteTrackFiles(trackId: string, options?: { libraryId?: number; allLibraries?: boolean }) {
+    const params = new URLSearchParams();
+    if (options?.libraryId !== undefined) params.set('libraryId', String(options.libraryId));
+    if (options?.allLibraries) params.set('allLibraries', 'true');
+    const query = params.toString();
+    return this.request(`/v1/track/${trackId}/files${query ? `?${query}` : ''}`, { method: 'DELETE' });
   }
 
-  async deleteVideoFiles(videoId: string) {
-    return this.request(`/v1/video/${videoId}/files`, { method: 'DELETE' });
+  async deleteVideoFiles(videoId: string, options?: { libraryId?: number; allLibraries?: boolean }) {
+    const params = new URLSearchParams();
+    if (options?.libraryId !== undefined) params.set('libraryId', String(options.libraryId));
+    if (options?.allLibraries) params.set('allLibraries', 'true');
+    const query = params.toString();
+    return this.request(`/v1/video/${videoId}/files${query ? `?${query}` : ''}`, { method: 'DELETE' });
   }
 
   async getTracks(params?: {
@@ -1069,6 +1088,8 @@ class ApiClient {
     const queryParams = new URLSearchParams();
     if (params?.artistId) queryParams.set('artistId', params.artistId);
     if (params?.albumId) queryParams.set('albumId', params.albumId);
+    if (params?.editionId !== undefined) queryParams.set('editionId', String(params.editionId));
+    if (params?.releaseMbid) queryParams.set('releaseMbid', params.releaseMbid);
     if (params?.libraryRoot) queryParams.set('libraryRoot', params.libraryRoot);
     if (params?.fileTypes?.length) queryParams.set('fileTypes', params.fileTypes.join(','));
     if (params?.sampleLimit) queryParams.set('sampleLimit', params.sampleLimit.toString());
@@ -1769,9 +1790,11 @@ class ApiClient {
     const knownEvents = [
       'command.added', 'command.updated', 'command.deleted', 'queue.cleared',
       'history.added',
-      'artist.scanned', 'artist.refresh.complete', 'config.updated',
+      'artist.scanned', 'artist.refresh.complete', 'artist.curated', 'config.updated',
       'library.updated',
-      'file.added', 'file.deleted', 'file.upgraded'
+      'file.added', 'file.deleted', 'file.upgraded',
+      'import.artists.progress',
+      'provider.auth.changed',
     ];
 
     knownEvents.forEach(eventType => {

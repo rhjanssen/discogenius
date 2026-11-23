@@ -170,7 +170,7 @@ export const AboutSettingsSection = ({
                             <Badge appearance="filled" color={versionStatusColor}>{versionStatusLabel}</Badge>
                             <Text size={200} className={styles.hint}>{versionHint}</Text>
                             {releaseInfo?.latestReleaseUrl && (
-                                <Link href={releaseInfo.latestReleaseUrl} target="_blank" className={styles.link}>
+                                <Link href={releaseInfo.latestReleaseUrl} target="_blank" rel="noopener noreferrer" className={styles.link}>
                                     Open latest release notes
                                 </Link>
                             )}

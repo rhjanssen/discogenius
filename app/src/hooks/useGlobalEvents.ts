@@ -65,6 +65,28 @@ const initStream = () => {
     );
 };
 
+let visibilityListenerAttached = false;
+
+const handleVisibilityChange = () => {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+        return;
+    }
+    if (globalSubscribers.size === 0) {
+        return;
+    }
+    if (!globalEventSource || globalEventSource.readyState === EventSource.CLOSED) {
+        if (globalEventSource) {
+            globalEventSource.close();
+            globalEventSource = null;
+        }
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        initStream();
+    }
+};
+
 export function useGlobalEvents(interestEvents?: string[]) {
     const [lastEvent, setLastEvent] = useState<GlobalEventPayload | null>(null);
     const isDisabled = Array.isArray(interestEvents) && interestEvents.length === 0;
@@ -93,6 +115,11 @@ export function useGlobalEvents(interestEvents?: string[]) {
         // Subscribe to global broadcasts
         globalSubscribers.add(handleEvent);
 
+        if (!visibilityListenerAttached && typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+            visibilityListenerAttached = true;
+        }
+
         // Start stream after subscribing so initStream sees at least one consumer.
         if (!globalEventSource) {
             initStream();
@@ -104,6 +131,10 @@ export function useGlobalEvents(interestEvents?: string[]) {
 
             // If we are the last subscriber, close the stream to save resources
             if (globalSubscribers.size === 0) {
+                if (visibilityListenerAttached && typeof document !== 'undefined') {
+                    document.removeEventListener('visibilitychange', handleVisibilityChange);
+                    visibilityListenerAttached = false;
+                }
                 if (reconnectTimer) {
                     clearTimeout(reconnectTimer);
                     reconnectTimer = null;

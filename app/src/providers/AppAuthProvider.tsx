@@ -15,8 +15,11 @@ export function AppAuthProvider({ children }: { children: React.ReactNode }) {
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(() => {
     try {
-      return localStorage.getItem(LOCALSTORAGE_APP_AUTH_TOKEN_KEY);
+      const initial = localStorage.getItem(LOCALSTORAGE_APP_AUTH_TOKEN_KEY);
+      api.setAuthToken(initial);
+      return initial;
     } catch {
+      api.setAuthToken(null);
       return null;
     }
   });
@@ -40,6 +43,7 @@ export function AppAuthProvider({ children }: { children: React.ReactNode }) {
           } catch {
             // ignore
           }
+          api.setAuthToken(null);
           setToken(null);
         }
       }
@@ -69,6 +73,7 @@ export function AppAuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         // ignore
       }
+      api.setAuthToken(response.token);
       setToken(response.token);
       return;
     }
@@ -82,6 +87,7 @@ export function AppAuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // ignore
     }
+    api.setAuthToken(null);
     setToken(null);
   }, []);
 
