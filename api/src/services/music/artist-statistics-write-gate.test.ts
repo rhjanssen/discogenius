@@ -34,9 +34,9 @@ for (const change of ["album", "deleted artist"] as const) test(`async statistic
   let acquired!: () => void; let release!: () => void;
   const ready = new Promise<void>(resolve => { acquired = resolve; });
   const blocker = withSqliteWriteGate(async () => {
-    if (change === "album") db.prepare("INSERT INTO Albums(mbid,artist_mbid,title) VALUES('album-two','artist','Two')").run();
     acquired(); await new Promise<void>(resolve => { release = resolve; });
-    if (change === "deleted artist") db.prepare("DELETE FROM ArtistMetadata WHERE id=?").run(id);
+    if (change === "album") db.prepare("INSERT INTO Albums(mbid,artist_mbid,title) VALUES('album-two','artist','Two')").run();
+    else db.prepare("DELETE FROM ArtistMetadata WHERE id=?").run(id);
   }, "test:statistics-competing-writer");
   await ready;
   let settled = false;

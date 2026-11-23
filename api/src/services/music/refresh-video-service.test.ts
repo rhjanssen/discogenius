@@ -1263,15 +1263,18 @@ test("planned video repair removes a stale studio link and commits its live repl
   await refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
   assert.deepEqual(links(), [{ target_recording_id: liveId }]);
 
-  // Deleting a recording while relation writes are queued must be a safe no-op via conditional WHERE EXISTS.
+  // Hold the write gate across setImmediate so planProviderVideoAudioRelations captures
+  // transientVideoId before the competing writer deletes it while videos:relation-batch waits.
   dbModule.db.prepare("DELETE FROM RecordingRelations WHERE source_recording_id = ?").run(videoId);
-  const transientVideoId = insertCanonicalVideo({ mbid: "transient-video", title: "Pompeii (Live)", variant: "live", lengthMs: 232000 });
+  seedStudioAudio({ recordingMbid: "transient-flaws-audio", title: "Flaws", lengthMs: 218000 });
+  const transientVideoId = insertCanonicalVideo({ mbid: "transient-video", title: "Flaws", variant: "official", lengthMs: 218000 });
   seedAcceptedProviderVideoMatch(dbModule.db, {
-    provider: "apple-music", providerVideoId: "transient-live-video",
-    providerEditionId: "planned-live-offer", recordingId: transientVideoId, title: "Pompeii (Live)", durationMs: 232000,
+    provider: "tidal", providerVideoId: "transient-flaws-video",
+    recordingId: transientVideoId, title: "Flaws", durationMs: 218000,
   });
   const refresh = refreshVideoModule.RefreshVideoService.upsertArtistVideosInBatches("artist-mbid", []);
-  await dbModule.withSqliteWriteGate(() => {
+  await dbModule.withSqliteWriteGate(async () => {
+    await new Promise<void>((resolve) => setImmediate(resolve));
     dbModule.db.prepare("DELETE FROM Recordings WHERE id = ?").run(transientVideoId);
   }, "test:delete-transient-video");
   await refresh;
