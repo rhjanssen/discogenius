@@ -379,7 +379,7 @@ export class ArtistStatisticsService {
     return rows;
   }
 
-  /** Commands plan outside the write gate, then admit a bounded projection batch. */
+  /** Compute and persist artist statistics in bounded write-gated batches. */
   static async refreshAsync(
     artistIds?: Array<string | number | null | undefined>,
     options?: {
@@ -395,9 +395,8 @@ export class ArtistStatisticsService {
       if (options?.yieldToEventLoop) {
         await options.yieldToEventLoop();
       }
-      const batch = calculateArtistStatisticsChunk(ids);
       const persisted = await withSqliteWriteGate(
-        () => this.persistRows(batch, false),
+        () => this.persistRows(calculateArtistStatisticsChunk(ids), false),
         "statistics:projection-batch",
       );
       rows.push(...persisted);
