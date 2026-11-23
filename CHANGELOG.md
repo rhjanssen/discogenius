@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.27.2] - 2026-11-23
+
+### Fixed
+
+- The app no longer freezes for up to a minute during refreshes. Background statistics and video-link updates held the database write lock far too long, so other work (curation, downloads, the UI) had to wait or hit "database is locked" errors. Album review writes now also wait their turn instead of failing (#178).
+- Artist statistics such as album counts can no longer be saved stale when another change lands during a refresh (#182).
+
 ## [2.27.1] - 2026-11-23
 
 ### Fixed
