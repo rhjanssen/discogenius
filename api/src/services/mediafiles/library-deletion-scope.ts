@@ -1,6 +1,6 @@
 import { db } from "../../database.js";
 import { getCurrentLibraryRootPath } from "./library-paths.js";
-import { normalizeComparablePath } from "./path-utils.js";
+import { isCaseInsensitivePath, normalizeComparablePath } from "./path-utils.js";
 
 /**
  * A deletion always targets exactly one configured Library, or is an explicitly
@@ -133,20 +133,25 @@ export function deletionScopeFromRequest(input: {
  * containment alone is not ownership when several Libraries share a root, so
  * callers must treat anything other than a single match as unresolved.
  */
+function pathIsInsideRootCaseAware(filePath: string, rootPath: string): boolean {
+  const caseInsensitive = process.platform === "win32"
+    || isCaseInsensitivePath(rootPath)
+    || isCaseInsensitivePath(filePath);
+  const normalizedPath = normalizeComparablePath(filePath, caseInsensitive);
+  const normalizedRoot = normalizeComparablePath(rootPath, caseInsensitive);
+  if (!normalizedPath || !normalizedRoot) return false;
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
 export function librariesOwningPath(filePath: string): number[] {
-  const normalizedPath = normalizeComparablePath(filePath);
-  if (!normalizedPath) return [];
+  if (!String(filePath || "").trim()) return [];
 
   const libraries = db.prepare(`
     SELECT id, root_path FROM Libraries WHERE enabled = 1 ORDER BY id
   `).all() as Array<{ id: number; root_path: string }>;
 
   return libraries
-    .filter((library) => {
-      const root = normalizeComparablePath(library.root_path);
-      if (!root) return false;
-      return normalizedPath === root || normalizedPath.startsWith(`${root}/`);
-    })
+    .filter((library) => pathIsInsideRootCaseAware(filePath, library.root_path))
     .map((library) => library.id);
 }
 
@@ -183,8 +188,7 @@ export function scopeIncludesFile(scope: DeletionScope, row: ScopedFileRow): boo
  * an unknown or ambiguous root yields false.
  */
 export function pathIsInsideScopeRoot(scope: DeletionScope, resolvedPath: string): boolean {
-  const normalizedPath = normalizeComparablePath(resolvedPath);
-  if (!normalizedPath) return false;
+  if (!String(resolvedPath || "").trim()) return false;
 
   const roots = scope.kind === "all-libraries"
     ? (db.prepare("SELECT root_path FROM Libraries WHERE enabled = 1")
@@ -192,20 +196,17 @@ export function pathIsInsideScopeRoot(scope: DeletionScope, resolvedPath: string
     : (db.prepare("SELECT root_path FROM Libraries WHERE id = ?")
         .all(scope.libraryId) as Array<{ root_path: string }>).map((row) => row.root_path);
 
-  const configuredRoots = roots
-    .map((root) => normalizeComparablePath(root))
-    .filter((root) => root.length > 0);
+  const configuredRoots = roots.filter((root) => String(root || "").trim().length > 0);
 
   // No Library rows at all: the installation has no Library boundary yet, so
   // fall back to the configured media roots the paths were resolved against.
   const candidateRoots = configuredRoots.length > 0
     ? configuredRoots
     : (["music", "spatial", "videos"] as const)
-      .map((key) => normalizeComparablePath(getCurrentLibraryRootPath(key)))
-      .filter((root) => root.length > 0);
+      .map((key) => getCurrentLibraryRootPath(key))
+      .filter((root) => String(root || "").trim().length > 0);
 
-  return candidateRoots.some((root) =>
-    normalizedPath === root || normalizedPath.startsWith(`${root}/`));
+  return candidateRoots.some((root) => pathIsInsideRootCaseAware(resolvedPath, root));
 }
 
 export function describeScope(scope: DeletionScope): string {

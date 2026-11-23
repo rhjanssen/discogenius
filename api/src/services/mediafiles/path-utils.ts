@@ -39,7 +39,9 @@ export function isCaseInsensitivePath(targetPath: string | null | undefined): bo
     const resolved = path.resolve(String(targetPath));
 
     for (const [overridePath, isInsensitive] of caseSensitivityOverrides) {
-        if (resolved === overridePath || resolved.startsWith(`${overridePath}${path.sep}`) || resolved.startsWith(`${overridePath}/`)) {
+        const cmpResolved = isInsensitive ? resolved.toLowerCase() : resolved;
+        const cmpOverride = isInsensitive ? overridePath.toLowerCase() : overridePath;
+        if (cmpResolved === cmpOverride || cmpResolved.startsWith(`${cmpOverride}${path.sep}`) || cmpResolved.startsWith(`${cmpOverride}/`)) {
             return isInsensitive;
         }
     }
@@ -69,6 +71,7 @@ export function isCaseInsensitivePath(targetPath: string | null | undefined): bo
         }
 
         let isInsensitive = false;
+        let probed = true;
         const entries = fs.readdirSync(dir);
         const entryWithLetter = entries.find((e) => /[a-zA-Z]/.test(e));
         if (entryWithLetter) {
@@ -79,8 +82,9 @@ export function isCaseInsensitivePath(targetPath: string | null | undefined): bo
                 isInsensitive = fs.existsSync(path.join(dir, swapped));
             }
         } else {
-            const probeName = `.case_probe_${process.pid}_${Date.now()}`;
-            const probeSwapped = `.CASE_PROBE_${process.pid}_${Date.now()}`;
+            const stamp = Date.now();
+            const probeName = `.case_probe_${process.pid}_${stamp}`;
+            const probeSwapped = `.CASE_PROBE_${process.pid}_${stamp}`;
             const probePath = path.join(dir, probeName);
             try {
                 fs.mkdirSync(probePath);
@@ -90,11 +94,14 @@ export function isCaseInsensitivePath(targetPath: string | null | undefined): bo
                     try { fs.rmdirSync(probePath); } catch { /* ignore cleanup error */ }
                 }
             } catch {
+                probed = false;
                 isInsensitive = process.platform === "darwin";
             }
         }
 
-        caseSensitivityCache.set(dir, isInsensitive);
+        if (probed) {
+            caseSensitivityCache.set(dir, isInsensitive);
+        }
         return isInsensitive;
     } catch {
         return process.platform === "darwin";
@@ -217,11 +224,39 @@ export function resolvedPathIsInsideRoot(
  * exists to make the SQL prefix filter a correct superset rather than a filter
  * that quietly excludes everything.
  */
-export function comparablePathColumnSql(column: string): string {
+export function comparablePathColumnSql(column: string, caseInsensitive = process.platform === "win32"): string {
     const separatorNormalized = `REPLACE(${column}, '\\', '/')`;
-    return process.platform === "win32"
+    return caseInsensitive
         ? `LOWER(${separatorNormalized})`
         : separatorNormalized;
+}
+
+/**
+ * True when two paths resolve to the exact same directory link (same path or a
+ * case-insensitive alias of one entry), as opposed to two distinct hard links
+ * to the same inode. Unlinking one alias of a single link destroys the file.
+ */
+export function isSameFilesystemLink(left: string, right: string): boolean {
+    const resolvedLeft = path.resolve(left);
+    const resolvedRight = path.resolve(right);
+    if (resolvedLeft === resolvedRight) return true;
+    if (!sameDirectoryEntry(resolvedLeft, resolvedRight)) return false;
+
+    const leftParent = path.dirname(resolvedLeft);
+    const rightParent = path.dirname(resolvedRight);
+    if (!sameDirectoryEntry(leftParent, rightParent)) return false;
+
+    const leftName = path.basename(resolvedLeft);
+    const rightName = path.basename(resolvedRight);
+    if (leftName === rightName) return true;
+
+    try {
+        const entries = fs.readdirSync(leftParent);
+        // Two distinct directory entries exist only when both literal names are present.
+        return !(entries.includes(leftName) && entries.includes(rightName));
+    } catch {
+        return true;
+    }
 }
 
 /**

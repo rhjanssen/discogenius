@@ -338,3 +338,76 @@ test("moveArtist rejects overlapping artist folders", () => {
     validationModule.RequestValidationError,
   );
 });
+
+test("executeMoveArtistJob does not copy+delete the source folder when renameSync fails with a non-EXDEV error", (t) => {
+  const seeded = seedArtistTrack({ artistPath: "Old Artist" });
+  moveArtistServiceModule.MoveArtistService.moveArtist({
+    artistId: "artist-one-mbid",
+    path: "New Artist",
+    moveFiles: true,
+  });
+
+  t.mock.method(fs, "renameSync", () => {
+    const err = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+    err.code = "EACCES";
+    throw err;
+  });
+
+  assert.throws(
+    () => moveArtistServiceModule.MoveArtistService.executeMoveArtistJob({
+      artistId: "artist-one-mbid",
+      sourcePath: "Old Artist",
+      destinationPath: "New Artist",
+    }),
+    /EACCES/,
+  );
+
+  assert.equal(fs.existsSync(seeded.trackPath), true, "source track must survive non-EXDEV rename error");
+  assert.equal(fs.existsSync(path.join(seeded.musicRoot, "New Artist")), false, "destination must not be created via fallback copy");
+});
+
+test("executeMoveArtistJob handles case-only artist folder rename cleanly on case-insensitive mounts", (t) => {
+  const seeded = seedArtistTrack({ artistPath: "old artist" });
+  const sourceDir = path.join(seeded.musicRoot, "old artist");
+  const destinationDir = path.join(seeded.musicRoot, "Old Artist");
+
+  moveArtistServiceModule.MoveArtistService.moveArtist({
+    artistId: "artist-one-mbid",
+    path: "Old Artist",
+    moveFiles: true,
+  });
+
+  // Simulate case-insensitive ZFS: existsSync and lstatSync on destinationDir alias sourceDir.
+  const origExists = fs.existsSync.bind(fs);
+  const origLstat = fs.lstatSync.bind(fs);
+  const origReaddir = fs.readdirSync.bind(fs);
+  t.mock.method(fs, "existsSync", (target: fs.PathLike) => {
+    if (path.resolve(String(target)) === path.resolve(destinationDir)) {
+      return origExists(sourceDir) || origExists(destinationDir);
+    }
+    return origExists(target);
+  });
+  t.mock.method(fs, "lstatSync", ((target: fs.PathLike, options?: any) => {
+    if (path.resolve(String(target)) === path.resolve(destinationDir) && !origExists(destinationDir) && origExists(sourceDir)) {
+      return origLstat(sourceDir, options);
+    }
+    return origLstat(target, options);
+  }) as typeof fs.lstatSync);
+  t.mock.method(fs, "readdirSync", ((target: fs.PathLike, options?: any) => {
+    if (path.resolve(String(target)) === path.resolve(destinationDir) && !origExists(destinationDir) && origExists(sourceDir)) {
+      return origReaddir(sourceDir, options);
+    }
+    return origReaddir(target, options);
+  }) as typeof fs.readdirSync);
+
+  const result = moveArtistServiceModule.MoveArtistService.executeMoveArtistJob({
+    artistId: "artist-one-mbid",
+    sourcePath: "old artist",
+    destinationPath: "Old Artist",
+  });
+
+  assert.equal(result.movedRoots, 1);
+  assert.equal(result.updatedFiles, 1);
+  assert.equal(origExists(path.join(destinationDir, "Album One", "01 - Track One.flac")), true);
+});
+
