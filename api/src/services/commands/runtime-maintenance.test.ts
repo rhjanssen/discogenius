@@ -281,3 +281,80 @@ test("housekeeping repairs TrackFiles rows whose library_root stored a label key
   }
 });
 
+test("repairTrackFileLibraryRootLabels never writes escaping relative paths for stale library_id or outside files (#184)", async () => {
+  const prevMusicPath = process.env.MUSIC_PATH;
+  const musicRoot = path.join(root, "containment-music-root");
+  const staleRoot = path.join(root, "containment-stale-root");
+  const customRoot = path.join(root, "containment-custom-root");
+  const outsideRoot = path.join(root, "containment-outside-root");
+  process.env.MUSIC_PATH = musicRoot;
+  try {
+    const fileUnderMusic = path.join(musicRoot, "Artist", "Album", "01 - StaleLib.flac");
+    const fileUnderCustom = path.join(customRoot, "Artist", "Album", "02 - MismatchedLabel.flac");
+    const fileOutside = path.join(outsideRoot, "Artist", "Album", "03 - Outside.flac");
+    for (const filePath of [fileUnderMusic, fileUnderCustom, fileOutside]) {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, "fixture");
+    }
+
+    const metaProfileId = (database.db.prepare("SELECT id FROM MetadataProfiles LIMIT 1").get() as { id: number }).id;
+    const qualityProfileId = (database.db.prepare("SELECT id FROM quality_profiles LIMIT 1").get() as { id: number }).id;
+    const staleLibId = Number(database.db.prepare(`
+      INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id, enabled)
+      VALUES ('Stale Root Lib', ?, ?, ?, 1)
+    `).run(staleRoot, metaProfileId, qualityProfileId).lastInsertRowid);
+    database.db.prepare(`
+      INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id, enabled)
+      VALUES ('Custom Containment Lib', ?, ?, ?, 1)
+    `).run(customRoot, metaProfileId, qualityProfileId);
+
+    // Row 1: stale library_id points to staleRoot, but file actually lives in musicRoot
+    const staleLibRowId = Number(database.db.prepare(`
+      INSERT INTO TrackFiles (
+        library_id, file_path, filename, relative_path, library_root, extension, file_type, library_slot
+      ) VALUES (?, ?, '01 - StaleLib.flac', 'old-rel', 'music', 'flac', 'track', 'stereo')
+    `).run(staleLibId, fileUnderMusic).lastInsertRowid);
+
+    // Row 2: library_id is NULL and label is 'music', but file sits in customRoot
+    const mismatchedLabelRowId = Number(database.db.prepare(`
+      INSERT INTO TrackFiles (
+        file_path, filename, relative_path, library_root, extension, file_type, library_slot
+      ) VALUES (?, '02 - MismatchedLabel.flac', 'old-rel', 'music', 'flac', 'track', 'stereo')
+    `).run(fileUnderCustom).lastInsertRowid);
+
+    // Row 3: stale library_id points to staleRoot and file sits outside every configured root
+    const outsideRowId = Number(database.db.prepare(`
+      INSERT INTO TrackFiles (
+        library_id, file_path, filename, relative_path, library_root, extension, file_type, library_slot
+      ) VALUES (?, ?, '03 - Outside.flac', 'keep-me', 'music', 'flac', 'track', 'stereo')
+    `).run(staleLibId, fileOutside).lastInsertRowid);
+
+    const repaired = maintenance.repairTrackFileLibraryRootLabels();
+    assert.equal(repaired, 2);
+
+    const row1 = database.db.prepare(
+      "SELECT library_root, relative_path FROM TrackFiles WHERE id = ?",
+    ).get(staleLibRowId) as { library_root: string; relative_path: string };
+    assert.equal(row1.library_root, musicRoot);
+    assert.equal(row1.relative_path, path.join("Artist", "Album", "01 - StaleLib.flac"));
+    assert.equal(row1.relative_path.startsWith(".."), false);
+
+    const row2 = database.db.prepare(
+      "SELECT library_root, relative_path FROM TrackFiles WHERE id = ?",
+    ).get(mismatchedLabelRowId) as { library_root: string; relative_path: string };
+    assert.equal(row2.library_root, customRoot);
+    assert.equal(row2.relative_path, path.join("Artist", "Album", "02 - MismatchedLabel.flac"));
+    assert.equal(row2.relative_path.startsWith(".."), false);
+
+    const row3 = database.db.prepare(
+      "SELECT library_root, relative_path FROM TrackFiles WHERE id = ?",
+    ).get(outsideRowId) as { library_root: string; relative_path: string };
+    assert.equal(row3.library_root, "music");
+    assert.equal(row3.relative_path, "keep-me");
+  } finally {
+    database.db.prepare("DELETE FROM Libraries WHERE name IN ('Stale Root Lib', 'Custom Containment Lib')").run();
+    if (prevMusicPath === undefined) delete process.env.MUSIC_PATH;
+    else process.env.MUSIC_PATH = prevMusicPath;
+  }
+});
+

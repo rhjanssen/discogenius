@@ -3486,18 +3486,53 @@ export class LibraryFilesService {
     ".wma", ".ape", ".mp2", ".mp4", ".m4v", ".mkv", ".mov", ".webm",
   ]);
 
+  private static directorySqlPrefixBounds(
+    directory: string,
+    caseInsensitive: boolean,
+  ): { lower: string; upper: string } | null {
+    const slashNormalized = normalizeComparablePath(directory, false);
+    if (!slashNormalized) return null;
+    if (!caseInsensitive) {
+      return { lower: `${slashNormalized}/`, upper: `${slashNormalized}0` };
+    }
+    // SQLite LOWER() folds ASCII A-Z only, while case-insensitive filesystems
+    // fold Unicode too. Narrow the SQL range to the longest pure-ASCII leading
+    // path prefix so non-ASCII uppercase or mixed-case folders (É, Ö, İ, ...)
+    // stay inside the indexed range, then confirm exact membership in JS.
+    const segments = slashNormalized.split("/");
+    const firstNonAsciiIndex = segments.findIndex((segment) => {
+      for (let i = 0; i < segment.length; i++) {
+        if (segment.charCodeAt(i) > 0x7f) return true;
+      }
+      return false;
+    });
+    const asciiSegments = firstNonAsciiIndex === -1 ? segments : segments.slice(0, firstNonAsciiIndex);
+    if (asciiSegments.length === 0) return null;
+    const asciiPrefix = asciiSegments
+      .join("/")
+      .replace(/[A-Z]/g, (char) => char.toLowerCase());
+    return { lower: `${asciiPrefix}/`, upper: `${asciiPrefix}0` };
+  }
+
   private static directoryHasMonitoredAudio(directory: string): boolean {
     const caseInsensitive = process.platform === "win32" || isCaseInsensitivePath(directory);
     const normalizedDir = normalizeComparablePath(directory, caseInsensitive);
     if (!normalizedDir) return false;
     const comparableCol = comparablePathColumnSql("lf.file_path", caseInsensitive);
-    const rows = db.prepare(`
-      SELECT lf.file_path, lf.library_id, lf.album_edition_id
-      FROM TrackFiles lf
-      WHERE lf.file_type IN ('track', 'video')
-        AND ${comparableCol} >= ?
-        AND ${comparableCol} < ?
-    `).all(`${normalizedDir}/`, `${normalizedDir}0`) as Array<{ file_path: string; library_id: number | null; album_edition_id: number | null }>;
+    const bounds = this.directorySqlPrefixBounds(directory, caseInsensitive);
+    const rows = (bounds
+      ? db.prepare(`
+          SELECT lf.file_path, lf.library_id, lf.album_edition_id
+          FROM TrackFiles lf
+          WHERE lf.file_type IN ('track', 'video')
+            AND ${comparableCol} >= ?
+            AND ${comparableCol} < ?
+        `).all(bounds.lower, bounds.upper)
+      : db.prepare(`
+          SELECT lf.file_path, lf.library_id, lf.album_edition_id
+          FROM TrackFiles lf
+          WHERE lf.file_type IN ('track', 'video')
+        `).all()) as Array<{ file_path: string; library_id: number | null; album_edition_id: number | null }>;
     return rows.some((row) => {
       if (normalizeComparablePath(path.dirname(row.file_path), caseInsensitive) !== normalizedDir) return false;
       if (row.library_id == null || row.album_edition_id == null) return false;
@@ -3515,15 +3550,25 @@ export class LibraryFilesService {
     const normalizedDir = normalizeComparablePath(directory, caseInsensitive);
     if (!normalizedDir) return false;
     const comparableCol = comparablePathColumnSql("file_path", caseInsensitive);
-    const rows = db.prepare(`
-      SELECT file_path
-      FROM TrackFiles
-      WHERE file_type IN ('track', 'video')
-        AND ${comparableCol} >= ?
-        AND ${comparableCol} < ?
-    `).all(`${normalizedDir}/`, `${normalizedDir}0`) as Array<{ file_path: string }>;
+    const bounds = this.directorySqlPrefixBounds(directory, caseInsensitive);
+    const rows = (bounds
+      ? db.prepare(`
+          SELECT file_path
+          FROM TrackFiles
+          WHERE file_type IN ('track', 'video')
+            AND ${comparableCol} >= ?
+            AND ${comparableCol} < ?
+        `).all(bounds.lower, bounds.upper)
+      : db.prepare(`
+          SELECT file_path
+          FROM TrackFiles
+          WHERE file_type IN ('track', 'video')
+        `).all()) as Array<{ file_path: string }>;
     if (includeSubdirectories) {
-      return rows.length > 0;
+      return rows.some((row) => {
+        const rowDir = normalizeComparablePath(path.dirname(row.file_path), caseInsensitive);
+        return rowDir === normalizedDir || rowDir.startsWith(`${normalizedDir}/`);
+      });
     }
     return rows.some((row) => normalizeComparablePath(path.dirname(row.file_path), caseInsensitive) === normalizedDir);
   }
@@ -3735,19 +3780,23 @@ export class LibraryFilesService {
       const caseInsensitive = process.platform === "win32" || isCaseInsensitivePath(directory);
       const normalizedDir = normalizeComparablePath(directory, caseInsensitive);
       const comparableCol = comparablePathColumnSql("file_path", caseInsensitive);
+      const bounds = this.directorySqlPrefixBounds(directory, caseInsensitive);
+      const trackedRows = (bounds
+        ? db.prepare(`
+            SELECT file_path FROM TrackFiles
+            WHERE ${comparableCol} >= ? AND ${comparableCol} < ?
+          `).all(bounds.lower, bounds.upper)
+        : db.prepare(`SELECT file_path FROM TrackFiles`).all()) as Array<{ file_path: string }>;
       const tracked = new Set(
-        (db.prepare(`
-          SELECT file_path FROM TrackFiles
-          WHERE ${comparableCol} >= ? AND ${comparableCol} < ?
-        `).all(`${normalizedDir}/`, `${normalizedDir}0`) as Array<{ file_path: string }>)
+        trackedRows
           .filter((row) => normalizeComparablePath(path.dirname(row.file_path), caseInsensitive) === normalizedDir)
-          .map((row) => normalizeResolvedPath(row.file_path)),
+          .map((row) => normalizeResolvedPath(row.file_path, caseInsensitive)),
       );
       try {
         for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
           if (!entry.isFile()) continue;
           const fullPath = path.join(directory, entry.name);
-          if (tracked.has(normalizeResolvedPath(fullPath))) continue;
+          if (tracked.has(normalizeResolvedPath(fullPath, caseInsensitive))) continue;
           const ext = path.extname(entry.name).toLowerCase();
           if (!this.LEFTOVER_MEDIA_EXTENSIONS.has(ext)) continue;
           try {
