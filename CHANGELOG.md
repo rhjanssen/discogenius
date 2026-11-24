@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.27.4] - 2026-11-24
+
+### Changed
+- perf(catalog): stop mirroring unmonitored catalogs, scope TrackSearch & plans, add bounded pruning (#179) (#186)
+- fix(mediafiles,health): fix Unicode case-fold prune guard, album supersede keys, and root repair containment (#184) (#185)
 ## [2.27.3] - 2026-11-23
 
 ### Changed
