@@ -94,9 +94,15 @@ export class CurationService {
       // the writer for 57 s on a large catalogue and failed every worker write
       // that waited past its 15 s limit.
       const scope = { libraryArtistIds };
-      for (const editionId of curation.candidateEditionIds({ libraryId: library.id, scope })) {
-        await planEdition(library.id, editionId, "curation:edition-plan");
-      }
+      // Evaluate candidate editions read-only outside the write gate so
+      // unselected editions never materialize AcquisitionPlans rows or contend
+      // on SQLite writes. Only editions curation selects persist plans.
+      const candidateIds = curation.candidateEditionIds({ libraryId: library.id, scope });
+      const precomputedPlans = await curation.evaluateCandidatePlansAsync({
+        libraryId: library.id,
+        editionIds: candidateIds,
+        providerPriority,
+      });
       const curated = await withSqliteWriteGate(() => curation.curateLibrary({
         libraryId: library.id,
         curationVersion: 1,
@@ -104,6 +110,7 @@ export class CurationService {
         providerPriority,
         scope,
         planning: "caller",
+        precomputedPlans,
       }), "curation:audio-library");
       for (const editionId of curated.selectedEditionIds) {
         await planEdition(library.id, editionId, "curation:replan-selected");

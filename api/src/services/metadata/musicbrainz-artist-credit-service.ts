@@ -1,6 +1,30 @@
 import { db, runGatedChunkedWrite } from "../../database.js";
+import { getConfigSection } from "../config/config.js";
 import { CanonicalCatalogRepository } from "../catalog/canonical-catalog-repository.js";
 import type { CatalogArtistCreditReleaseGroup } from "../catalog/catalog-provider.js";
+import { getMusicBrainzReleaseGroupIncludeDecision } from "./musicbrainz-release-group-filter.js";
+
+const VARIOUS_ARTISTS_MBID = "89ad4ac3-39f7-470e-963a-56509c546377";
+
+function isVariousArtistsCredit(credit: { artistId?: string | null; name?: string | null; artistName?: string | null }): boolean {
+  const mbid = String(credit.artistId || "").trim().toLowerCase();
+  if (mbid === VARIOUS_ARTISTS_MBID) return true;
+  const canonical = String(credit.artistName || credit.name || "").trim().toLowerCase();
+  return canonical === "various artists";
+}
+
+function isReleaseGroupPreservedLocally(releaseGroupMbid: string): boolean {
+  return Boolean(db.prepare(`
+    SELECT 1
+    FROM Albums album
+    WHERE album.mbid = ?
+      AND (
+        EXISTS (SELECT 1 FROM LibraryAlbums la WHERE la.release_group_id = album.id)
+        OR EXISTS (SELECT 1 FROM TrackFiles tf WHERE tf.release_group_id = album.id OR tf.canonical_release_group_mbid = album.mbid)
+      )
+    LIMIT 1
+  `).get(releaseGroupMbid));
+}
 
 export type CanonicalAlbumArtist = {
   artistId: string;
@@ -242,7 +266,36 @@ export class MusicBrainzArtistCreditService {
     artistMbids: string[];
   }> {
     const seenArtists = new Set<string>();
-    const releaseGroups = await fetchCreditedReleaseGroups(artistMbid);
+    const rawReleaseGroups = await fetchCreditedReleaseGroups(artistMbid);
+    const filtering = getConfigSection("filtering");
+    const normalizedArtistMbid = String(artistMbid || "").trim().toLowerCase();
+
+    // Filter credited release groups BEFORE ingesting them into SQLite:
+    // never copy Various Artists compilations or release-type-excluded
+    // collaborations wholesale unless the release group is already monitored
+    // or file-backed in the user's library.
+    const releaseGroups: Array<{ releaseGroup: MusicBrainzReleaseGroup; releaseGroupMbid: string; credits: MusicBrainzArtistCredit[] }> = [];
+    for (const releaseGroup of rawReleaseGroups) {
+      const releaseGroupMbid = String(releaseGroup.id || "").trim();
+      if (!releaseGroupMbid) continue;
+      const credits = parseArtistCredits(releaseGroup["artist-credit"], artistMbid);
+      if (credits.length === 0) continue;
+
+      const owner = credits[0];
+      const isOwnPrimary = owner.artistId.trim().toLowerCase() === normalizedArtistMbid;
+      if (!isOwnPrimary) {
+        const preserved = isReleaseGroupPreservedLocally(releaseGroupMbid);
+        if (!preserved) {
+          if (isVariousArtistsCredit(owner)) continue;
+          const decision = getMusicBrainzReleaseGroupIncludeDecision({
+            primary_type: releaseGroup["primary-type"] || null,
+            secondary_types: releaseGroup["secondary-types"] || [],
+          }, filtering);
+          if (!decision.include) continue;
+        }
+      }
+      releaseGroups.push({ releaseGroup, releaseGroupMbid, credits });
+    }
 
     // A prolific artist's credited catalogue is hundreds of release groups and
     // roughly ten statements each. Chunked, and taking the process-global gate
@@ -251,18 +304,8 @@ export class MusicBrainzArtistCreditService {
     // lease heartbeats) *and* get to interleave, rather than waiting out one
     // artist's entire catalogue. Each release group is an idempotent upsert, so
     // committing between chunks is safe.
-    await runGatedChunkedWrite(releaseGroups, (releaseGroup) => {
+    await runGatedChunkedWrite(releaseGroups, ({ releaseGroup, releaseGroupMbid, credits }) => {
       {
-        const releaseGroupMbid = String(releaseGroup.id || "").trim();
-        if (!releaseGroupMbid) {
-          return;
-        }
-
-        const credits = parseArtistCredits(releaseGroup["artist-credit"], artistMbid);
-        if (credits.length === 0) {
-          return;
-        }
-
         for (const credit of credits) {
           ensureArtist(credit);
           seenArtists.add(credit.artistId);

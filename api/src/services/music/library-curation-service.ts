@@ -121,6 +121,16 @@ function releaseTypeRankFor(primaryType: string | null): number {
   }
 }
 
+export interface EvaluatedEditionPlanSummary {
+  viable: boolean;
+  bestPlan: {
+    explicit_content: string;
+    coverage: number;
+    quality_tier: string;
+  } | null;
+  attainableRecordingIds: Set<number>;
+}
+
 export class LibraryCurationService {
   private readonly repository: LibraryCurationRepository;
 
@@ -174,8 +184,14 @@ export class LibraryCurationService {
 
     const candidateScopes = new Map<number, LibraryReleaseScopeInput[]>();
     if (libraryArtists.length > 0) {
-      const scopeRows = this.db.prepare(`
-        SELECT DISTINCT
+      const hasReleaseCreditScope = libraryArtists.some(
+        (artist) => artist.credited_scope === "release_credit" || artist.credited_scope === "release_and_track_credit",
+      );
+      const hasTrackCreditScope = libraryArtists.some(
+        (artist) => artist.credited_scope === "release_and_track_credit",
+      );
+      const branches: string[] = [
+        `SELECT DISTINCT
           release.id AS edition_id,
           library_artist.id AS library_artist_id,
           'primary' AS scope_type
@@ -183,11 +199,8 @@ export class LibraryCurationService {
         JOIN ArtistMetadata managed ON managed.id = library_artist.artist_metadata_id
         JOIN Albums release_group ON release_group.artist_metadata_id = managed.id
         JOIN AlbumEditions release ON release.release_group_id = release_group.id
-        WHERE library_artist.library_id = ?${artistFilterSql}
-
-        UNION
-
-        SELECT DISTINCT
+        WHERE library_artist.library_id = ?${artistFilterSql}`,
+        `SELECT DISTINCT
           release.id,
           library_artist.id,
           'primary'
@@ -196,11 +209,14 @@ export class LibraryCurationService {
         JOIN ReleaseGroupArtistCredits credit
           ON credit.artist_id = managed.id AND credit.ordinal = 0
         JOIN AlbumEditions release ON release.release_group_id = credit.release_group_id
-        WHERE library_artist.library_id = ?${artistFilterSql}
-
-        UNION
-
-        SELECT DISTINCT
+        WHERE library_artist.library_id = ?${artistFilterSql}`,
+      ];
+      const params: unknown[] = [
+        input.libraryId, ...artistFilterParams,
+        input.libraryId, ...artistFilterParams,
+      ];
+      if (hasReleaseCreditScope) {
+        branches.push(`SELECT DISTINCT
           credit.edition_id,
           library_artist.id,
           'release_credit'
@@ -208,11 +224,11 @@ export class LibraryCurationService {
         JOIN ArtistMetadata managed ON managed.id = library_artist.artist_metadata_id
         JOIN ReleaseArtistCredits credit ON credit.artist_id = managed.id
         WHERE library_artist.library_id = ?
-          AND library_artist.credited_scope IN ('release_credit', 'release_and_track_credit')${artistFilterSql}
-
-        UNION
-
-        SELECT DISTINCT
+          AND library_artist.credited_scope IN ('release_credit', 'release_and_track_credit')${artistFilterSql}`);
+        params.push(input.libraryId, ...artistFilterParams);
+      }
+      if (hasTrackCreditScope) {
+        branches.push(`SELECT DISTINCT
           track.album_edition_id,
           library_artist.id,
           'track_credit'
@@ -221,13 +237,10 @@ export class LibraryCurationService {
         JOIN TrackArtistCredits credit ON credit.artist_id = managed.id
         JOIN Tracks track ON track.id = credit.track_id
         WHERE library_artist.library_id = ?
-          AND library_artist.credited_scope = 'release_and_track_credit'${artistFilterSql}
-      `).all(
-        input.libraryId, ...artistFilterParams,
-        input.libraryId, ...artistFilterParams,
-        input.libraryId, ...artistFilterParams,
-        input.libraryId, ...artistFilterParams,
-      ) as Array<{
+          AND library_artist.credited_scope = 'release_and_track_credit'${artistFilterSql}`);
+        params.push(input.libraryId, ...artistFilterParams);
+      }
+      const scopeRows = this.db.prepare(branches.join("\nUNION\n")).all(...params) as Array<{
         edition_id: number;
         library_artist_id: number;
         scope_type: LibraryScopeType;
@@ -295,6 +308,92 @@ export class LibraryCurationService {
    * Unscoped is unchanged: every monitored artist in the library, which is what
    * ApplyCuration and the settings-change rebuild still want.
    */
+  /**
+   * Read-only evaluation of candidate editions' plans in memory.
+   *
+   * Never persists `AcquisitionPlans` for unselected editions: editions with no
+   * accepted track matches are skipped in one batch query, and matched editions
+   * are evaluated read-only. Only editions curation actually selects get
+   * persisted plans afterwards.
+   */
+  evaluateCandidatePlans(input: {
+    libraryId: number;
+    editionIds: readonly number[];
+    providerPriority: readonly string[];
+  }): Map<number, EvaluatedEditionPlanSummary> {
+    const result = new Map<number, EvaluatedEditionPlanSummary>();
+    const matchedIds = AcquisitionPlanningService.editionIdsWithAcceptedMatches(this.db, input.editionIds);
+    for (const editionId of matchedIds) {
+      const evaluated = this.acquisitionPlanning.evaluate({
+        libraryId: input.libraryId,
+        editionId,
+        providerPriority: input.providerPriority,
+      });
+      result.set(editionId, {
+        viable: evaluated.viable,
+        bestPlan: evaluated.bestPlan,
+        attainableRecordingIds: evaluated.attainableRecordingIds,
+      });
+    }
+    return result;
+  }
+
+  /** Cooperative async variant of `evaluateCandidatePlans` that yields between batches outside the write gate. */
+  async evaluateCandidatePlansAsync(input: {
+    libraryId: number;
+    editionIds: readonly number[];
+    providerPriority: readonly string[];
+    yieldToEventLoop?: () => Promise<void>;
+  }): Promise<Map<number, EvaluatedEditionPlanSummary>> {
+    const yieldFn = input.yieldToEventLoop ?? (() => new Promise<void>((resolve) => setImmediate(resolve)));
+    const result = new Map<number, EvaluatedEditionPlanSummary>();
+    const matchedIds = [...AcquisitionPlanningService.editionIdsWithAcceptedMatches(this.db, input.editionIds)];
+    for (let i = 0; i < matchedIds.length; i += 1) {
+      const editionId = matchedIds[i];
+      const evaluated = this.acquisitionPlanning.evaluate({
+        libraryId: input.libraryId,
+        editionId,
+        providerPriority: input.providerPriority,
+      });
+      result.set(editionId, {
+        viable: evaluated.viable,
+        bestPlan: evaluated.bestPlan,
+        attainableRecordingIds: evaluated.attainableRecordingIds,
+      });
+      if ((i + 1) % 25 === 0) {
+        await yieldFn();
+      }
+    }
+    return result;
+  }
+
+  /** Drop stale persisted plans for evaluated editions that are not monitored and not owned by an active download. */
+  private discardUnselectedPlans(libraryId: number, editionIds: readonly number[], selectedEditionIds: ReadonlySet<number>): void {
+    const unselected = editionIds.filter((id) => !selectedEditionIds.has(id));
+    if (unselected.length === 0) return;
+    for (const chunk of chunked(unselected, 800)) {
+      this.db.prepare(`
+        DELETE FROM AcquisitionPlans
+        WHERE library_id = ?
+          AND edition_id IN (${chunk.map(() => "?").join(",")})
+          AND NOT EXISTS (
+            SELECT 1 FROM LibraryEditions monitored
+            WHERE monitored.library_id = AcquisitionPlans.library_id
+              AND monitored.edition_id = AcquisitionPlans.edition_id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM DownloadQueue dq
+            WHERE dq.plan_id = AcquisitionPlans.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM commands cmd
+            WHERE cmd.status IN ('queued', 'started')
+              AND CAST(json_extract(cmd.payload, '$.acquisitionPlanId') AS INTEGER) = AcquisitionPlans.id
+          )
+      `).run(libraryId, ...chunk);
+    }
+  }
+
   curateLibrary(input: {
     libraryId: number;
     providerPriority: string[];
@@ -303,12 +402,13 @@ export class LibraryCurationService {
     /** Curate only these LibraryArtists. Omit for the whole library. */
     scope?: { libraryArtistIds: readonly number[] };
     /**
-     * "caller": the caller has computed every `candidateEditionIds` plan and
-     * replans `selectedEditionIds` afterwards, each under its own short write
-     * gate. This call then only decides and persists, so the gate it runs in
-     * is not held across hundreds of per-edition plan computations.
+     * "caller": the caller evaluated candidate plans read-only before taking
+     * the write gate (passed via `precomputedPlans`) and persists plans for
+     * `selectedEditionIds` afterwards, each under its own short write gate.
      */
     planning?: "inline" | "caller";
+    /** Read-only plan summaries pre-evaluated outside the write gate. */
+    precomputedPlans?: ReadonlyMap<number, EvaluatedEditionPlanSummary>;
   }): LibraryCurationResult {
     const library = this.db.prepare(`
       SELECT library.id, quality.allowed_source_formats
@@ -326,31 +426,36 @@ export class LibraryCurationService {
       return emptyCurationResult();
     }
     const { scopedArtistIds, libraryArtists, candidateScopes, evaluatedEditions } = selection;
+    const evaluatedEditionIds = evaluatedEditions.map((release) => release.edition_id);
+    const evaluatedReleaseGroupIds = [...new Set(evaluatedEditions.map((release) => release.release_group_id))];
 
     const preferExplicit = filtering.prefer_explicit !== false;
 
-    const protectionRows = this.db.prepare(`
-      SELECT
-        monitored_edition.edition_id,
-        edition.release_group_id,
-        COALESCE(library_album.locked, 0) AS locked,
-        monitored_edition.selection_mode,
-        monitored_edition.representative
-      FROM LibraryEditions monitored_edition
-      JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
-      LEFT JOIN LibraryAlbums library_album
-        ON library_album.library_id = monitored_edition.library_id
-       AND library_album.release_group_id = edition.release_group_id
-      WHERE monitored_edition.library_id = ?
-        AND (COALESCE(library_album.locked, 0) = 1
-             OR monitored_edition.selection_mode = 'manual')
-    `).all(input.libraryId) as Array<{
-      edition_id: number;
-      release_group_id: number;
-      locked: number;
-      selection_mode: string;
-      representative: number;
-    }>;
+    const protectionRows = evaluatedReleaseGroupIds.length === 0
+      ? []
+      : chunked(evaluatedReleaseGroupIds, 800).flatMap((chunk) => this.db.prepare(`
+          SELECT
+            monitored_edition.edition_id,
+            edition.release_group_id,
+            COALESCE(library_album.locked, 0) AS locked,
+            monitored_edition.selection_mode,
+            monitored_edition.representative
+          FROM LibraryEditions monitored_edition
+          JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+          LEFT JOIN LibraryAlbums library_album
+            ON library_album.library_id = monitored_edition.library_id
+           AND library_album.release_group_id = edition.release_group_id
+          WHERE monitored_edition.library_id = ?
+            AND edition.release_group_id IN (${chunk.map(() => "?").join(",")})
+            AND (COALESCE(library_album.locked, 0) = 1
+                 OR monitored_edition.selection_mode = 'manual')
+        `).all(input.libraryId, ...chunk) as Array<{
+          edition_id: number;
+          release_group_id: number;
+          locked: number;
+          selection_mode: string;
+          representative: number;
+        }>);
 
     // The album lock protects the album row. Only a manual edition is frozen.
     const lockedEditionIds = new Set<number>();
@@ -364,95 +469,46 @@ export class LibraryCurationService {
       }
     }
 
-    for (const row of this.db.prepare(`
-      SELECT edition.release_group_id AS release_group_id, monitored.edition_id AS edition_id
-      FROM LibraryEditions monitored
-      JOIN AlbumEditions edition ON edition.id = monitored.edition_id
-      WHERE monitored.library_id = ? AND monitored.representative = 1
-    `).all(input.libraryId) as Array<{ release_group_id: number; edition_id: number }>) {
-      if (!existingRepresentativeEditionIdByReleaseGroup.has(row.release_group_id)) {
-        existingRepresentativeEditionIdByReleaseGroup.set(row.release_group_id, row.edition_id);
+    for (const chunk of chunked(evaluatedReleaseGroupIds, 800)) {
+      for (const row of this.db.prepare(`
+        SELECT edition.release_group_id AS release_group_id, monitored.edition_id AS edition_id
+        FROM LibraryEditions monitored
+        JOIN AlbumEditions edition ON edition.id = monitored.edition_id
+        WHERE monitored.library_id = ?
+          AND monitored.representative = 1
+          AND edition.release_group_id IN (${chunk.map(() => "?").join(",")})
+      `).all(input.libraryId, ...chunk) as Array<{ release_group_id: number; edition_id: number }>) {
+        if (!existingRepresentativeEditionIdByReleaseGroup.has(row.release_group_id)) {
+          existingRepresentativeEditionIdByReleaseGroup.set(row.release_group_id, row.edition_id);
+        }
       }
     }
 
-
     const planInline = input.planning !== "caller";
-    for (const release of planInline ? evaluatedEditions : []) {
-      timer.phase(`acquisition-plan[lib${input.libraryId}/ed${release.edition_id}]`, () => this.acquisitionPlanning.compute({
+    // Evaluate candidate plans read-only in memory — never persist
+    // AcquisitionPlans for the ~97% of candidate editions curation does not
+    // select. Selected editions get persisted plans after the decision lands.
+    const planSummaries = input.precomputedPlans
+      ?? timer.phase("evaluate-candidate-plans", () => this.evaluateCandidatePlans({
         libraryId: input.libraryId,
-        editionId: release.edition_id,
+        editionIds: evaluatedEditionIds,
         providerPriority: input.providerPriority,
-        plannerVersion: input.acquisitionPlannerVersion,
       }));
-    }
 
-    // Plan-derived inputs, read for the editions this pass evaluates. Reading
-    // them per library instead made a one-artist pass carry the whole library's
-    // plans, which is the cost this scoping exists to remove.
-    const evaluatedEditionIds = evaluatedEditions.map((release) => release.edition_id);
-    const viableEditionIds = timer.phase("viable-plans",
-      () => this.viablePlanEditionIds(input.libraryId, evaluatedEditionIds));
+    const viableEditionIds = new Set<number>();
     const bestPlanByEdition = new Map<number, {
       explicit_content: string;
       coverage: number;
       quality_tier: string;
     }>();
-    for (const chunk of chunked(evaluatedEditionIds, 800)) {
-      for (const row of this.db.prepare(`
-        SELECT edition_id, explicit_content, coverage, quality_tier
-        FROM AcquisitionPlans
-        WHERE library_id = ? AND rank = 0
-          AND edition_id IN (${chunk.map(() => "?").join(",")})
-      `).all(input.libraryId, ...chunk) as Array<{
-        edition_id: number;
-        explicit_content: string;
-        coverage: number;
-        quality_tier: string;
-      }>) {
-        bestPlanByEdition.set(row.edition_id, row);
-      }
-    }
-
-    /**
-     * What each Edition can actually be acquired — read off the acquisition
-     * plans just computed above, which is why this runs after that loop and not
-     * with the other candidate inputs.
-     *
-     * It used to be derived from provider releases matched *to* the Edition,
-     * and that disagreed with the planner in both directions. It undercounted,
-     * because a composite plan sources tracks from provider albums matched to
-     * sibling Editions: the 3-track Killing Me Softly (MTV Unplugged) Edition
-     * has a full 3/3 hi-res composite plan and measured **zero** attainable
-     * recordings, so curation preferred its 1-track sibling — the richer
-     * Edition looked like it could deliver nothing. And it overcounted, because
-     * a superset provider album contributed the recordings of tracks this
-     * Edition does not contain at all.
-     *
-     * Reading the plans removes both. Coverage now means what acquisition will
-     * actually deliver, which is the only definition under which curation and
-     * acquisition can agree. Measured on the live library: 9,463 of 12,342
-     * planned Editions gain attainable recordings and none lose any.
-     *
-     * Quality is not re-filtered here: a plan only exists for qualities the
-     * profile allows, so the gate is already applied upstream.
-     */
     const attainableByRelease = new Map<number, Set<number>>();
-    for (const chunk of chunked(evaluatedEditionIds, 800)) {
-      for (const row of this.db.prepare(`
-        SELECT DISTINCT plan.edition_id, track.recording_id
-        FROM AcquisitionPlans plan
-        JOIN AcquisitionPlanTracks plan_track
-          ON plan_track.plan_id = plan.id
-        JOIN Tracks track
-          ON track.id = plan_track.track_id
-        WHERE plan.library_id = ?
-          AND plan.state = 'current'
-          AND track.recording_id IS NOT NULL
-          AND plan.edition_id IN (${chunk.map(() => "?").join(",")})
-      `).all(input.libraryId, ...chunk) as Array<{ edition_id: number; recording_id: number }>) {
-        const recordingIds = attainableByRelease.get(row.edition_id) || new Set<number>();
-        recordingIds.add(row.recording_id);
-        attainableByRelease.set(row.edition_id, recordingIds);
+    for (const editionId of evaluatedEditionIds) {
+      const summary = planSummaries.get(editionId);
+      if (!summary) continue;
+      if (summary.viable) viableEditionIds.add(editionId);
+      if (summary.bestPlan) bestPlanByEdition.set(editionId, summary.bestPlan);
+      if (summary.attainableRecordingIds.size > 0) {
+        attainableByRelease.set(editionId, summary.attainableRecordingIds);
       }
     }
 
@@ -493,13 +549,16 @@ export class LibraryCurationService {
       excludedRecordingIds(this.db, input.libraryId),
       coverageUnitByRecording,
     );
-    const monitoredEditionRows = this.db.prepare(`
-      SELECT monitored_edition.edition_id AS edition_id,
-             edition.release_group_id AS release_group_id
-      FROM LibraryEditions monitored_edition
-      JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
-      WHERE monitored_edition.library_id = ?
-    `).all(input.libraryId) as Array<{ edition_id: number; release_group_id: number }>;
+    const monitoredEditionRows = evaluatedReleaseGroupIds.length === 0
+      ? []
+      : chunked(evaluatedReleaseGroupIds, 800).flatMap((chunk) => this.db.prepare(`
+          SELECT monitored_edition.edition_id AS edition_id,
+                 edition.release_group_id AS release_group_id
+          FROM LibraryEditions monitored_edition
+          JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+          WHERE monitored_edition.library_id = ?
+            AND edition.release_group_id IN (${chunk.map(() => "?").join(",")})
+        `).all(input.libraryId, ...chunk) as Array<{ edition_id: number; release_group_id: number }>);
     const monitoredEditionIdSet = new Set(monitoredEditionRows.map((row) => row.edition_id));
     const editionTitleById = new Map<number, string>();
 
@@ -581,34 +640,67 @@ export class LibraryCurationService {
     // File-owning editions whose accepted automatic matches predate the
     // current matcher stay monitored, but they are not coverage. Planning
     // without them lets a current edition keep the recordings; the stale
-    // edition is put back afterwards.
-    const staleFileEditions = this.db.prepare(`
-      SELECT DISTINCT file.album_edition_id AS edition_id,
-             edition.release_group_id AS release_group_id,
-             edition.title AS title
-      FROM TrackFiles file
-      JOIN AlbumEditions edition ON edition.id = file.album_edition_id
-      JOIN LibraryEditions monitored
-        ON monitored.library_id = file.library_id
-       AND monitored.edition_id = file.album_edition_id
-       AND monitored.selection_mode = 'auto'
-      WHERE file.library_id = ?
-        AND file.album_edition_id IS NOT NULL
-        AND EXISTS (
-          SELECT 1
-          FROM Tracks track
-          JOIN ProviderTrackMatches match
-            ON match.track_id = track.id
-           AND match.match_state = 'accepted'
-           AND match.decision_source = 'automatic'
-           AND match.matcher_version < ?
-          WHERE track.album_edition_id = file.album_edition_id
-        )
-    `).all(input.libraryId, PROVIDER_TRACK_MATCHER_VERSION) as Array<{
-      edition_id: number;
-      release_group_id: number;
-      title: string;
-    }>;
+    // edition is put back afterwards. Scope to candidate editions when curating
+    // specific artists so an ApplyCuration pass does not rescan every TrackFile
+    // in the library once per artist.
+    const candidateEditionIdList = [...candidateScopes.keys()];
+    const staleFileEditions = scopedArtistIds
+      ? (candidateEditionIdList.length === 0
+          ? []
+          : chunked(candidateEditionIdList, 800).flatMap((chunk) => this.db.prepare(`
+              SELECT DISTINCT file.album_edition_id AS edition_id,
+                     edition.release_group_id AS release_group_id,
+                     edition.title AS title
+              FROM TrackFiles file
+              JOIN AlbumEditions edition ON edition.id = file.album_edition_id
+              JOIN LibraryEditions monitored
+                ON monitored.library_id = file.library_id
+               AND monitored.edition_id = file.album_edition_id
+               AND monitored.selection_mode = 'auto'
+              WHERE file.library_id = ?
+                AND file.album_edition_id IN (${chunk.map(() => "?").join(",")})
+                AND EXISTS (
+                  SELECT 1
+                  FROM Tracks track
+                  JOIN ProviderTrackMatches match
+                    ON match.track_id = track.id
+                   AND match.match_state = 'accepted'
+                   AND match.decision_source = 'automatic'
+                   AND match.matcher_version < ?
+                  WHERE track.album_edition_id = file.album_edition_id
+                )
+            `).all(input.libraryId, ...chunk, PROVIDER_TRACK_MATCHER_VERSION) as Array<{
+              edition_id: number;
+              release_group_id: number;
+              title: string;
+            }>))
+      : this.db.prepare(`
+          SELECT DISTINCT file.album_edition_id AS edition_id,
+                 edition.release_group_id AS release_group_id,
+                 edition.title AS title
+          FROM TrackFiles file
+          JOIN AlbumEditions edition ON edition.id = file.album_edition_id
+          JOIN LibraryEditions monitored
+            ON monitored.library_id = file.library_id
+           AND monitored.edition_id = file.album_edition_id
+           AND monitored.selection_mode = 'auto'
+          WHERE file.library_id = ?
+            AND file.album_edition_id IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+              FROM Tracks track
+              JOIN ProviderTrackMatches match
+                ON match.track_id = track.id
+               AND match.match_state = 'accepted'
+               AND match.decision_source = 'automatic'
+               AND match.matcher_version < ?
+              WHERE track.album_edition_id = file.album_edition_id
+            )
+        `).all(input.libraryId, PROVIDER_TRACK_MATCHER_VERSION) as Array<{
+          edition_id: number;
+          release_group_id: number;
+          title: string;
+        }>;
     const staleFileEditionIds = new Set(staleFileEditions.map((row) => row.edition_id));
 
     for (const libraryArtist of libraryArtists) {
@@ -845,9 +937,14 @@ export class LibraryCurationService {
     }));
 
     if (redundancyEnabled) {
-      const stillMonitored = new Set((this.db.prepare(`
-        SELECT release_group_id FROM LibraryAlbums WHERE library_id = ?
-      `).all(input.libraryId) as Array<{ release_group_id: number }>).map((row) => row.release_group_id));
+      const stillMonitored = new Set(
+        evaluatedReleaseGroupIds.length === 0
+          ? []
+          : chunked(evaluatedReleaseGroupIds, 800).flatMap((chunk) => (this.db.prepare(`
+              SELECT release_group_id FROM LibraryAlbums
+              WHERE library_id = ? AND release_group_id IN (${chunk.map(() => "?").join(",")})
+            `).all(input.libraryId, ...chunk) as Array<{ release_group_id: number }>).map((row) => row.release_group_id)),
+      );
       const candidateGroups = new Set(allCandidates.map((candidate) => candidate.releaseGroupId));
       const replaced: Array<{ releaseGroupId: number; replacementTitle: string | null }> = [];
       for (const releaseGroupId of monitoredGroupsBefore) {
@@ -870,6 +967,11 @@ export class LibraryCurationService {
         replaced,
       );
     }
+
+    // Remove any stale persisted plans for candidate editions curation left
+    // unmonitored (and not pinned by an active download), keeping
+    // AcquisitionPlans proportional to LibraryEditions.
+    this.discardUnselectedPlans(input.libraryId, evaluatedEditionIds, selectedEditionIdsSet);
 
     timer.report(`library ${input.libraryId}: ${evaluatedEditions.length} edition(s)`);
     if (!planInline) return combinedResult;
@@ -912,22 +1014,6 @@ export class LibraryCurationService {
       byEdition.set(row.album_edition_id, recordingIds);
     }
     return byEdition;
-  }
-
-  private viablePlanEditionIds(libraryId: number, editionIds?: readonly number[]): Set<number> {
-    const VIABLE = `
-        SELECT DISTINCT edition_id
-        FROM AcquisitionPlans
-        WHERE library_id = ?
-          AND state = 'current'
-          AND target_track_count > 0
-          AND coverage * 2 > target_track_count`;
-    const rows = editionIds === undefined
-      ? this.db.prepare(VIABLE).all(libraryId) as Array<{ edition_id: number }>
-      : chunked(editionIds, 800).flatMap((chunk) => this.db.prepare(
-          `${VIABLE} AND edition_id IN (${chunk.map(() => "?").join(",")})`,
-        ).all(libraryId, ...chunk) as Array<{ edition_id: number }>);
-    return new Set(rows.map(({ edition_id }) => edition_id));
   }
 }
 

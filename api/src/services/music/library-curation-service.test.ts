@@ -165,12 +165,11 @@ test("library curation uses canonical scope and recording coverage without chang
       2,
       "Credited scope must not rewrite canonical release ownership",
     );
-    // Plans are computed for every evaluated edition *before* curation picks
-    // which ones to monitor, so the covered EP still has a plan row even though
-    // it is not monitored.
+    // Candidate plans are evaluated read-only during curation; only editions
+    // selected into LibraryEditions persist rows in AcquisitionPlans.
     assert.equal(
       (db.prepare("SELECT COUNT(*) AS count FROM AcquisitionPlans").get() as { count: number }).count,
-      3,
+      2,
     );
     assert.equal(
       (db.prepare("SELECT COUNT(*) AS count FROM LibraryEditions").get() as { count: number }).count,

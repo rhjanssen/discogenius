@@ -9,6 +9,8 @@ import {
   type AcquisitionQualityProfile,
   type AcquisitionSourceCandidate,
   type NormalizedAudioQuality,
+  type OptimizedAcquisitionPlan,
+  type PlanExplicitContent,
 } from "./acquisition-plan-optimizer.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
 import { resourceAcquisitionPlanKey, persistedResourceAcquisitionPlanKey } from "./acquisition-plan-identity.js";
@@ -479,6 +481,22 @@ export function previewEditionPolicyHashes(
   };
 }
 
+export interface EvaluatedAcquisitionPlans {
+  targetTrackCount: number;
+  plans: OptimizedAcquisitionPlan[];
+  policyHash: string;
+  /** Canonical recording IDs covered by any eligible plan for this edition. */
+  attainableRecordingIds: Set<number>;
+  /** Best-ranked (rank 0) eligible plan summary, if any. */
+  bestPlan: {
+    explicit_content: PlanExplicitContent;
+    coverage: number;
+    quality_tier: string;
+  } | null;
+  /** Whether any eligible plan satisfies curation viability (coverage * 2 > targetTrackCount). */
+  viable: boolean;
+}
+
 export class AcquisitionPlanningService {
   private readonly repository: AcquisitionPlanRepository;
 
@@ -487,26 +505,41 @@ export class AcquisitionPlanningService {
   }
 
   /**
-   * Build every viable acquisition plan for one canonical Edition in one Library.
-   *
-   * Deliberately does not require a `LibraryEditions` row. Plans are generated
-   * during the provider-matching phase, before curation decides what to monitor,
-   * so that curation can weigh real provider availability and the Album page can
-   * offer the alternatives sitting under Editions nobody monitors yet.
-   *
-   * Returns the id of the plan the monitored Edition ended up executing, or
-   * null when there is no viable plan (or nothing monitored to record a choice
-   * on).
+   * Cheap set-based pre-filter: returns the subset of `editionIds` that have
+   * at least one non-video track whose canonical recording has an accepted
+   * `ProviderTrackMatches` row. Any edition outside this set is guaranteed to
+   * produce zero acquisition plans (both Tier 1 and Tier 2 ISRC require a
+   * recording match), so callers can skip per-edition planning completely.
    */
-  compute(input: {
-    libraryId: number;
-    editionId: number;
-    providerPriority: readonly string[];
-    plannerVersion: number;
-    preferredProviderEditionMatchId?: number;
-    /** Explicit single-source lock. Never implied by a preference. */
-    exclusiveSource?: boolean;
-  }): number | null {
+  static editionIdsWithAcceptedMatches(
+    db: Database.Database,
+    editionIds: readonly number[],
+  ): Set<number> {
+    const matched = new Set<number>();
+    if (editionIds.length === 0) return matched;
+    for (let start = 0; start < editionIds.length; start += 800) {
+      const chunk = editionIds.slice(start, start + 800);
+      const rows = db.prepare(`
+        SELECT DISTINCT target.album_edition_id AS edition_id
+        FROM Tracks target
+        JOIN Recordings recording
+          ON recording.id = target.recording_id
+         AND recording.is_video = 0
+        WHERE target.album_edition_id IN (${chunk.map(() => "?").join(",")})
+          AND target.recording_id IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM ProviderTrackMatches track_match
+            WHERE track_match.recording_id = target.recording_id
+              AND track_match.match_state = 'accepted'
+          )
+      `).all(...chunk) as Array<{ edition_id: number }>;
+      for (const row of rows) matched.add(row.edition_id);
+    }
+    return matched;
+  }
+
+  private loadPlanningContext(libraryId: number, editionId: number): PlanningContextRow {
     const context = this.db.prepare(`
       SELECT
         monitored_edition.id AS library_edition_id,
@@ -539,45 +572,70 @@ export class AcquisitionPlanningService {
         ON primary_source.plan_id = current_plan.id
        AND primary_source.role = 'primary'
       WHERE library.id = ?
-    `).get(input.editionId, input.libraryId) as PlanningContextRow | undefined;
+    `).get(editionId, libraryId) as PlanningContextRow | undefined;
     if (!context) {
       throw new Error(
-        `Library ${input.libraryId} or edition ${input.editionId} was not found`,
+        `Library ${libraryId} or edition ${editionId} was not found`,
       );
     }
     if (context.preferred_plan_key) {
       const current = this.db.prepare("SELECT id FROM AcquisitionPlans WHERE library_id=? AND edition_id=? AND plan_key=?")
-        .get(input.libraryId,input.editionId,context.preferred_plan_key) as {id:number}|undefined;
-      if (current) context.preferred_plan_key = persistedResourceAcquisitionPlanKey(this.db,current.id) ?? context.preferred_plan_key;
+        .get(libraryId, editionId, context.preferred_plan_key) as { id: number } | undefined;
+      if (current) context.preferred_plan_key = persistedResourceAcquisitionPlanKey(this.db, current.id) ?? context.preferred_plan_key;
     }
+    return context;
+  }
 
-    const orderedTrackIds = (this.db.prepare(`
-      SELECT id
+  private hasPersistedPlansOrPreference(libraryId: number, editionId: number): boolean {
+    const hasPlan = this.db.prepare(`
+      SELECT 1 FROM AcquisitionPlans WHERE library_id = ? AND edition_id = ? LIMIT 1
+    `).get(libraryId, editionId);
+    if (hasPlan) return true;
+    const hasPref = this.db.prepare(`
+      SELECT 1 FROM LibraryEditions
+      WHERE library_id = ? AND edition_id = ? AND preferred_plan_key IS NOT NULL
+      LIMIT 1
+    `).get(libraryId, editionId);
+    return Boolean(hasPref);
+  }
+
+  private buildCandidateInputs(input: {
+    libraryId: number;
+    editionId: number;
+    providerPriority: readonly string[];
+    preferredProviderEditionMatchId?: number;
+    context: PlanningContextRow;
+  }) {
+    const trackRows = this.db.prepare(`
+      SELECT id, recording_id
       FROM Tracks
       WHERE album_edition_id = ?
       ORDER BY medium_position, position, id
-    `).all(input.editionId) as Array<{ id: number }>).map(({ id }) => id);
-    if (orderedTrackIds.length === 0) {
-      this.repository.clear(input.libraryId, input.editionId);
-      return null;
+    `).all(input.editionId) as Array<{ id: number; recording_id: number | null }>;
+    const orderedTrackIds = trackRows.map(({ id }) => id);
+    const recordingByTrackId = new Map<number, number>();
+    for (const row of trackRows) {
+      if (row.recording_id != null) recordingByTrackId.set(row.id, row.recording_id);
     }
 
-    const allowedQualities = parseQualityList(context.allowed_source_formats);
-    const preferenceOrder = parseQualityList(context.preference_order);
-    const cutoff = parseQuality(context.cutoff);
+    const allowedQualities = parseQualityList(input.context.allowed_source_formats);
+    const preferenceOrder = parseQualityList(input.context.preference_order);
+    const cutoff = parseQuality(input.context.cutoff);
     if (allowedQualities.length === 0 || preferenceOrder.length === 0 || !cutoff) {
-      throw new Error(`Quality profile ${context.quality_profile_id} has invalid normalized policy`);
+      throw new Error(`Quality profile ${input.context.quality_profile_id} has invalid normalized policy`);
     }
     const profile: AcquisitionQualityProfile = {
       allowedQualities: new Set(allowedQualities),
       preferenceOrder,
       cutoff,
-      continueUpgradesAfterCutoff: Boolean(context.continue_upgrades),
+      continueUpgradesAfterCutoff: Boolean(input.context.continue_upgrades),
     };
 
     const planTimer = createCurationPhaseTimer();
-    const loadedRows = planTimer.phase(`plan:candidate-sql[ed${input.editionId}]`, () =>
-      loadAcquisitionCandidateRows(this.db, input.editionId));
+    const loadedRows = orderedTrackIds.length === 0
+      ? []
+      : planTimer.phase(`plan:candidate-sql[ed${input.editionId}]`, () =>
+          loadAcquisitionCandidateRows(this.db, input.editionId));
     // Matcher version is a cache stamp, not a veto. A bump must not empty the
     // candidate set. The shared-item rule is applied to the stored rows: one
     // automatic provider item offered for more than one canonical track is a
@@ -648,37 +706,201 @@ export class AcquisitionPlanningService {
       }
     }
 
-    /**
-     * Fingerprint of everything this plan is derived from — the policy *and*
-     * the provider evidence.
-     *
-     * Plans were recomputed for every evaluated Edition on every pass, which is
-     * work proportional to the catalogue rather than to what changed: a refresh
-     * that altered nothing still rebuilt every plan in the library. But they
-     * cannot simply be computed less often either, because curation reads them
-     * to decide what to monitor and a stale plan means a stale decision.
-     *
-     * Hashing the inputs settles both. The candidate rows above are exactly
-     * what the planner reasons over — every accepted match, every audio variant
-     * and their availability — so a digest of them plus the policy is complete
-     * by construction: if the digest is unchanged, no reachable input changed,
-     * and the plans that exist are the plans this pass would produce.
-     */
     const policyHash = policyHashForCandidateRows({
       rows,
       trackIds: orderedTrackIds,
-      qualityProfileId: context.quality_profile_id,
+      qualityProfileId: input.context.quality_profile_id,
       allowedQualities,
       preferenceOrder,
       cutoff,
       continueUpgradesAfterCutoff: profile.continueUpgradesAfterCutoff,
       providerPriority: input.providerPriority,
       preferredProviderEditionMatchId: input.preferredProviderEditionMatchId ?? (
-        context.locked
-          ? context.current_primary_provider_edition_match_id
+        input.context.locked
+          ? input.context.current_primary_provider_edition_match_id
           : null
       ),
     });
+
+    return {
+      orderedTrackIds,
+      recordingByTrackId,
+      profile,
+      planTimer,
+      sourceById,
+      policyHash,
+    };
+  }
+
+  private enumerateEligiblePlans(input: {
+    editionId: number;
+    context: PlanningContextRow;
+    orderedTrackIds: number[];
+    profile: AcquisitionQualityProfile;
+    sourceById: Map<number, AcquisitionSourceCandidate>;
+    providerPriority: readonly string[];
+    preferredProviderEditionMatchId?: number;
+    exclusiveSource?: boolean;
+    planTimer: ReturnType<typeof createCurationPhaseTimer>;
+  }): OptimizedAcquisitionPlan[] {
+    const explicitPreference = input.preferredProviderEditionMatchId;
+    const preservedManualPreference = input.context.locked
+      ? input.context.current_primary_provider_edition_match_id
+      : null;
+    const preferredProviderEditionMatchId = explicitPreference ?? preservedManualPreference;
+    const sources = [...input.sourceById.values()];
+    if (
+      preferredProviderEditionMatchId != null
+      && !input.sourceById.has(preferredProviderEditionMatchId)
+      && explicitPreference != null
+    ) {
+      throw new Error("The selected provider offer has no accepted track matches for this edition");
+    }
+    if (sources.length === 0) return [];
+
+    // The preferred offer is the primary source, not an exclusive lock: the
+    // optimizer may still cover missing canonical tracks from another accepted
+    // Provider Edition of the same provider unless exclusivity was requested.
+    const enumerated = input.planTimer.phase(`plan:enumerate[ed${input.editionId}]`, () => enumerateAcquisitionPlans({
+      orderedTrackIds: input.orderedTrackIds,
+      profile: input.profile,
+      sources,
+      providerPriority: input.providerPriority,
+      preferredProviderEditionMatchId,
+      exclusive: input.exclusiveSource === true,
+      preferExplicit: getConfigSection("filtering").prefer_explicit !== false,
+    }));
+    const plans = [...new Map(enumerated.map((plan) => {
+      const planKey = resourceAcquisitionPlanKey(this.db, plan);
+      return [planKey, { ...plan, planKey }] as const;
+    })).values()];
+    if (plans.length === 0) return [];
+
+    // A specifically clean or explicit Edition takes only its own rendition.
+    // Curation and the download path read rank 0 straight from
+    // AcquisitionPlans, so this has to happen before ranking is persisted.
+    // Some entirely-spatial Editions carry the marker only on their Recordings
+    // (155 in the corpus); the comments settle it when unanimous.
+    const recordingComments = (this.db.prepare(`
+      SELECT recording.disambiguation
+      FROM Tracks track
+      JOIN Recordings recording ON recording.id = track.recording_id
+      WHERE track.album_edition_id = ?
+    `).all(input.editionId) as Array<{ disambiguation: string | null }>)
+      .map(({ disambiguation }) => disambiguation);
+    return eligiblePlansForEdition(
+      plans,
+      input.context.edition_title,
+      input.context.edition_disambiguation,
+      recordingComments,
+    );
+  }
+
+  /**
+   * Read-only evaluation of every viable acquisition plan for one canonical
+   * Edition in one Library. Never writes to SQLite and needs no write gate.
+   *
+   * Used by curation (to score candidate editions without persisting plans for
+   * unselected pressings) and by the Album availability page (to display
+   * alternative plans on demand for unmonitored editions).
+   */
+  evaluate(input: {
+    libraryId: number;
+    editionId: number;
+    providerPriority: readonly string[];
+    preferredProviderEditionMatchId?: number;
+    exclusiveSource?: boolean;
+  }): EvaluatedAcquisitionPlans {
+    const context = this.loadPlanningContext(input.libraryId, input.editionId);
+    const {
+      orderedTrackIds,
+      recordingByTrackId,
+      profile,
+      planTimer,
+      sourceById,
+      policyHash,
+    } = this.buildCandidateInputs({ ...input, context });
+    if (orderedTrackIds.length === 0 || sourceById.size === 0) {
+      return {
+        targetTrackCount: orderedTrackIds.length,
+        plans: [],
+        policyHash,
+        attainableRecordingIds: new Set(),
+        bestPlan: null,
+        viable: false,
+      };
+    }
+
+    const rankedPlans = this.enumerateEligiblePlans({
+      editionId: input.editionId,
+      context,
+      orderedTrackIds,
+      profile,
+      sourceById,
+      providerPriority: input.providerPriority,
+      preferredProviderEditionMatchId: input.preferredProviderEditionMatchId,
+      exclusiveSource: input.exclusiveSource,
+      planTimer,
+    });
+    const attainableRecordingIds = new Set<number>();
+    let viable = false;
+    for (const plan of rankedPlans) {
+      if (orderedTrackIds.length > 0 && plan.coverage * 2 > orderedTrackIds.length) {
+        viable = true;
+      }
+      for (const track of plan.tracks) {
+        const recordingId = recordingByTrackId.get(track.trackId);
+        if (recordingId != null) attainableRecordingIds.add(recordingId);
+      }
+    }
+    const top = rankedPlans[0];
+    return {
+      targetTrackCount: orderedTrackIds.length,
+      plans: rankedPlans,
+      policyHash,
+      attainableRecordingIds,
+      bestPlan: top
+        ? {
+            explicit_content: top.explicitContent,
+            coverage: top.coverage,
+            quality_tier: top.qualityTier,
+          }
+        : null,
+      viable,
+    };
+  }
+
+  /**
+   * Build and persist every viable acquisition plan for one canonical Edition
+   * in one Library.
+   *
+   * Returns the id of the plan the monitored Edition ended up executing, or
+   * null when there is no viable plan (or nothing monitored to record a choice
+   * on).
+   */
+  compute(input: {
+    libraryId: number;
+    editionId: number;
+    providerPriority: readonly string[];
+    plannerVersion: number;
+    preferredProviderEditionMatchId?: number;
+    /** Explicit single-source lock. Never implied by a preference. */
+    exclusiveSource?: boolean;
+  }): number | null {
+    const context = this.loadPlanningContext(input.libraryId, input.editionId);
+    const {
+      orderedTrackIds,
+      profile,
+      planTimer,
+      sourceById,
+      policyHash,
+    } = this.buildCandidateInputs({ ...input, context });
+    if (orderedTrackIds.length === 0) {
+      if (this.hasPersistedPlansOrPreference(input.libraryId, input.editionId)) {
+        this.repository.clear(input.libraryId, input.editionId);
+      }
+      return null;
+    }
 
     // Nothing this plan is derived from has changed, so rebuilding it would
     // reproduce it exactly. Skipping is what makes a refresh cheap without
@@ -701,61 +923,21 @@ export class AcquisitionPlanningService {
       }
     }
 
-    const explicitPreference = input.preferredProviderEditionMatchId;
-    const preservedManualPreference = context.locked
-      ? context.current_primary_provider_edition_match_id
-      : null;
-    const preferredProviderEditionMatchId = explicitPreference ?? preservedManualPreference;
-    const sources = [...sourceById.values()];
-    if (
-      preferredProviderEditionMatchId != null
-      && !sourceById.has(preferredProviderEditionMatchId)
-      && explicitPreference != null
-    ) {
-      throw new Error("The selected provider offer has no accepted track matches for this edition");
-    }
-    // The preferred offer is the primary source, not an exclusive lock: the
-    // optimizer may still cover missing canonical tracks from another accepted
-    // Provider Edition of the same provider unless exclusivity was requested.
-    const enumerated = planTimer.phase(`plan:enumerate[ed${input.editionId}]`, () => enumerateAcquisitionPlans({
+    const rankedPlans = this.enumerateEligiblePlans({
+      editionId: input.editionId,
+      context,
       orderedTrackIds,
       profile,
-      sources,
+      sourceById,
       providerPriority: input.providerPriority,
-      preferredProviderEditionMatchId,
-      exclusive: input.exclusiveSource === true,
-      preferExplicit: getConfigSection("filtering").prefer_explicit !== false,
-    }));
-    const plans = [...new Map(enumerated.map(plan => {
-      const planKey = resourceAcquisitionPlanKey(this.db,plan);
-      return [planKey,{...plan,planKey}] as const;
-    })).values()];
-    if (plans.length === 0) {
-      this.repository.clear(input.libraryId, input.editionId);
-      return null;
-    }
-    // A specifically clean or explicit Edition takes only its own rendition.
-    // Curation and the download path read rank 0 straight from
-    // AcquisitionPlans, so this has to happen before ranking is persisted.
-    // Some entirely-spatial Editions carry the marker only on their Recordings
-    // (155 in the corpus); the comments settle it when unanimous.
-    const recordingComments = (this.db.prepare(`
-      SELECT recording.disambiguation
-      FROM Tracks track
-      JOIN Recordings recording ON recording.id = track.recording_id
-      WHERE track.album_edition_id = ?
-    `).all(input.editionId) as Array<{ disambiguation: string | null }>)
-      .map(({ disambiguation }) => disambiguation);
-    const rankedPlans = eligiblePlansForEdition(
-      plans,
-      context.edition_title,
-      context.edition_disambiguation,
-      recordingComments,
-    );
+      preferredProviderEditionMatchId: input.preferredProviderEditionMatchId,
+      exclusiveSource: input.exclusiveSource,
+      planTimer,
+    });
     if (rankedPlans.length === 0) {
-      // Every offer contradicts the Edition's rendition. Saying so is the
-      // honest answer; the opposite-rendition Edition is the one to monitor.
-      this.repository.clear(input.libraryId, input.editionId);
+      if (this.hasPersistedPlansOrPreference(input.libraryId, input.editionId)) {
+        this.repository.clear(input.libraryId, input.editionId);
+      }
       return null;
     }
     // The library's standing plan choice outranks the planner's own ordering,
@@ -774,9 +956,11 @@ export class AcquisitionPlanningService {
       plannerVersion: input.plannerVersion,
       policyHash,
     }));
-    planTimer.report(`edition ${input.editionId} (${sources.length} source(s), ${orderedTrackIds.length} track(s))`);
+    planTimer.report(`edition ${input.editionId} (${sourceById.size} source(s), ${orderedTrackIds.length} track(s))`);
     if (!result) {
-      this.repository.clear(input.libraryId, input.editionId);
+      if (this.hasPersistedPlansOrPreference(input.libraryId, input.editionId)) {
+        this.repository.clear(input.libraryId, input.editionId);
+      }
       return null;
     }
     if (result.preferenceUnavailable) {

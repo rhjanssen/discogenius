@@ -78,9 +78,11 @@ import {
     resolveProviderArtistIds,
 } from "./refresh-artist-bio.js";
 import {
+    getMusicBrainzReleaseGroupIncludeDecision,
     normalizeMusicBrainzType,
     parseMusicBrainzSecondaryTypes,
 } from "../metadata/musicbrainz-release-group-filter.js";
+import { VARIOUS_ARTISTS_MBID } from "../mediafiles/audio-tag-service.js";
 import {
     PLAYLIST_TRACKLIST_COVERAGE_METHOD,
     playlistCoversCanonicalTracklistDownloadable,
@@ -263,22 +265,37 @@ export class RefreshArtistService {
         });
     }
 
+    private static artistAllowsCreditedScope(artistMbid: string): boolean {
+        const rows = db.prepare(`
+            SELECT library_artist.credited_scope
+            FROM LibraryArtists library_artist
+            JOIN Libraries library
+              ON library.id = library_artist.library_id
+             AND library.enabled = 1
+            JOIN ArtistMetadata artist
+              ON artist.id = library_artist.artist_metadata_id
+            WHERE artist.mbid = ?
+        `).all(artistMbid) as Array<{ credited_scope: string }>;
+        if (rows.length === 0) return true;
+        return rows.some((row) =>
+            row.credited_scope === "release_credit" || row.credited_scope === "release_and_track_credit",
+        );
+    }
+
     private static async syncArtistMusicBrainzCatalog(
         artistId: string,
         force = false,
         includeCreditedReleaseGroups = false,
-    ): Promise<{ artistMbid: string | null; creditedArtistMbids: string[] }> {
+    ): Promise<{ artistMbid: string | null }> {
         const artistMbid = this.getArtistMusicBrainzId(artistId);
         if (!artistMbid) {
-            return { artistMbid: null, creditedArtistMbids: [] };
+            return { artistMbid: null };
         }
 
         void force;
         await servarrMetadata.syncArtist(artistMbid);
-        let creditedArtistMbids: string[] = [];
-        if (includeCreditedReleaseGroups) {
+        if (includeCreditedReleaseGroups && this.artistAllowsCreditedScope(artistMbid)) {
             const credited = await MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(artistMbid);
-            creditedArtistMbids = credited.artistMbids.filter((mbid) => mbid !== artistMbid);
             console.log(
                 `[RefreshArtistService] Synced ${credited.releaseGroups} credited MusicBrainz release group(s) ` +
                 `and ${credited.artists} credited artist(s) for ${artistMbid}`,
@@ -307,7 +324,7 @@ export class RefreshArtistService {
             }
         }
 
-        return { artistMbid, creditedArtistMbids };
+        return { artistMbid };
     }
 
     /**
@@ -329,19 +346,54 @@ export class RefreshArtistService {
     }
 
     private static async hydrateScopedReleaseGroups(artistMbid: string, options?: RefreshOptions): Promise<void> {
+        const includeCredited = this.artistAllowsCreditedScope(artistMbid);
+        const filtering = getConfigSection("filtering");
         const releaseGroups = db.prepare(`
-            SELECT DISTINCT rg.mbid
+            SELECT DISTINCT
+                rg.mbid,
+                rg.artist_mbid,
+                rg.primary_type,
+                rg.secondary_types,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM LibraryAlbums la WHERE la.release_group_id = rg.id
+                ) OR EXISTS (
+                    SELECT 1 FROM TrackFiles tf WHERE tf.release_group_id = rg.id OR tf.canonical_release_group_mbid = rg.mbid
+                ) THEN 1 ELSE 0 END AS preserved
             FROM Albums rg
-            LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-            WHERE rg.artist_mbid = ? OR scope.artist_mbid = ?
+            LEFT JOIN ArtistReleaseGroups scope
+              ON scope.release_group_mbid = rg.mbid
+             AND scope.artist_mbid = ?
+            WHERE rg.artist_mbid = ?
+               OR (? = 1 AND scope.artist_mbid = ?)
             ORDER BY rg.mbid ASC
-        `).all(artistMbid, artistMbid) as Array<{ mbid: string }>;
+        `).all(artistMbid, artistMbid, includeCredited ? 1 : 0, artistMbid) as Array<{
+            mbid: string;
+            artist_mbid: string;
+            primary_type: string | null;
+            secondary_types: string | null;
+            preserved: number;
+        }>;
 
-        // Reconcile EVERY scoped release group. Missing-releases-only hydration
-        // froze Softly-class albums after first write (null ISRCs, empty labels)
-        // even though local MusicBrainz already had the data. content_hash still
-        // skips unchanged payloads inside syncArtistReleaseGroups.
-        const releaseGroupMbids = releaseGroups.map((releaseGroup) => releaseGroup.mbid);
+        // Reconcile every eligible release group in scope. Excluded release
+        // types and Various Artists compilations stay lightweight stubs until
+        // opened on demand or monitored; content_hash skips unchanged payloads.
+        const releaseGroupMbids = releaseGroups
+            .filter((releaseGroup) => {
+                if (releaseGroup.preserved === 1) return true;
+                if (String(releaseGroup.artist_mbid || "").trim().toLowerCase() === VARIOUS_ARTISTS_MBID) {
+                    return false;
+                }
+                if (!releaseGroup.primary_type && !releaseGroup.secondary_types) {
+                    // Stub without type metadata yet: allow initial hydration so
+                    // its real MusicBrainz type is learned.
+                    return true;
+                }
+                return getMusicBrainzReleaseGroupIncludeDecision({
+                    primary_type: releaseGroup.primary_type,
+                    secondary_types: releaseGroup.secondary_types,
+                }, filtering).include;
+            })
+            .map((releaseGroup) => releaseGroup.mbid);
         await servarrMetadata.syncArtistReleaseGroups(artistMbid, releaseGroupMbids, (index, total) => {
             options?.progress?.({
                 kind: "album",
@@ -361,6 +413,10 @@ export class RefreshArtistService {
     static async upsertMusicBrainzArtist(artistMbid: string, options: RefreshOptions = {}): Promise<string> {
         if (!isMusicBrainzMbid(artistMbid)) {
             throw new Error(`Invalid MusicBrainz artist id: ${artistMbid}`);
+        }
+        if (artistMbid.trim().toLowerCase() === VARIOUS_ARTISTS_MBID || artistMbid === "0") {
+            console.warn(`[RefreshArtistService] Cannot monitor 'Various Artists' (MBID: ${artistMbid}). Skipping.`);
+            throw new Error("Cannot monitor 'Various Artists'. Please monitor specific compilations instead.");
         }
 
         const existingIdentity = loadArtistMetadataIdentity(artistMbid);
@@ -564,13 +620,26 @@ export class RefreshArtistService {
         if (slots.length === 0) {
             return { albums: [], matches: new Map() };
         }
+        const includeCredited = this.artistAllowsCreditedScope(artistMbid);
+        if (!includePrimaryUnmatched && !includeCredited) {
+            return { albums: [], matches: new Map() };
+        }
+        const filtering = getConfigSection("filtering");
 
         const rawTargets = db.prepare(`
             SELECT DISTINCT
                 rg.mbid,
+                rg.artist_mbid,
                 rg.title,
+                rg.primary_type,
+                rg.secondary_types,
                 rg.first_release_date,
                 owner.name AS artist_name,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM LibraryAlbums la WHERE la.release_group_id = rg.id
+                ) OR EXISTS (
+                    SELECT 1 FROM TrackFiles tf WHERE tf.release_group_id = rg.id OR tf.canonical_release_group_mbid = rg.mbid
+                ) THEN 1 ELSE 0 END AS preserved,
                 (
                     SELECT release.track_count
                     FROM AlbumEditions release
@@ -602,8 +671,8 @@ export class RefreshArtistService {
              AND scope.artist_mbid = ?
             LEFT JOIN ArtistMetadata owner ON owner.mbid = rg.artist_mbid
             WHERE (
-                (? = 1 AND (rg.artist_mbid = ? OR scope.artist_mbid = ?))
-                OR (? = 0 AND scope.artist_mbid = ? AND rg.artist_mbid != ?)
+                (? = 1 AND (rg.artist_mbid = ? OR (? = 1 AND scope.artist_mbid = ?)))
+                OR (? = 0 AND ? = 1 AND scope.artist_mbid = ? AND rg.artist_mbid != ?)
               )
               AND (
                 ? = 1
@@ -626,17 +695,23 @@ export class RefreshArtistService {
             artistMbid,
             includePrimaryUnmatched ? 1 : 0,
             artistMbid,
+            includeCredited ? 1 : 0,
             artistMbid,
             includePrimaryUnmatched ? 1 : 0,
+            includeCredited ? 1 : 0,
             artistMbid,
             artistMbid,
             forceUpdate ? 1 : 0,
             provider.id,
         ) as Array<{
             mbid: string;
+            artist_mbid: string;
             title: string;
+            primary_type?: string | null;
+            secondary_types?: string | null;
             first_release_date?: string | null;
             artist_name?: string | null;
+            preserved?: number;
             preferred_track_count?: number | null;
             preferred_volume_count?: number | null;
             last_match_attempt_at?: string | null;
@@ -646,6 +721,19 @@ export class RefreshArtistService {
         const filteredTargets = rawTargets.filter((target) => {
             if (alreadyMatchedRgMbids?.has(target.mbid)) {
                 return false;
+            }
+            if (target.preserved !== 1) {
+                if (String(target.artist_mbid || "").trim().toLowerCase() === VARIOUS_ARTISTS_MBID) {
+                    return false;
+                }
+                if (target.primary_type || target.secondary_types) {
+                    if (!getMusicBrainzReleaseGroupIncludeDecision({
+                        primary_type: target.primary_type,
+                        secondary_types: target.secondary_types,
+                    }, filtering).include) {
+                        return false;
+                    }
+                }
             }
             if (forceUpdate) {
                 return true;
@@ -1290,7 +1378,6 @@ export class RefreshArtistService {
                 shouldHydrateCatalog: false,
                 metadataChanged: false,
                 isNewArtist: false,
-                creditedArtistMbids: [],
             };
         }
 
@@ -1306,7 +1393,6 @@ export class RefreshArtistService {
         await yieldToEventLoop();
 
         let artistMbid = resolveArtistMbid();
-        let creditedArtistMbids: string[] = [];
 
         {
             const isMonitored = isArtistLibraryMonitored(artistId);
@@ -1317,7 +1403,6 @@ export class RefreshArtistService {
                 isMonitored,
             );
             artistMbid = catalogSync.artistMbid;
-            creditedArtistMbids = catalogSync.creditedArtistMbids;
             await yieldToEventLoop();
             if (artistMbid) {
                 await this.hydrateScopedReleaseGroups(artistMbid, options);
@@ -1348,7 +1433,6 @@ export class RefreshArtistService {
             shouldHydrateCatalog,
             metadataChanged: beforeFingerprint !== artistCatalogFingerprint(artistMbid),
             isNewArtist,
-            creditedArtistMbids,
         };
     }
 
@@ -2063,17 +2147,43 @@ export class RefreshArtistService {
         if (!artistMbid) {
             return;
         }
-        const rows = db.prepare(`
-            SELECT DISTINCT rg.mbid
+        const includeCredited = this.artistAllowsCreditedScope(artistMbid);
+        const filtering = getConfigSection("filtering");
+        const rawRows = db.prepare(`
+            SELECT DISTINCT
+                rg.mbid,
+                rg.artist_mbid,
+                rg.primary_type,
+                rg.secondary_types,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM LibraryAlbums la WHERE la.release_group_id = rg.id
+                ) THEN 1 ELSE 0 END AS monitored
             FROM Albums rg
-            LEFT JOIN ArtistReleaseGroups scope ON scope.release_group_mbid = rg.mbid
-            WHERE (rg.artist_mbid = ? OR scope.artist_mbid = ?)
+            LEFT JOIN ArtistReleaseGroups scope
+              ON scope.release_group_mbid = rg.mbid
+             AND scope.artist_mbid = ?
+            WHERE (rg.artist_mbid = ? OR (? = 1 AND scope.artist_mbid = ?))
               AND (
                 ? = 1
                 OR ((rg.review_text IS NULL OR TRIM(rg.review_text) = '') AND rg.review_last_updated IS NULL)
               )
             ORDER BY rg.mbid
-        `).all(artistMbid, artistMbid, force ? 1 : 0) as Array<{ mbid: string }>;
+        `).all(artistMbid, artistMbid, includeCredited ? 1 : 0, artistMbid, force ? 1 : 0) as Array<{
+            mbid: string;
+            artist_mbid: string;
+            primary_type: string | null;
+            secondary_types: string | null;
+            monitored: number;
+        }>;
+        const rows = rawRows.filter((row) => {
+            if (row.monitored === 1) return true;
+            if (String(row.artist_mbid || "").trim().toLowerCase() === VARIOUS_ARTISTS_MBID) return false;
+            if (!row.primary_type && !row.secondary_types) return true;
+            return getMusicBrainzReleaseGroupIncludeDecision({
+                primary_type: row.primary_type,
+                secondary_types: row.secondary_types,
+            }, filtering).include;
+        });
         if (rows.length === 0) {
             return;
         }

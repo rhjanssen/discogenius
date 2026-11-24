@@ -3,6 +3,9 @@ import type Database from "better-sqlite3";
 // FTS UNINDEXED columns store values but cannot locate rows efficiently. Each
 // index row uses its canonical integer primary key; catalog kinds get disjoint
 // rowid ranges modulo four. Readers retain their existing public identifiers.
+// TrackSearch indexes ONLY tracks on monitored editions (LibraryEditions):
+// indexing every unselected pressing bloated the FTS index to >1 GB on live
+// libraries while local search only surfaces library tracks.
 export function createTrackSearchIndex(db: Database.Database): void {
   db.exec(`
     CREATE VIRTUAL TABLE TrackSearch USING fts5(
@@ -15,7 +18,10 @@ export function createTrackSearchIndex(db: Database.Database): void {
     CREATE TRIGGER tracks_search_insert
     AFTER INSERT ON Tracks
     WHEN NEW.title IS NOT NULL
+      AND NEW.album_edition_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM LibraryEditions WHERE edition_id = NEW.album_edition_id)
     BEGIN
+      DELETE FROM TrackSearch WHERE rowid = NEW.id;
       INSERT INTO TrackSearch(rowid, track_mbid, recording_mbid, title)
       VALUES (NEW.id, NEW.mbid, NEW.recording_mbid, NEW.title);
     END;
@@ -27,14 +33,54 @@ export function createTrackSearchIndex(db: Database.Database): void {
     END;
 
     CREATE TRIGGER tracks_search_update
-    AFTER UPDATE OF id, mbid, recording_mbid, title ON Tracks
+    AFTER UPDATE OF id, mbid, recording_mbid, title, album_edition_id ON Tracks
     WHEN OLD.id IS NOT NEW.id OR OLD.mbid IS NOT NEW.mbid
       OR OLD.recording_mbid IS NOT NEW.recording_mbid OR OLD.title IS NOT NEW.title
+      OR OLD.album_edition_id IS NOT NEW.album_edition_id
     BEGIN
       DELETE FROM TrackSearch WHERE rowid = OLD.id;
       INSERT INTO TrackSearch(rowid, track_mbid, recording_mbid, title)
       SELECT NEW.id, NEW.mbid, NEW.recording_mbid, NEW.title
-      WHERE NEW.title IS NOT NULL;
+      WHERE NEW.title IS NOT NULL
+        AND NEW.album_edition_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM LibraryEditions WHERE edition_id = NEW.album_edition_id);
+    END;
+
+    CREATE TRIGGER library_editions_track_search_insert
+    AFTER INSERT ON LibraryEditions
+    WHEN (SELECT COUNT(*) FROM LibraryEditions WHERE edition_id = NEW.edition_id) = 1
+    BEGIN
+      DELETE FROM TrackSearch
+      WHERE rowid IN (SELECT id FROM Tracks WHERE album_edition_id = NEW.edition_id);
+      INSERT INTO TrackSearch(rowid, track_mbid, recording_mbid, title)
+      SELECT id, mbid, recording_mbid, title
+      FROM Tracks
+      WHERE album_edition_id = NEW.edition_id
+        AND title IS NOT NULL;
+    END;
+
+    CREATE TRIGGER library_editions_track_search_delete
+    AFTER DELETE ON LibraryEditions
+    WHEN NOT EXISTS (SELECT 1 FROM LibraryEditions WHERE edition_id = OLD.edition_id)
+    BEGIN
+      DELETE FROM TrackSearch
+      WHERE rowid IN (SELECT id FROM Tracks WHERE album_edition_id = OLD.edition_id);
+    END;
+
+    CREATE TRIGGER library_editions_track_search_update
+    AFTER UPDATE OF edition_id ON LibraryEditions
+    WHEN OLD.edition_id IS NOT NEW.edition_id
+    BEGIN
+      DELETE FROM TrackSearch
+      WHERE NOT EXISTS (SELECT 1 FROM LibraryEditions WHERE edition_id = OLD.edition_id)
+        AND rowid IN (SELECT id FROM Tracks WHERE album_edition_id = OLD.edition_id);
+      DELETE FROM TrackSearch
+      WHERE rowid IN (SELECT id FROM Tracks WHERE album_edition_id = NEW.edition_id);
+      INSERT INTO TrackSearch(rowid, track_mbid, recording_mbid, title)
+      SELECT id, mbid, recording_mbid, title
+      FROM Tracks
+      WHERE album_edition_id = NEW.edition_id
+        AND title IS NOT NULL;
     END;
   `);
 }
@@ -128,7 +174,7 @@ export function rebuildSearchIndex(db: Database.Database, table: SearchIndex): v
   db.transaction(() => {
     const catalogPrefix = table === "CatalogSubstringSearch" ? "catalog_substring_search" : "catalog_search";
     const prefixes = table === "TrackSearch"
-      ? ["tracks_search"]
+      ? ["tracks_search", "library_editions_track_search"]
       : [`artist_${catalogPrefix}`, `album_${catalogPrefix}`, `video_${catalogPrefix}`];
     for (const prefix of prefixes) {
       for (const operation of ["insert", "update", "delete"]) {
@@ -139,7 +185,10 @@ export function rebuildSearchIndex(db: Database.Database, table: SearchIndex): v
     if (table === "TrackSearch") {
       createTrackSearchIndex(db);
       db.exec(`INSERT INTO TrackSearch(rowid, track_mbid, recording_mbid, title)
-        SELECT id, mbid, recording_mbid, title FROM Tracks WHERE title IS NOT NULL`);
+        SELECT id, mbid, recording_mbid, title
+        FROM Tracks
+        WHERE title IS NOT NULL
+          AND album_edition_id IN (SELECT DISTINCT edition_id FROM LibraryEditions)`);
     } else {
       createCatalogSearchIndex(db, table === "CatalogSubstringSearch");
       db.exec(`INSERT INTO ${table}(rowid, entity_type, entity_id, title)
@@ -161,14 +210,16 @@ export function rebuildSearchIndex(db: Database.Database, table: SearchIndex): v
  */
 export function ensureSearchIndexes(db: Database.Database): string[] {
   const rebuilt: string[] = [];
-  for (const [table, trigger] of [
-    ["TrackSearch", "tracks_search_delete"],
-    ["CatalogSearch", "artist_catalog_search_delete"],
-    ["CatalogSubstringSearch", "artist_catalog_substring_search_delete"],
+  for (const [table, trigger, extraTrigger] of [
+    ["TrackSearch", "tracks_search_delete", "library_editions_track_search_insert"],
+    ["CatalogSearch", "artist_catalog_search_delete", null],
+    ["CatalogSubstringSearch", "artist_catalog_substring_search_delete", null],
   ] as const) {
     const definition = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
       .get(trigger) as { sql: string } | undefined;
-    if (!definition?.sql.includes("WHERE rowid = OLD.id")) {
+    const extraExists = extraTrigger == null
+      || Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(extraTrigger));
+    if (!definition?.sql.includes("WHERE rowid = OLD.id") || !extraExists) {
       rebuildSearchIndex(db, table);
       rebuilt.push(table);
     }

@@ -36,8 +36,6 @@ export interface ArtistRefreshResult {
     shouldHydrateCatalog: boolean;
     metadataChanged: boolean;
     isNewArtist: boolean;
-    /** First-degree credited artists discovered by this canonical refresh. */
-    creditedArtistMbids: string[];
 }
 
 export type ArtistScanProgressEvent =

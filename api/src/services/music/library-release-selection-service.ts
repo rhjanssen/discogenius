@@ -2,7 +2,9 @@ import type Database from "better-sqlite3";
 import { providerItemAvailableSql } from "../download/offer-availability.js";
 import { emitLibraryUpdated } from "../commands/app-events.js";
 import { ACQUISITION_PLANNER_VERSION, AcquisitionPlanningService, getAcquisitionProviderPriority } from "./acquisition-planning-service.js";
+import { acquisitionPlanSourceOrder } from "./acquisition-plan-identity.js";
 import { AcquisitionPlanRepository } from "./acquisition-plan-repository.js";
+import type { OptimizedAcquisitionPlan } from "./acquisition-plan-optimizer.js";
 import { parseMediaFormats } from "./media-formats.js";
 import { editionRendition, planEligibleForEdition } from "./rendition-policy.js";
 import { ArtistStatisticsService } from "./artist-statistics-service.js";
@@ -175,6 +177,45 @@ export function sortPlansGroupedByProvider(
     }
   }
   return providerOrder.flatMap((provider) => groups.get(provider) || []);
+}
+
+function lastQualityToken(raw: string | null | undefined): string | null {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const parts = value.split(",");
+  const token = parts[parts.length - 1]?.trim();
+  return token || null;
+}
+
+function variantTierRank(qualityClass: string | null | undefined): number {
+  switch (String(qualityClass || "").trim().toLowerCase()) {
+    case "spatial": return 0;
+    case "hires-lossless":
+    case "hires_lossless":
+    case "hires": return 1;
+    case "lossless": return 2;
+    case "lossy": return 3;
+    default: return 4;
+  }
+}
+
+function variantDisplayQuality(
+  variant: { quality_class: string | null; spatial_format: string | null; provider_quality_label: string | null } | undefined,
+  snapshotQuality: string | null | undefined,
+): string | null {
+  const spatialFormat = String(variant?.spatial_format || "").trim().toLowerCase();
+  if (["atmos", "dolby_atmos", "dolby-atmos"].includes(spatialFormat)) return "DOLBY_ATMOS";
+  if (["360ra", "sony_360ra", "360", "mpeg-h"].includes(spatialFormat)) return "SONY_360RA";
+  const qualityClass = String(variant?.quality_class || "").trim().toLowerCase();
+  const label = String(variant?.provider_quality_label || "").trim();
+  const snap = String(snapshotQuality || "").trim();
+  if (qualityClass === "spatial") {
+    if (label.toLowerCase().includes("atmos") || snap.toLowerCase().includes("atmos")) {
+      return "DOLBY_ATMOS";
+    }
+    return lastQualityToken(label || snap || "SPATIAL");
+  }
+  return lastQualityToken(snap || label || variant?.quality_class || null);
 }
 
 /**
@@ -496,10 +537,97 @@ export class LibraryReleaseSelectionService {
       const releaseMetaById = new Map(
         releases.map((release) => [release.id, release] as const),
       );
+      // Unselected editions do not persist rows in AcquisitionPlans. When the
+      // Album page opens one release group, evaluate its unmonitored editions
+      // read-only on demand so alternative editions and plans stay selectable.
+      let planner: AcquisitionPlanningService | null = null;
+      let providerPriority: string[] | null = null;
+      let matchedEditionIds: Set<number> | null = null;
+      const variantCache = new Map<number, { quality_class: string | null; spatial_format: string | null; provider_quality_label: string | null }>();
+      const loadVariants = (variantIds: readonly number[]) => {
+        const missing = variantIds.filter((id) => !variantCache.has(id));
+        if (missing.length === 0) return;
+        const rows = this.db.prepare(`
+          SELECT id, quality_class, spatial_format, provider_quality_label
+          FROM ProviderItemAudioVariants
+          WHERE id IN (${missing.map(() => "?").join(",")})
+        `).all(...missing) as Array<{
+          id: number;
+          quality_class: string | null;
+          spatial_format: string | null;
+          provider_quality_label: string | null;
+        }>;
+        for (const row of rows) variantCache.set(row.id, row);
+      };
+      const projectEvaluatedPlans = (
+        evaluatedPlans: readonly OptimizedAcquisitionPlan[],
+        targetTrackCount: number,
+      ): LibraryAcquisitionPlanView[] => {
+        if (evaluatedPlans.length === 0) return [];
+        const variantIds = new Set<number>();
+        for (const plan of evaluatedPlans) {
+          for (const track of plan.tracks) variantIds.add(track.providerAudioVariantId);
+        }
+        loadVariants([...variantIds]);
+        return evaluatedPlans.map((plan, index) => {
+          const orderedSources = acquisitionPlanSourceOrder(plan);
+          let bestRank = Number.POSITIVE_INFINITY;
+          let displayQuality: string | null = null;
+          const qualityHistogram: Record<string, number> = {};
+          for (const track of plan.tracks) {
+            const variant = variantCache.get(track.providerAudioVariantId);
+            const tier = String(variant?.quality_class || "unknown").toLowerCase();
+            qualityHistogram[tier] = (qualityHistogram[tier] ?? 0) + 1;
+            const rank = variantTierRank(variant?.quality_class);
+            if (rank < bestRank) {
+              bestRank = rank;
+              displayQuality = variantDisplayQuality(variant, track.sourceQuality);
+            }
+          }
+          return {
+            id: -(index + 1),
+            planKey: plan.planKey,
+            provider: plan.provider,
+            primaryProviderEditionMatchId: orderedSources[0] ?? null,
+            providerEditionMatchIds: orderedSources,
+            composition: plan.composition,
+            downloadMode: plan.downloadMode,
+            state: "current",
+            chosen: false,
+            selectionMode: "auto",
+            rank: index,
+            coverage: plan.coverage,
+            targetTrackCount,
+            qualityTier: plan.qualityTier,
+            explicitContent: plan.explicitContent,
+            displayQuality,
+            qualityHistogram,
+          };
+        });
+      };
+
       for (const library of libraries) {
         for (const selection of library.selections) {
           const release = releaseMetaById.get(selection.editionId);
-          const rawPlans = plansByEdition.get(`${library.id}:${selection.editionId}`) || [];
+          let rawPlans = plansByEdition.get(`${library.id}:${selection.editionId}`) || [];
+          if (!selection.monitored && rawPlans.length === 0) {
+            if (matchedEditionIds === null) {
+              matchedEditionIds = AcquisitionPlanningService.editionIdsWithAcceptedMatches(
+                this.db,
+                releases.map((r) => r.id),
+              );
+            }
+            if (matchedEditionIds.has(selection.editionId)) {
+              planner ??= new AcquisitionPlanningService(this.db);
+              providerPriority ??= getAcquisitionProviderPriority();
+              const evaluated = planner.evaluate({
+                libraryId: library.id,
+                editionId: selection.editionId,
+                providerPriority,
+              });
+              rawPlans = projectEvaluatedPlans(evaluated.plans, evaluated.targetTrackCount);
+            }
+          }
           // Gate clean↔explicit against a clear MB edition label, then group by
           // provider so TIDAL clean+explicit sit together in the Editions UI.
           const plans = sortPlansGroupedByProvider(
@@ -570,14 +698,30 @@ export class LibraryReleaseSelectionService {
         releaseGroupId: target.releaseGroupId,
         exclusive,
       });
-      if (!new AcquisitionPlanRepository(this.db).selectPlan({
+      const planRepo = new AcquisitionPlanRepository(this.db);
+      if (!planRepo.selectPlan({
         libraryId: input.libraryId,
         editionId: input.editionId,
         planKey: input.planKey,
       })) {
-        throw new Error(
-          `No acquisition plan ${input.planKey} exists for this library and edition`,
-        );
+        // Unselected editions compute plans on demand in getAvailability() and
+        // do not persist AcquisitionPlans rows until chosen. Materialize this
+        // edition's plans now and bind the requested plan key.
+        new AcquisitionPlanningService(this.db).compute({
+          libraryId: input.libraryId,
+          editionId: input.editionId,
+          providerPriority: getAcquisitionProviderPriority(),
+          plannerVersion: ACQUISITION_PLANNER_VERSION,
+        });
+        if (!planRepo.selectPlan({
+          libraryId: input.libraryId,
+          editionId: input.editionId,
+          planKey: input.planKey,
+        })) {
+          throw new Error(
+            `No acquisition plan ${input.planKey} exists for this library and edition`,
+          );
+        }
       }
     })();
     this.notifyMonitoringChanged({

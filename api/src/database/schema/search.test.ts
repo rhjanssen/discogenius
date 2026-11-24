@@ -12,18 +12,41 @@ db.exec(`
   INSERT INTO ArtistMetadata(id, mbid, name) VALUES(1, 'artist', 'Bastille');
   INSERT INTO Albums(id, mbid, artist_mbid, title) VALUES(1, 'album', 'artist', 'Bad Blood');
   INSERT INTO AlbumEditions(id, mbid, release_group_mbid, artist_mbid, title)
-    VALUES(1, 'edition', 'album', 'artist', 'Bad Blood');
-  INSERT INTO Recordings(id, mbid, title, is_video) VALUES(1, 'recording', 'Pompeii', 1);
+    VALUES
+      (1, 'edition', 'album', 'artist', 'Bad Blood'),
+      (2, 'unselected-edition', 'album', 'artist', 'Bad Blood (Unselected)');
+  INSERT INTO Recordings(id, mbid, title, is_video) VALUES
+    (1, 'recording', 'Pompeii', 1),
+    (2, 'recording-unselected', 'Unselected Song', 0);
+  INSERT INTO LibraryAlbums(library_id, release_group_id, selection_mode, curation_version)
+    SELECT id, 1, 'auto', 1 FROM Libraries WHERE name = 'Stereo';
+  INSERT INTO LibraryEditions(library_id, edition_id, selection_mode, curation_version)
+    SELECT id, 1, 'auto', 1 FROM Libraries WHERE name = 'Stereo';
   INSERT INTO Tracks(id, mbid, release_mbid, recording_mbid, medium_position, position, title)
-    VALUES(1, 'track', 'edition', 'recording', 1, 1, 'Pompeii');
+    VALUES
+      (1, 'track', 'edition', 'recording', 1, 1, 'Pompeii'),
+      (2, 'track-unselected', 'unselected-edition', 'recording-unselected', 1, 1, 'Unselected Song');
 `);
 
-test("active search indexes keep identities distinct and follow edits and deletion", () => {
+test("active search indexes keep identities distinct and follow edits, monitoring, and deletion", () => {
   assert.deepEqual(db.prepare("SELECT entity_type, entity_id FROM CatalogSearch ORDER BY rowid").all(), [
     { entity_type: "artist", entity_id: "1" },
     { entity_type: "album", entity_id: "album" },
     { entity_type: "video", entity_id: "1" },
   ]);
+  // Unselected editions stay out of TrackSearch until monitored in LibraryEditions.
+  assert.equal(count("SELECT COUNT(*) AS n FROM TrackSearch WHERE TrackSearch MATCH 'Unselected'"), 0);
+  db.prepare(`
+    INSERT INTO LibraryEditions(library_id, edition_id, selection_mode, curation_version)
+    SELECT id, 2, 'auto', 1 FROM Libraries WHERE name = 'Stereo'
+  `).run();
+  assert.deepEqual(
+    db.prepare("SELECT track_mbid FROM TrackSearch WHERE TrackSearch MATCH 'Unselected'").all(),
+    [{ track_mbid: "track-unselected" }],
+  );
+  db.prepare("DELETE FROM LibraryEditions WHERE edition_id = 2").run();
+  assert.equal(count("SELECT COUNT(*) AS n FROM TrackSearch WHERE TrackSearch MATCH 'Unselected'"), 0);
+
   db.prepare("UPDATE Tracks SET title = 'Oblivion' WHERE id = 1").run();
   assert.equal(count("SELECT COUNT(*) AS n FROM TrackSearch WHERE TrackSearch MATCH 'Pompeii'"), 0);
   assert.deepEqual(db.prepare("SELECT track_mbid FROM TrackSearch WHERE TrackSearch MATCH 'Oblivion'").all(), [{ track_mbid: "track" }]);
@@ -53,7 +76,7 @@ test("derived search reconstruction discards stale content and preserves canonic
   rebuildSearchIndex(db, "CatalogSearch");
   assert.deepEqual(db.prepare("SELECT track_mbid, title FROM TrackSearch").all(), [{ track_mbid: "track", title: "Pompeii" }]);
   assert.equal(count("SELECT COUNT(*) AS n FROM CatalogSearch"), 3);
-  assert.equal(count("SELECT COUNT(*) AS n FROM Tracks"), 1);
+  assert.equal(count("SELECT COUNT(*) AS n FROM Tracks"), 2);
   assert.deepEqual(db.pragma("foreign_key_check"), []);
 });
 
