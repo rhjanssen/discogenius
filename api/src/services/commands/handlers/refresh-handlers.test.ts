@@ -166,7 +166,7 @@ test("deferred provider matching stamps credited artists only after a successful
   assert.equal(failure.library_origin, "musicbrainz-credit");
 });
 
-test("a recurring artist refresh catalogues new collaborators in-process without queue fan-out", async () => {
+test("a recurring artist refresh does not mirror unmonitored collaborators' catalogs", async () => {
   const { seedLibraryArtistMonitoring } = await import("../../../test-support/active-schema-fixture.js");
   dbModule.db.prepare(`
     INSERT INTO ArtistMetadata (mbid, name, content_hash) VALUES
@@ -181,21 +181,11 @@ test("a recurring artist refresh catalogues new collaborators in-process without
   const refreshedIds: string[] = [];
   (RefreshArtistService as any).refreshArtist = async (artistId: string) => {
     refreshedIds.push(artistId);
-    if (artistId === "selected-artist-mbid") {
-      return {
-        artistMbid: "selected-artist-mbid",
-        shouldHydrateCatalog: true,
-        metadataChanged: true,
-        isNewArtist: false,
-        creditedArtistMbids: ["new-credit-mbid", "known-credit-mbid", "new-credit-mbid"],
-      };
-    }
     return {
       artistMbid: artistId,
       shouldHydrateCatalog: true,
       metadataChanged: true,
-      isNewArtist: true,
-      creditedArtistMbids: [],
+      isNewArtist: false,
     };
   };
   (ArtistStatisticsService as any).refresh = () => undefined;
@@ -227,7 +217,7 @@ test("a recurring artist refresh catalogues new collaborators in-process without
     (ArtistStatisticsService as any).refresh = originalRefreshStats;
   }
 
-  assert.deepEqual(refreshedIds, ["selected-artist-mbid", "new-credit-mbid"]);
+  assert.deepEqual(refreshedIds, ["selected-artist-mbid"]);
 
   const childRefreshes = dbModule.db.prepare(`
     SELECT COUNT(*) AS count
@@ -258,7 +248,6 @@ test("a credited-artist background fill cannot recursively expand", async () => 
     shouldHydrateCatalog: true,
     metadataChanged: true,
     isNewArtist: true,
-    creditedArtistMbids: ["second-hop-mbid"],
   });
   (ArtistStatisticsService as any).refresh = () => undefined;
 

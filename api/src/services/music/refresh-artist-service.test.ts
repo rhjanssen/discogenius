@@ -318,7 +318,6 @@ test("required scoped release hydration failure rejects before provider matching
   service.refreshArtistMetadata = async () => undefined;
   service.syncArtistMusicBrainzCatalog = async () => ({
     artistMbid,
-    creditedArtistMbids: [],
   });
   service.matchArtistProviders = async () => {
     providerMatchCalls += 1;
@@ -1780,4 +1779,105 @@ test("RefreshArtist skips re-listing fresh provider album catalogs and reuses ma
   } finally {
     manager.getAllStreamingProviders = originalGetAll;
   }
+});
+
+test("Various Artists guard blocks wholesale album ingestion in upsertMusicBrainzArtist and servarrMetadata.syncArtist (#179)", async () => {
+  const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const vaMbid = "89ad4ac3-39f7-470e-963a-56509c546377";
+
+  const originalGetActive = catalogProviderRegistry.getActive.bind(catalogProviderRegistry);
+  let providerGetArtistCalls = 0;
+  catalogProviderRegistry.getActive = () => ({
+    id: "test-catalog",
+    getArtist: async () => {
+      providerGetArtistCalls += 1;
+      throw new Error("should not query catalog provider for Various Artists");
+    },
+  }) as any;
+
+  try {
+    await assert.rejects(
+      () => refreshServiceModule.RefreshArtistService.upsertMusicBrainzArtist(vaMbid),
+      /Cannot monitor 'Various Artists'/,
+    );
+    const stub = await servarrMetadata.syncArtist(vaMbid);
+    assert.equal(stub.artistname, "Various Artists");
+    assert.deepEqual(stub.Albums, []);
+    assert.equal(providerGetArtistCalls, 0, "catalog provider must never be queried for 286k VA albums");
+    const vaAlbums = dbModule.db.prepare("SELECT COUNT(*) AS n FROM Albums WHERE artist_mbid = ?").get(vaMbid) as { n: number };
+    assert.equal(vaAlbums.n, 0);
+  } finally {
+    catalogProviderRegistry.getActive = originalGetActive;
+  }
+});
+
+test("RefreshArtist respects primary_only credited_scope and skips hydrating excluded release types (#179)", async () => {
+  const { servarrMetadata } = await import("../metadata/servarr-metadata.js");
+  const { MusicBrainzArtistCreditService } = await import("../metadata/musicbrainz-artist-credit-service.js");
+  const { updateConfig } = await import("../config/config.js");
+  updateConfig("filtering", {
+    include_album: true,
+    include_single: true,
+    include_compilation: false,
+  });
+
+  const artistMbid = "90909090-9090-4090-8090-909090909090";
+  const collabOwnerMbid = "91919191-9191-4191-8191-919191919191";
+  const artistRow = dbModule.db.prepare(
+    "INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Primary Only Artist') RETURNING id",
+  ).get(artistMbid) as { id: number };
+  dbModule.db.prepare(
+    "INSERT INTO ArtistMetadata (mbid, name) VALUES (?, 'Collab Owner')",
+  ).run(collabOwnerMbid);
+  const stereoLib = dbModule.db.prepare("SELECT id FROM Libraries WHERE name = 'Stereo'").get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO LibraryArtists (library_id, artist_metadata_id, policy, credited_scope)
+    VALUES (?, ?, 'all', 'primary_only')
+  `).run(stereoLib.id, artistRow.id);
+
+  // Seed one included studio album, one excluded compilation, and one credited collaboration.
+  dbModule.db.prepare(`
+    INSERT INTO Albums (mbid, artist_mbid, title, primary_type, secondary_types) VALUES
+      ('rg-studio-keep', ?, 'Studio Album', 'Album', '[]'),
+      ('rg-comp-skip', ?, 'Excluded Comp', 'Album', '["Compilation"]'),
+      ('rg-collab-skip', ?, 'Credited Collab', 'Single', '[]')
+  `).run(artistMbid, artistMbid, collabOwnerMbid);
+  const collabRg = dbModule.db.prepare("SELECT id FROM Albums WHERE mbid = 'rg-collab-skip'").get() as { id: number };
+  dbModule.db.prepare(`
+    INSERT INTO ArtistReleaseGroups (artist_metadata_id, artist_mbid, release_group_id, release_group_mbid, relationship)
+    VALUES (?, ?, ?, 'rg-collab-skip', 'credited')
+  `).run(artistRow.id, artistMbid, collabRg.id);
+
+  const originalSyncArtist = servarrMetadata.syncArtist;
+  const originalSyncReleaseGroups = servarrMetadata.syncArtistReleaseGroups;
+  const originalSyncCredited = MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist;
+  const originalRefreshMeta = refreshServiceModule.RefreshArtistService.refreshArtistMetadata;
+  let creditedSyncCalls = 0;
+  let hydratedMbids: string[] = [];
+
+  (refreshServiceModule.RefreshArtistService as any).refreshArtistMetadata = async () => undefined;
+  servarrMetadata.syncArtist = async () => ({ id: artistMbid, artistname: "Primary Only Artist", sortname: "Primary Only Artist", images: [], Albums: [] });
+  (MusicBrainzArtistCreditService as any).syncCreditedReleaseGroupsForArtist = async () => {
+    creditedSyncCalls += 1;
+    return { releaseGroups: 0, artists: 0, artistMbids: [] };
+  };
+  servarrMetadata.syncArtistReleaseGroups = async (_artistMbid: string, mbids: string[]) => {
+    hydratedMbids = [...mbids];
+  };
+
+  try {
+    await refreshServiceModule.RefreshArtistService.refreshArtist(artistMbid, {
+      forceUpdate: true,
+      deferProviderMatching: true,
+    });
+  } finally {
+    (refreshServiceModule.RefreshArtistService as any).refreshArtistMetadata = originalRefreshMeta;
+    servarrMetadata.syncArtist = originalSyncArtist;
+    servarrMetadata.syncArtistReleaseGroups = originalSyncReleaseGroups;
+    (MusicBrainzArtistCreditService as any).syncCreditedReleaseGroupsForArtist = originalSyncCredited;
+  }
+
+  assert.equal(creditedSyncCalls, 0, "primary_only artists must not run syncCreditedReleaseGroupsForArtist");
+  assert.deepEqual(hydratedMbids, ["rg-studio-keep"], "only included primary release groups are hydrated");
 });

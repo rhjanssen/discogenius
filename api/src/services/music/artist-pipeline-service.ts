@@ -1,4 +1,4 @@
-import { db, retrySqliteBusyAsync, withSqliteWriteGate } from "../../database.js";
+import { retrySqliteBusyAsync, withSqliteWriteGate } from "../../database.js";
 import { RefreshArtistService } from "./refresh-artist-service.js";
 import { DiskScanService, type ScanResult } from "../mediafiles/library-scan.js";
 import { parseScanFileFilter } from "../mediafiles/scan-file-filter.js";
@@ -10,7 +10,6 @@ import { getArtistWorkflowPhases, type ArtistWorkflow } from "./artist-workflow.
 import { appEvents, AppEvent } from "../commands/app-events.js";
 import { CommandTrigger } from "../commands/command-trigger.js";
 import type { RescanFoldersCommand } from "../commands/command-bodies.js";
-import { yieldToEventLoop } from "../../utils/concurrent.js";
 
 export interface ExecuteArtistPipelineOptions {
     artistId: string;
@@ -57,7 +56,6 @@ export class ArtistPipelineService {
         const { artistId, workflow } = options;
         const artistName = options.artistName || artistId;
         const phases = getArtistWorkflowPhases(workflow);
-        const cooperativeYield = options.yieldToEventLoop ?? yieldToEventLoop;
         const isCancelled = options.isCancelled ?? (() => false);
 
         options.onProgress?.(5, "preparing artist refresh");
@@ -93,39 +91,6 @@ export class ArtistPipelineService {
                 metadataChanged: refreshResult.metadataChanged,
                 isNewArtist: refreshResult.isNewArtist,
             };
-        }
-
-        // Collaborator cataloguing loop
-        if (
-            isArtistLibraryMonitored(artistId)
-            && refreshResult.creditedArtistMbids.length > 0
-        ) {
-            const uniqueMbids = Array.from(new Set(refreshResult.creditedArtistMbids));
-            const marks = uniqueMbids.map(() => "?").join(", ");
-            const untouched = db.prepare(`
-                SELECT mbid, name
-                FROM ArtistMetadata
-                WHERE mbid IN (${marks})
-                  AND content_hash IS NULL
-                ORDER BY name COLLATE NOCASE, mbid
-            `).all(...uniqueMbids) as Array<{ mbid: string; name: string }>;
-
-            for (let index = 0; index < untouched.length; index += 1) {
-                if (isCancelled()) break;
-                const credited = untouched[index];
-                options.onProgress?.(
-                    20 + Math.floor(((index + 1) / Math.max(untouched.length, 1)) * 5),
-                    `cataloguing collaborator ${index + 1}/${untouched.length}: ${credited.name}`,
-                );
-                await RefreshArtistService.refreshArtist(credited.mbid, {
-                    monitorArtist: false,
-                    hydrateCatalog: true,
-                    hydrateAlbumTracks: true,
-                    deferProviderMatching: true,
-                    forceUpdate: false,
-                });
-                await cooperativeYield();
-            }
         }
 
         const isMonitored = isArtistLibraryMonitored(artistId);

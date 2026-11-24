@@ -245,6 +245,19 @@ export class LibraryCurationRepository {
         ...(scopedArtistIds ?? []),
       ) as Array<{ id: number }>).map(({ id }) => id);
 
+      const affectedReleaseGroupIds = new Set<number>(selectedReleaseGroupIds);
+      if (scopedArtistIds && replaceableEditionRowIds.length > 0) {
+        for (const row of this.db.prepare(`
+          SELECT DISTINCT edition.release_group_id
+          FROM LibraryEditions monitored
+          JOIN AlbumEditions edition ON edition.id = monitored.edition_id
+          WHERE monitored.id IN ${SQL_JSON_LIST}
+        `).all(jsonList(replaceableEditionRowIds)) as Array<{ release_group_id: number }>) {
+          affectedReleaseGroupIds.add(row.release_group_id);
+        }
+      }
+      for (const rgId of overruledReleaseGroupIds) affectedReleaseGroupIds.add(rgId);
+
       if (replaceableEditionRowIds.length > 0) {
         const rowIds = jsonList(replaceableEditionRowIds);
         if (scopedArtistIds) {
@@ -408,62 +421,78 @@ export class LibraryCurationRepository {
         );
       }
 
-      // Repository Invariant Checks before completing transaction
-      // 1. Every selected release group has exactly one representative
-      const repCounts = this.db.prepare(`
-        SELECT
-          monitored_edition.library_id,
-          edition.release_group_id,
-          COUNT(*) AS monitored_editions,
-          SUM(CASE WHEN monitored_edition.representative = 1 THEN 1 ELSE 0 END) AS representatives
-        FROM LibraryEditions monitored_edition
-        JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
-        WHERE monitored_edition.library_id = ?
-        GROUP BY monitored_edition.library_id, edition.release_group_id
-        HAVING representatives != 1
-      `).all(input.libraryId) as Array<{ release_group_id: number; representatives: number }>;
+      // Repository Invariant Checks before completing transaction.
+      // Scope checks to affected release groups on per-artist passes so
+      // ApplyCuration does not full-scan every LibraryAlbum/LibraryEdition
+      // once per artist.
+      const affectedRgList = scopedArtistIds ? [...affectedReleaseGroupIds] : null;
+      const checkScopeEmpty = affectedRgList !== null && affectedRgList.length === 0;
 
-      if (repCounts.length > 0) {
-        throw new Error(
-          `Library curation invariant failure: release group(s) ${repCounts.map((r) => r.release_group_id).join(", ")} do not have exactly 1 representative`,
-        );
-      }
+      if (!checkScopeEmpty) {
+        const rgJson = affectedRgList ? jsonList(affectedRgList) : null;
+        const editionRgFilter = rgJson ? ` AND edition.release_group_id IN ${SQL_JSON_LIST}` : "";
+        const albumRgFilter = rgJson ? ` AND monitored_album.release_group_id IN ${SQL_JSON_LIST}` : "";
+        const filterArgs = rgJson ? [rgJson] : [];
 
-      // 3. Every selected edition has a corresponding LibraryAlbums row
-      const missingAlbums = this.db.prepare(`
-        SELECT monitored_edition.edition_id, edition.release_group_id
-        FROM LibraryEditions monitored_edition
-        JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
-        LEFT JOIN LibraryAlbums monitored_album
-          ON monitored_album.library_id = monitored_edition.library_id
-         AND monitored_album.release_group_id = edition.release_group_id
-        WHERE monitored_edition.library_id = ? AND monitored_album.id IS NULL
-      `).all(input.libraryId) as Array<{ edition_id: number }>;
+        // 1. Every selected release group has exactly one representative
+        const repCounts = this.db.prepare(`
+          SELECT
+            monitored_edition.library_id,
+            edition.release_group_id,
+            COUNT(*) AS monitored_editions,
+            SUM(CASE WHEN monitored_edition.representative = 1 THEN 1 ELSE 0 END) AS representatives
+          FROM LibraryEditions monitored_edition
+          JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+          WHERE monitored_edition.library_id = ?${editionRgFilter}
+          GROUP BY monitored_edition.library_id, edition.release_group_id
+          HAVING representatives != 1
+        `).all(input.libraryId, ...filterArgs) as Array<{ release_group_id: number; representatives: number }>;
 
-      if (missingAlbums.length > 0) {
-        throw new Error(
-          `Library curation invariant failure: monitored edition(s) ${missingAlbums.map((m) => m.edition_id).join(", ")} have no corresponding LibraryAlbums row`,
-        );
-      }
+        if (repCounts.length > 0) {
+          throw new Error(
+            `Library curation invariant failure: release group(s) ${repCounts.map((r) => r.release_group_id).join(", ")} do not have exactly 1 representative`,
+          );
+        }
 
-      // 4. No automatically managed LibraryAlbums row has zero LibraryEditions rows
-      const emptyAutoAlbums = this.db.prepare(`
-        SELECT monitored_album.release_group_id
-        FROM LibraryAlbums monitored_album
-        LEFT JOIN LibraryEditions monitored_edition
-          ON monitored_edition.library_id = monitored_album.library_id
-         AND monitored_edition.edition_id IN (
-           SELECT id FROM AlbumEditions WHERE release_group_id = monitored_album.release_group_id
-         )
-        WHERE monitored_album.library_id = ? AND monitored_album.selection_mode = 'auto'
-        GROUP BY monitored_album.id
-        HAVING COUNT(monitored_edition.id) = 0
-      `).all(input.libraryId) as Array<{ release_group_id: number }>;
+        // 3. Every selected edition has a corresponding LibraryAlbums row
+        const missingAlbums = this.db.prepare(`
+          SELECT monitored_edition.edition_id, edition.release_group_id
+          FROM LibraryEditions monitored_edition
+          JOIN AlbumEditions edition ON edition.id = monitored_edition.edition_id
+          LEFT JOIN LibraryAlbums monitored_album
+            ON monitored_album.library_id = monitored_edition.library_id
+           AND monitored_album.release_group_id = edition.release_group_id
+          WHERE monitored_edition.library_id = ?${editionRgFilter}
+            AND monitored_album.id IS NULL
+        `).all(input.libraryId, ...filterArgs) as Array<{ edition_id: number }>;
 
-      if (emptyAutoAlbums.length > 0) {
-        throw new Error(
-          `Library curation invariant failure: auto LibraryAlbums row(s) ${emptyAutoAlbums.map((a) => a.release_group_id).join(", ")} have zero monitored editions`,
-        );
+        if (missingAlbums.length > 0) {
+          throw new Error(
+            `Library curation invariant failure: monitored edition(s) ${missingAlbums.map((m) => m.edition_id).join(", ")} have no corresponding LibraryAlbums row`,
+          );
+        }
+
+        // 4. No automatically managed LibraryAlbums row has zero LibraryEditions rows
+        const emptyAutoAlbums = this.db.prepare(`
+          SELECT monitored_album.release_group_id
+          FROM LibraryAlbums monitored_album
+          WHERE monitored_album.library_id = ?${albumRgFilter}
+            AND monitored_album.selection_mode = 'auto'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM AlbumEditions edition
+              JOIN LibraryEditions monitored_edition
+                ON monitored_edition.library_id = monitored_album.library_id
+               AND monitored_edition.edition_id = edition.id
+              WHERE edition.release_group_id = monitored_album.release_group_id
+            )
+        `).all(input.libraryId, ...filterArgs) as Array<{ release_group_id: number }>;
+
+        if (emptyAutoAlbums.length > 0) {
+          throw new Error(
+            `Library curation invariant failure: auto LibraryAlbums row(s) ${emptyAutoAlbums.map((a) => a.release_group_id).join(", ")} have zero monitored editions`,
+          );
+        }
       }
     })();
   }

@@ -194,3 +194,78 @@ test("Servarr catalog without credited browse leaves credits empty instead of ca
   }
 });
 
+test("syncCreditedReleaseGroupsForArtist skips Various Artists compilations and excluded release types before ingesting (#179)", async () => {
+  const { catalogProviderRegistry } = await import("../catalog/index.js");
+  const { updateConfig } = await import("../config/config.js");
+  updateConfig("filtering", {
+    include_album: true,
+    include_single: true,
+    include_compilation: false,
+    include_interview: false,
+  });
+
+  const bastilleMbid = "7808accb-6395-4b25-858c-678bbb73896b";
+  const vaMbid = "89ad4ac3-39f7-470e-963a-56509c546377";
+  const otherMbid = "99999999-9999-4999-8999-999999999999";
+
+  const originalGetActive = catalogProviderRegistry.getActive.bind(catalogProviderRegistry);
+  catalogProviderRegistry.getActive = () => ({
+    id: "test-catalog",
+    getCreditedReleaseGroupsForArtist: async () => [
+      {
+        id: "rg-va-comp-skip",
+        title: "Now That's What I Call Music! 99",
+        primaryType: "Album",
+        secondaryTypes: ["Compilation"],
+        artistCredits: [
+          { artistId: vaMbid, name: "Various Artists", artistName: "Various Artists", joinPhrase: "" },
+        ],
+      },
+      {
+        id: "rg-va-plain-skip",
+        title: "Various Artists Sampler",
+        primaryType: "Album",
+        secondaryTypes: [],
+        artistCredits: [
+          { artistId: vaMbid, name: "Various Artists", artistName: "Various Artists", joinPhrase: "" },
+        ],
+      },
+      {
+        id: "rg-excluded-interview-skip",
+        title: "Radio Interview",
+        primaryType: "Album",
+        secondaryTypes: ["Interview"],
+        artistCredits: [
+          { artistId: otherMbid, name: "Interviewer", artistName: "Interviewer", joinPhrase: " & " },
+          { artistId: bastilleMbid, name: "Bastille", artistName: "Bastille", joinPhrase: "" },
+        ],
+      },
+      {
+        id: "rg-included-collab-keep",
+        title: "Included Collab Single",
+        primaryType: "Single",
+        secondaryTypes: [],
+        artistCredits: [
+          { artistId: otherMbid, name: "Interviewer", artistName: "Interviewer", joinPhrase: " & " },
+          { artistId: bastilleMbid, name: "Bastille", artistName: "Bastille", joinPhrase: "" },
+        ],
+      },
+    ],
+  }) as any;
+
+  try {
+    const result = await creditServiceModule.MusicBrainzArtistCreditService.syncCreditedReleaseGroupsForArtist(
+      bastilleMbid,
+    );
+    assert.equal(result.releaseGroups, 1);
+  } finally {
+    catalogProviderRegistry.getActive = originalGetActive;
+  }
+
+  assert.equal(dbModule.db.prepare("SELECT 1 FROM Albums WHERE mbid = 'rg-va-comp-skip'").get(), undefined);
+  assert.equal(dbModule.db.prepare("SELECT 1 FROM Albums WHERE mbid = 'rg-va-plain-skip'").get(), undefined);
+  assert.equal(dbModule.db.prepare("SELECT 1 FROM Albums WHERE mbid = 'rg-excluded-interview-skip'").get(), undefined);
+  assert.ok(dbModule.db.prepare("SELECT 1 FROM Albums WHERE mbid = 'rg-included-collab-keep'").get());
+  assert.equal(dbModule.db.prepare("SELECT 1 FROM ArtistMetadata WHERE mbid = ?").get(vaMbid), undefined);
+});
+

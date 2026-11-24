@@ -291,7 +291,7 @@ test("curation inserts the library rows, and row existence is the monitored stat
   );
 });
 
-test("an edition curation passed over still carries its plans as alternatives", () => {
+test("an edition curation passed over is not persisted in AcquisitionPlans but still surfaces on-demand plans as alternatives", () => {
   seedCatalog();
   ingestProviders();
   curate();
@@ -301,17 +301,17 @@ test("an edition curation passed over still carries its plans as alternatives", 
     .filter((editionId) => !monitored.includes(editionId));
   assert.ok(unmonitored.length > 0, "curation picked a subset, which is the point");
   for (const editionId of unmonitored) {
-    assert.ok(planCount(editionId) > 0,
-      `edition ${editionId} is unmonitored but still offerable`);
+    assert.equal(planCount(editionId), 0,
+      `unselected edition ${editionId} does not bloat AcquisitionPlans`);
   }
 
-  // ...and the Album page can see them.
+  // ...and the Album page still computes and shows them on demand.
   const availability = new LibraryReleaseSelectionService(db).getAvailability(ALBUM_MBID);
   const unmonitoredViews = availability.libraries[0].selections
     .filter((selection) => !selection.monitored);
   assert.ok(unmonitoredViews.length > 0);
   assert.ok(unmonitoredViews.every((selection) => selection.plans.length > 0),
-    "availability exposes plans beneath unmonitored editions");
+    "availability exposes on-demand plans beneath unmonitored editions");
   assert.ok(unmonitoredViews.every((selection) => selection.plan === null),
     "but none of them is the plan that executes");
 });

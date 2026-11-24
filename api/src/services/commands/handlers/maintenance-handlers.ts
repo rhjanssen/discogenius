@@ -35,6 +35,12 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         },
         yieldToEventLoop: () => ctx.yieldToEventLoop(),
     });
+    const catalogTotal =
+        summary.catalogPlansPruned
+        + summary.catalogAlbumsPruned
+        + summary.catalogEditionsPruned
+        + summary.catalogRecordingsPruned
+        + summary.catalogArtistsPruned;
     const parts = [
         `Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s)`,
         `${summary.staleTrackedAssetsRemoved} stale tracked asset row(s)`,
@@ -42,6 +48,7 @@ export const handleHousekeeping: CommandHandler<"Housekeeping"> = async (job, ct
         `${summary.orphanDownloadFoldersRemoved} orphan download folder(s)`,
         `corrected ${summary.videoQualitiesCorrected} video quality tag(s)`,
         `removed ${summary.unmonitoredFilesRemoved} unmonitored file(s)`,
+        ...(catalogTotal > 0 ? [`pruned ${catalogTotal} unreferenced catalog row(s)`] : []),
     ];
     const prefix = summary.timedOut ? "Housekeeping stopped at time limit; " : "";
     ctx.updateCommandDescription(job, {

@@ -69,7 +69,6 @@ test("ArtistPipelineService executes all 5 stages in order for monitoring-intake
       shouldHydrateCatalog: true,
       metadataChanged: true,
       isNewArtist: false,
-      creditedArtistMbids: [],
     };
   };
 
@@ -178,7 +177,6 @@ test("ArtistPipelineService respects workflow phases: refresh-scan skips curatio
       shouldHydrateCatalog: true,
       metadataChanged: false,
       isNewArtist: false,
-      creditedArtistMbids: [],
     };
   };
 
@@ -252,7 +250,6 @@ test("ArtistPipelineService for unmonitored artist stops after metadata refresh"
       shouldHydrateCatalog: true,
       metadataChanged: false,
       isNewArtist: true,
-      creditedArtistMbids: [],
     };
   };
 
@@ -296,7 +293,6 @@ test("queue missing downloads retries SQLITE_BUSY and does not swallow it", asyn
     shouldHydrateCatalog: true,
     metadataChanged: true,
     isNewArtist: false,
-    creditedArtistMbids: [],
   });
   (refreshServiceModule.RefreshArtistService as any).matchArtistProviders = async () => {};
   (diskScanModule.DiskScanService as any).scan = async () => ({
@@ -348,7 +344,7 @@ test("exhausted SQLITE_BUSY on queue missing downloads is not swallowed", async 
   const originalQueueDownloads = downloadMissingModule.DownloadMissingService.queueMonitoredItems;
 
   (refreshServiceModule.RefreshArtistService as any).refreshArtist = async (artistId: string) => ({
-    artistMbid: artistId, shouldHydrateCatalog: true, metadataChanged: false, isNewArtist: false, creditedArtistMbids: [],
+    artistMbid: artistId, shouldHydrateCatalog: true, metadataChanged: false, isNewArtist: false,
   });
   (refreshServiceModule.RefreshArtistService as any).matchArtistProviders = async () => {};
   (diskScanModule.DiskScanService as any).scan = async () => ({

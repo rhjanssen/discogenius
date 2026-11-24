@@ -11,6 +11,7 @@ import { resolvedPathIsInsideRoot } from "../mediafiles/path-utils.js";
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { buildLibraryArtistMonitoredExistsSql } from "../music/managed-artists.js";
+import { pruneUnreferencedCatalog } from "../catalog/catalog-pruning-service.js";
 
 export interface RuntimeMaintenanceSummary {
   duplicateLibraryFilesRemoved: number;
@@ -30,6 +31,16 @@ export interface RuntimeMaintenanceSummary {
   libraryRootsRepaired?: number;
   /** Files deleted because they belong to unmonitored albums/editions */
   unmonitoredFilesRemoved: number;
+  /** Unselected AcquisitionPlans pruned */
+  catalogPlansPruned: number;
+  /** Unreferenced non-library Albums pruned */
+  catalogAlbumsPruned: number;
+  /** Unreferenced filtering-excluded AlbumEditions pruned */
+  catalogEditionsPruned: number;
+  /** Orphaned audio Recordings pruned */
+  catalogRecordingsPruned: number;
+  /** Orphaned unmonitored ArtistMetadata pruned */
+  catalogArtistsPruned: number;
   /** True when the run stopped early due to reaching the hard time limit */
   timedOut?: boolean;
 }
@@ -256,6 +267,11 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
     videoQualitiesCorrected: 0,
     libraryRootsRepaired: 0,
     unmonitoredFilesRemoved: 0,
+    catalogPlansPruned: 0,
+    catalogAlbumsPruned: 0,
+    catalogEditionsPruned: 0,
+    catalogRecordingsPruned: 0,
+    catalogArtistsPruned: 0,
     timedOut: false,
   };
 
@@ -359,6 +375,26 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
   // rows makes the next scan mint new IDs for the same files and breaks linked
   // extras and durable file plans. Acquisition/import owns quality replacement.
 
+  // Step 6b: Bounded pruning of unreferenced non-library catalog rows so
+  // CompactDatabase can reclaim space on bloated SQLite databases.
+  if (isTimedOut()) { summary.timedOut = true; return summary; }
+  checkCancelled();
+  await yieldFn();
+  reportProgress(68, "Pruning unreferenced catalog rows");
+  // Bound catalog pruning to at most half the remaining budget (max 5 min) so
+  // stats refresh and command history pruning always finish in the same pass.
+  const catalogPruneDeadline = Math.min(deadline, Date.now() + Math.min(5 * 60 * 1000, Math.max(10_000, Math.floor((deadline - Date.now()) / 2))));
+  const catalogPruned = await pruneUnreferencedCatalog({
+    isCancelled: options?.isCancelled,
+    isTimedOut: () => isTimedOut() || Date.now() >= catalogPruneDeadline,
+    yieldToEventLoop: yieldFn,
+  });
+  summary.catalogPlansPruned = catalogPruned.acquisitionPlansPruned;
+  summary.catalogAlbumsPruned = catalogPruned.albumsPruned;
+  summary.catalogEditionsPruned = catalogPruned.editionsPruned;
+  summary.catalogRecordingsPruned = catalogPruned.recordingsPruned;
+  summary.catalogArtistsPruned = catalogPruned.artistsPruned;
+
   // Step 7: Refresh download state
   if (isTimedOut()) { summary.timedOut = true; return summary; }
   checkCancelled();
@@ -414,7 +450,12 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
     summary.orphanDownloadFoldersRemoved > 0 ||
     summary.staleTempDirsRemoved > 0 ||
     summary.videoQualitiesCorrected > 0 ||
-    summary.unmonitoredFilesRemoved > 0
+    summary.unmonitoredFilesRemoved > 0 ||
+    summary.catalogPlansPruned > 0 ||
+    summary.catalogAlbumsPruned > 0 ||
+    summary.catalogEditionsPruned > 0 ||
+    summary.catalogRecordingsPruned > 0 ||
+    summary.catalogArtistsPruned > 0
   ) {
     console.log(
       `[Maintenance] Removed ${summary.duplicateLibraryFilesRemoved} duplicate media file row(s), ` +
@@ -423,6 +464,9 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
       `${summary.orphanDownloadFoldersRemoved} orphan download folder(s), ` +
       `${summary.staleTempDirsRemoved} temp dir(s), ` +
       `${summary.unmonitoredFilesRemoved} unmonitored file(s), ` +
+      `pruned catalog (${summary.catalogPlansPruned} plan(s), ${summary.catalogAlbumsPruned} album(s), ` +
+      `${summary.catalogEditionsPruned} edition(s), ${summary.catalogRecordingsPruned} recording(s), ` +
+      `${summary.catalogArtistsPruned} artist(s)), ` +
       `corrected ${summary.videoQualitiesCorrected} video quality tag(s), refreshed ${summary.albumStatesRefreshed} albums and ` +
       `${summary.artistStatesRefreshed} artists.`,
     );

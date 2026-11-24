@@ -652,6 +652,30 @@ export class ServarrMetadataService {
   }
 
   async syncArtist(mbid: string): Promise<LidarrArtist> {
+    const normalizedMbid = String(mbid || "").trim().toLowerCase();
+    // Never mirror MusicBrainz's 280k+ Various Artists compilation catalogue
+    // into SQLite; keep only the lightweight ArtistMetadata identity row.
+    if (normalizedMbid === "89ad4ac3-39f7-470e-963a-56509c546377") {
+      await withSqliteWriteGate(() => {
+        db.prepare(`
+          INSERT INTO ArtistMetadata (mbid, name, sort_name, type, updated_at)
+          VALUES (?, 'Various Artists', 'Various Artists', 'Other', CURRENT_TIMESTAMP)
+          ON CONFLICT(mbid) DO UPDATE SET
+            name = 'Various Artists',
+            sort_name = COALESCE(ArtistMetadata.sort_name, 'Various Artists'),
+            updated_at = CURRENT_TIMESTAMP
+        `).run(normalizedMbid);
+      }, "servarr:various-artists-stub");
+      return {
+        id: normalizedMbid,
+        artistname: "Various Artists",
+        sortname: "Various Artists",
+        type: "Other",
+        images: [],
+        Albums: [],
+      };
+    }
+
     // Fetch via the ACTIVE catalog source (Servarr or MB-local Postgres). Both
     // return the same LidarrArtist DTO, so the write logic below is unchanged.
     // Dynamic import avoids the servarr↔catalog module cycle at init time.

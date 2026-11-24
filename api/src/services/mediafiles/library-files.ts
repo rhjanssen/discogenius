@@ -3053,21 +3053,23 @@ export class LibraryFilesService {
         if (!rows.length) break;
         cursor = rows[rows.length - 1].id;
         const missing: Array<{ row: typeof rows[number]; resolvedPath: string }> = [];
-
-        for (const row of rows) {
-          const resolvedPath = resolveStoredLibraryPath({
-            filePath: row.file_path,
-            libraryRoot: row.library_root,
-            relativePath: row.relative_path,
-          });
-
-          try {
-            await fs.promises.stat(resolvedPath);
-          } catch (error) {
-            if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) {
-              missing.push({ row, resolvedPath });
+        const STAT_CONCURRENCY = 16;
+        for (let i = 0; i < rows.length; i += STAT_CONCURRENCY) {
+          const chunk = rows.slice(i, i + STAT_CONCURRENCY);
+          await Promise.all(chunk.map(async (row) => {
+            const resolvedPath = resolveStoredLibraryPath({
+              filePath: row.file_path,
+              libraryRoot: row.library_root,
+              relativePath: row.relative_path,
+            });
+            try {
+              await fs.promises.stat(resolvedPath);
+            } catch (error) {
+              if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+                missing.push({ row, resolvedPath });
+              }
             }
-          }
+          }));
         }
         if (missing.length) await withSqliteWriteGate(() => db.transaction(() => {
           const remove = db.prepare(`DELETE FROM ${table.name} WHERE id = ?

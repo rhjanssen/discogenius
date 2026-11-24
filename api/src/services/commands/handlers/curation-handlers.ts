@@ -24,6 +24,7 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
     const artists = getManagedArtists({ orderByLastScanned: true, artistIds: selectedCurationArtistIds });
 
     let curated = 0;
+    const pendingStatsArtistIds: string[] = [];
     const failures: NonNullable<ApplyCurationCommand["curationFailures"]> = [];
 
     for (let i = 0; i < artists.length; i++) {
@@ -39,13 +40,20 @@ export const handleApplyCuration: CommandHandler<"ApplyCuration"> = async (job, 
 
         try {
             await CurationService.processAll(artistId);
-            await ArtistStatisticsService.refreshAsync([artistId]);
             curated++;
+            pendingStatsArtistIds.push(artistId);
+            if (pendingStatsArtistIds.length >= 20) {
+                const batch = pendingStatsArtistIds.splice(0, pendingStatsArtistIds.length);
+                await ArtistStatisticsService.refreshAsync(batch);
+            }
             await ctx.yieldToEventLoop();
         } catch (error: any) {
             failures.push({ artistId, artistName, error: String(error?.message || error).slice(0, 1000) });
             console.error(`[CommandExecutor] ApplyCuration: failed to curate ${artistName} (${artistId}):`, error?.message);
         }
+    }
+    if (pendingStatsArtistIds.length > 0) {
+        await ArtistStatisticsService.refreshAsync(pendingStatsArtistIds);
     }
 
     // A scoped curation only rebuilt part of the library, so it must not clear
