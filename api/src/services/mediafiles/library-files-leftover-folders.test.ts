@@ -236,3 +236,133 @@ test("case-insensitive Linux mount preserves monitored and retained tracks in mi
   }
 });
 
+test("case-insensitive Linux mount preserves monitored and tracked files in non-ASCII uppercase folders during prune (#184)", async () => {
+  const { setCaseSensitivityOverride, clearCaseSensitivityCache } = await import("./path-utils.js");
+
+  const musicRoot = configModule.Config.getMusicPath();
+  setCaseSensitivityOverride(musicRoot, true);
+  try {
+    const artistMbid = "unicode-artist-mbid";
+    db.prepare("INSERT INTO ArtistMetadata (mbid, name) VALUES (?, ?)")
+      .run(artistMbid, "Édith Piaf");
+    seedLibraryArtistMonitoring(db, artistMbid);
+    const artistId = (db.prepare("SELECT id FROM ArtistMetadata WHERE mbid = ?")
+      .get(artistMbid) as { id: number }).id;
+
+    const metaProfileId = (db.prepare("SELECT id FROM MetadataProfiles LIMIT 1").get() as { id: number }).id;
+    const qualityProfileId = (db.prepare("SELECT id FROM quality_profiles LIMIT 1").get() as { id: number }).id;
+    const libId = Number(db.prepare(`
+      INSERT INTO Libraries (name, root_path, metadata_profile_id, quality_profile_id, enabled)
+      VALUES ('ZFS Unicode Case Test', ?, ?, ?, 1)
+    `).run(musicRoot, metaProfileId, qualityProfileId).lastInsertRowid);
+
+    const rgMonId = (db.prepare(`
+      INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+      VALUES ('rg-unicode-mon', ?, ?, 'Österreich', 'Album') RETURNING id
+    `).get(artistMbid, artistId) as { id: number }).id;
+    const rgUnmonId = (db.prepare(`
+      INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+      VALUES ('rg-unicode-unmon', ?, ?, 'Österreich Old', 'Album') RETURNING id
+    `).get(artistMbid, artistId) as { id: number }).id;
+    const rgIstanbulId = (db.prepare(`
+      INSERT INTO Albums (mbid, artist_mbid, artist_metadata_id, title, primary_type)
+      VALUES ('rg-unicode-istanbul', ?, ?, 'İstanbul', 'Album') RETURNING id
+    `).get(artistMbid, artistId) as { id: number }).id;
+
+    const edMonId = (db.prepare(`
+      INSERT INTO AlbumEditions (mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id, title)
+      VALUES ('ed-unicode-mon', 'rg-unicode-mon', ?, ?, ?, 'Österreich') RETURNING id
+    `).get(rgMonId, artistMbid, artistId) as { id: number }).id;
+    const edUnmonId = (db.prepare(`
+      INSERT INTO AlbumEditions (mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id, title)
+      VALUES ('ed-unicode-unmon', 'rg-unicode-unmon', ?, ?, ?, 'Österreich Old') RETURNING id
+    `).get(rgUnmonId, artistMbid, artistId) as { id: number }).id;
+    const edIstanbulId = (db.prepare(`
+      INSERT INTO AlbumEditions (mbid, release_group_mbid, release_group_id, artist_mbid, artist_metadata_id, title)
+      VALUES ('ed-unicode-istanbul', 'rg-unicode-istanbul', ?, ?, ?, 'İstanbul') RETURNING id
+    `).get(rgIstanbulId, artistMbid, artistId) as { id: number }).id;
+
+    db.prepare(`
+      INSERT INTO LibraryAlbums (library_id, release_group_id, selection_mode, locked, curation_version)
+      VALUES (?, ?, 'auto', 0, 1)
+    `).run(libId, rgMonId);
+    db.prepare(`
+      INSERT INTO LibraryEditions (library_id, edition_id, selection_mode, curation_version, reason)
+      VALUES (?, ?, 'auto', 1, 'curation')
+    `).run(libId, edMonId);
+
+    const recSharedId = (db.prepare(`
+      INSERT INTO Recordings (mbid, artist_mbid, artist_metadata_id, title, is_video)
+      VALUES ('rec-unicode-shared', ?, ?, 'La Vie en Rose', 0) RETURNING id
+    `).get(artistMbid, artistId) as { id: number }).id;
+    const recUniqueId = (db.prepare(`
+      INSERT INTO Recordings (mbid, artist_mbid, artist_metadata_id, title, is_video)
+      VALUES ('rec-unicode-unique', ?, ?, 'Bosphorus', 0) RETURNING id
+    `).get(artistMbid, artistId) as { id: number }).id;
+
+    const artistDir = path.join(musicRoot, `Édith Piaf {mbid-${artistMbid}}`);
+    const sharedDir = path.join(artistDir, "Österreich (2012) {mbid-5bca186e-3dfb-4191-a3b1-8876d454c53c}");
+    const trackedPlainDir = path.join(artistDir, "Österreich (2012)");
+    const istanbulMbidDir = path.join(artistDir, "İstanbul (2014) {mbid-7bca186e-3dfb-4191-a3b1-8876d454c53d}");
+    const istanbulLeftoverDir = path.join(artistDir, "İstanbul (2014)");
+    for (const dir of [sharedDir, trackedPlainDir, istanbulMbidDir, istanbulLeftoverDir]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const monitoredTrack = path.join(sharedDir, "01 - La Vie en Rose.flac");
+    const unmonitoredRedundant = path.join(sharedDir, "01 - La Vie en Rose (Old).flac");
+    const trackedPlainTrack = path.join(trackedPlainDir, "01 - Track.flac");
+    const istanbulTracked = path.join(istanbulMbidDir, "01 - Bosphorus.flac");
+    const istanbulUntrackedMp3 = path.join(istanbulMbidDir, "01 - Bosphorus (Duplicate).mp3");
+    const istanbulLeftoverFile = path.join(istanbulLeftoverDir, "01 - Bosphorus.flac");
+    for (const filePath of [
+      monitoredTrack,
+      unmonitoredRedundant,
+      trackedPlainTrack,
+      istanbulTracked,
+      istanbulUntrackedMp3,
+      istanbulLeftoverFile,
+    ]) {
+      fs.writeFileSync(filePath, "fixture");
+    }
+
+    const insertRow = (
+      rgId: number,
+      edId: number,
+      recId: number,
+      rgMbid: string,
+      edMbid: string,
+      recMbid: string,
+      filePath: string,
+    ) => {
+      db.prepare(`
+        INSERT INTO TrackFiles (
+          artist_metadata_id, library_id, release_group_id, album_edition_id, recording_id,
+          canonical_release_group_mbid, canonical_release_mbid, canonical_recording_mbid,
+          library_slot, file_path, relative_path, library_root, filename, extension, file_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stereo', ?, ?, ?, ?, 'flac', 'track')
+      `).run(
+        artistId, libId, rgId, edId, recId, rgMbid, edMbid, recMbid,
+        filePath, path.relative(musicRoot, filePath), musicRoot, path.basename(filePath),
+      );
+    };
+
+    insertRow(rgMonId, edMonId, recSharedId, "rg-unicode-mon", "ed-unicode-mon", "rec-unicode-shared", monitoredTrack);
+    insertRow(rgUnmonId, edUnmonId, recSharedId, "rg-unicode-unmon", "ed-unicode-unmon", "rec-unicode-shared", unmonitoredRedundant);
+    insertRow(rgMonId, edMonId, recSharedId, "rg-unicode-mon", "ed-unicode-mon", "rec-unicode-shared", trackedPlainTrack);
+    insertRow(rgIstanbulId, edIstanbulId, recUniqueId, "rg-unicode-istanbul", "ed-unicode-istanbul", "rec-unicode-unique", istanbulTracked);
+
+    const res = LibraryFilesService.pruneUnmonitoredFiles(artistMbid);
+    assert.ok(res.deleted >= 1);
+    assert.equal(fs.existsSync(unmonitoredRedundant), false, "redundant unmonitored track should be deleted");
+    assert.equal(fs.existsSync(monitoredTrack), true, "monitored track under Édith Piaf/Österreich must survive");
+    assert.equal(fs.existsSync(trackedPlainTrack), true, "tracked non-MBID Österreich folder must survive");
+    assert.equal(fs.existsSync(istanbulTracked), true, "tracked file in unmonitored İstanbul folder must survive");
+    assert.equal(fs.existsSync(istanbulUntrackedMp3), false, "untracked duplicate mp3 in unmonitored İstanbul folder should be removed");
+    assert.equal(fs.existsSync(istanbulLeftoverFile), false, "genuinely untracked leftover İstanbul folder should still be cleaned up");
+  } finally {
+    clearCaseSensitivityCache();
+    db.prepare("DELETE FROM Libraries WHERE name = 'ZFS Unicode Case Test'").run();
+  }
+});
+

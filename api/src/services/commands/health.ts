@@ -401,14 +401,25 @@ const SUPERSEDED_AFTER_SQL = `(
 
 const DOWNLOAD_ALBUM_SUPERSEDED_SQL = `(
   f.name = 'DownloadAlbum'
-  AND COALESCE(json_extract(f.payload, '$.releaseGroupMbid'), json_extract(f.payload, '$.albumId')) IS NOT NULL
+  AND COALESCE(
+    NULLIF(CAST(json_extract(f.payload, '$.releaseGroupMbid') AS TEXT), ''),
+    NULLIF(CAST(json_extract(f.payload, '$.albumId') AS TEXT), '')
+  ) IS NOT NULL
   AND EXISTS (
     SELECT 1
     FROM commands s INDEXED BY idx_commands_status_name_completed
     WHERE s.status = 'completed'
       AND s.name = 'DownloadAlbum'
-      AND COALESCE(json_extract(s.payload, '$.releaseGroupMbid'), json_extract(s.payload, '$.albumId'))
-        = COALESCE(json_extract(f.payload, '$.releaseGroupMbid'), json_extract(f.payload, '$.albumId'))
+      AND (
+        NULLIF(CAST(json_extract(s.payload, '$.releaseGroupMbid') AS TEXT), '')
+          = NULLIF(CAST(json_extract(f.payload, '$.releaseGroupMbid') AS TEXT), '')
+        OR NULLIF(CAST(json_extract(s.payload, '$.albumId') AS TEXT), '')
+          = NULLIF(CAST(json_extract(f.payload, '$.albumId') AS TEXT), '')
+        OR NULLIF(CAST(json_extract(s.payload, '$.releaseGroupMbid') AS TEXT), '')
+          = NULLIF(CAST(json_extract(f.payload, '$.albumId') AS TEXT), '')
+        OR NULLIF(CAST(json_extract(s.payload, '$.albumId') AS TEXT), '')
+          = NULLIF(CAST(json_extract(f.payload, '$.releaseGroupMbid') AS TEXT), '')
+      )
       AND COALESCE(json_extract(s.payload, '$.libraryId'), 0)
         = COALESCE(json_extract(f.payload, '$.libraryId'), 0)
       AND ${SUPERSEDED_AFTER_SQL}

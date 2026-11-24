@@ -7,6 +7,7 @@ import { invalidateAllDownloadState } from "../download/download-state.js";
 import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-files.js";
 import { resolveLibraryRootPath } from "../mediafiles/library-paths.js";
+import { resolvedPathIsInsideRoot } from "../mediafiles/path-utils.js";
 import { deriveVideoQuality } from "../mediafiles/audioUtils.js";
 import { ArtistStatisticsService } from "../music/artist-statistics-service.js";
 import { buildLibraryArtistMonitoredExistsSql } from "../music/managed-artists.js";
@@ -162,6 +163,46 @@ export function correctVideoQualitiesFromDimensions(): number {
   return corrected;
 }
 
+function resolveContainingRootForRepair(
+  row: { file_path: string; library_root: string; linked_root_path: string | null },
+  fallbackRoots: readonly string[],
+): string | null {
+  if (!row.file_path || !path.isAbsolute(row.file_path)) return null;
+
+  const linkedRoot = String(row.linked_root_path || "").trim();
+  if (linkedRoot && path.isAbsolute(linkedRoot) && resolvedPathIsInsideRoot(row.file_path, linkedRoot)) {
+    return linkedRoot;
+  }
+
+  const labelRoot = resolveLibraryRootPath(row.library_root, row.file_path);
+  if (labelRoot && path.isAbsolute(labelRoot) && resolvedPathIsInsideRoot(row.file_path, labelRoot)) {
+    return labelRoot;
+  }
+
+  for (const candidate of fallbackRoots) {
+    if (resolvedPathIsInsideRoot(row.file_path, candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function relativePathInsideRoot(filePath: string, rootPath: string): string | null {
+  const rawRelative = path.relative(rootPath, filePath);
+  if (
+    rawRelative
+    && rawRelative !== ".."
+    && !rawRelative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(rawRelative)
+  ) {
+    return rawRelative;
+  }
+  const resolvedRootSegments = path.resolve(rootPath).replace(/[\\/]+$/, "").split(path.sep);
+  const resolvedFileSegments = path.resolve(filePath).split(path.sep);
+  if (resolvedFileSegments.length <= resolvedRootSegments.length) return null;
+  return resolvedFileSegments.slice(resolvedRootSegments.length).join(path.sep) || null;
+}
+
 /**
  * Repair TrackFiles rows whose library_root stored a root key label
  * ('music', 'spatial', 'videos') instead of the configured filesystem path.
@@ -175,6 +216,16 @@ export function repairTrackFileLibraryRootLabels(): number {
   `).all() as Array<{ id: number; file_path: string; library_root: string; linked_root_path: string | null }>;
   if (rows.length === 0) return 0;
 
+  const fallbackRoots = Array.from(new Set(
+    [
+      ...(db.prepare("SELECT root_path FROM Libraries WHERE root_path IS NOT NULL").all() as Array<{ root_path: string }>)
+        .map((r) => String(r.root_path || "").trim()),
+      Config.getMusicPath(),
+      Config.getSpatialPath(),
+      Config.getVideoPath(),
+    ].filter((candidate): candidate is string => Boolean(candidate) && path.isAbsolute(candidate)),
+  )).sort((a, b) => b.length - a.length);
+
   const update = db.prepare(`
     UPDATE TrackFiles
     SET library_root = ?, relative_path = ?
@@ -182,11 +233,10 @@ export function repairTrackFileLibraryRootLabels(): number {
   `);
   let repaired = 0;
   for (const row of rows) {
-    const linkedRoot = String(row.linked_root_path || "").trim();
-    const resolvedRoot = (linkedRoot && path.isAbsolute(linkedRoot) ? linkedRoot : null)
-      || resolveLibraryRootPath(row.library_root, row.file_path);
+    const resolvedRoot = resolveContainingRootForRepair(row, fallbackRoots);
     if (!resolvedRoot) continue;
-    const relativePath = path.relative(resolvedRoot, row.file_path);
+    const relativePath = relativePathInsideRoot(row.file_path, resolvedRoot);
+    if (!relativePath) continue;
     update.run(resolvedRoot, relativePath, row.id);
     repaired += 1;
   }

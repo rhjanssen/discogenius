@@ -304,6 +304,115 @@ test("superseded past failures do not count and past failures alone do not degra
   assert.equal(resolvedSnapshot.subsystems.imports.details?.latestFailureAt, null);
 });
 
+test("DownloadAlbum superseding matches across mismatched releaseGroupMbid and albumId payload keys (#184)", () => {
+  healthModule.runDeepDatabaseHealthCheck();
+
+  dbModule.db.prepare(`
+    INSERT INTO commands (
+      name, ref_id, payload, status, priority, created_at, completed_at, updated_at
+    ) VALUES
+      -- Failure has only albumId; later completion has both releaseGroupMbid and albumId
+      (
+        'DownloadAlbum',
+        'plan:1',
+        '{"albumId":"42","libraryId":1,"downloadState":{"state":"importFailed"}}',
+        'failed',
+        0,
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours')
+      ),
+      (
+        'DownloadAlbum',
+        'plan:2',
+        '{"releaseGroupMbid":"rg-1","albumId":"42","libraryId":1,"downloadState":{"state":"completed"}}',
+        'completed',
+        0,
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour')
+      ),
+      -- Failure has both releaseGroupMbid and albumId; later completion has only albumId
+      (
+        'DownloadAlbum',
+        'plan:3',
+        '{"releaseGroupMbid":"rg-2","albumId":"99","libraryId":1,"downloadState":{"state":"importFailed"}}',
+        'failed',
+        0,
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours')
+      ),
+      (
+        'DownloadAlbum',
+        'plan:4',
+        '{"albumId":"99","libraryId":1,"downloadState":{"state":"completed"}}',
+        'completed',
+        0,
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour')
+      ),
+      -- Failure stores MBID in albumId; later completion stores it in releaseGroupMbid
+      (
+        'DownloadAlbum',
+        'plan:5',
+        '{"albumId":"rg-3","libraryId":1,"downloadState":{"state":"importFailed"}}',
+        'failed',
+        0,
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours')
+      ),
+      (
+        'DownloadAlbum',
+        'plan:6',
+        '{"releaseGroupMbid":"rg-3","libraryId":1,"downloadState":{"state":"completed"}}',
+        'completed',
+        0,
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour')
+      ),
+      -- Numeric albumId vs string albumId
+      (
+        'DownloadAlbum',
+        'plan:7',
+        '{"albumId":77,"libraryId":1,"downloadState":{"state":"importFailed"}}',
+        'failed',
+        0,
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours')
+      ),
+      (
+        'DownloadAlbum',
+        'plan:8',
+        '{"releaseGroupMbid":"rg-4","albumId":"77","libraryId":1,"downloadState":{"state":"completed"}}',
+        'completed',
+        0,
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour'),
+        datetime('now', '-1 hour')
+      ),
+      -- Different libraryId must NOT supersede
+      (
+        'DownloadAlbum',
+        'plan:9',
+        '{"albumId":"42","libraryId":2,"downloadState":{"state":"importFailed"}}',
+        'failed',
+        0,
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours'),
+        datetime('now', '-2 hours')
+      )
+  `).run();
+
+  const snapshot = healthModule.collectHealthDiagnosticsSnapshot();
+  assert.equal(snapshot.subsystems.commandQueue.details?.failedLast24h, 1);
+  assert.equal(snapshot.subsystems.imports.details?.failedLast7Days, 1);
+});
+
 test("import health measures import progress rather than download start or pending time", () => {
   dbModule.db.prepare(`
     INSERT INTO commands (name, payload, status, priority, started_at, last_progress_at, updated_at)
