@@ -4,6 +4,7 @@ import path from "path";
 import { db, withSqliteWriteGate } from "../../database.js";
 import { Config, CONFIG_DIR } from "../config/config.js";
 import { invalidateAllDownloadState } from "../download/download-state.js";
+import { releaseUnconfirmedDownloadUnavailability } from "../download/offer-availability.js";
 import { DownloadWaitQueue } from "../download/download-wait-queue.js";
 import { LibraryFilesService, removeEmptyParents } from "../mediafiles/library-files.js";
 import { resolveLibraryRootPath } from "../mediafiles/library-paths.js";
@@ -400,7 +401,16 @@ export async function runRuntimeMaintenance(options?: RuntimeMaintenanceOptions)
   checkCancelled();
   await yieldFn();
   reportProgress(75, "Refreshing download state");
-  await withSqliteWriteGate(() => refreshDownloadState(summary), "housekeeping:download-state");
+  await withSqliteWriteGate(async () => {
+    const released = await releaseUnconfirmedDownloadUnavailability(db);
+    if (released.items || released.streaks) {
+      console.warn(
+        `[HOUSEKEEPING] Cleared ${released.items} unconfirmed unavailable offer(s) `
+        + `and ${released.streaks} failure streak(s)`,
+      );
+    }
+    refreshDownloadState(summary);
+  }, "housekeeping:download-state");
 
   // Step 8: Refresh artist statistics
   if (isTimedOut()) { summary.timedOut = true; return summary; }

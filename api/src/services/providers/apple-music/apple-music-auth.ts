@@ -1,3 +1,4 @@
+import dns from "node:dns";
 import fs from "fs";
 import net from "node:net";
 import path from "path";
@@ -309,7 +310,7 @@ let loginStatus: "idle" | "logging_in" | "waiting_for_2fa" | "success" | "failed
 let loginMessage = "";
 
 // Bump the marker when the script changes so existing installs pick up fixes.
-export const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v12";
+export const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v13";
 export const WRAPPER_ENTRYPOINT_SCRIPT = `#!/bin/bash
 # ${WRAPPER_ENTRYPOINT_VERSION} — managed by Discogenius, manual edits are overwritten.
 # Supervises the Apple Music decryption wrapper: serves decryption on ports
@@ -358,7 +359,8 @@ write_status() {
 }
 
 ports_bound() {
-    if awk '$2 ~ /:(2724|4E34)$/ { found=1; exit 0 } END { if (!found) exit 1 }' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+    # 0A is LISTEN. TIME_WAIT (06) must not count, or a finished server can never bind again.
+    if awk 'toupper($4) == "0A" && $2 ~ /:(2724|4E34)$/ { found=1; exit 0 } END { if (!found) exit 1 }' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
         return 0
     fi
     if timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10020 && exec 3>&-' 2>/dev/null; then
@@ -384,13 +386,22 @@ stop_server() {
         pause 1
         waited=$((waited + 1))
     done
-    if ports_bound; then
-        echo "[wrapper-manager] Warning: ports 10020/20020 still bound after 10s wait."
-    fi
 }
 
 start_server() {
     stop_server
+    if ports_bound; then
+        if timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10020 && exec 3>&-' 2>/dev/null && \\
+           timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/20020 && exec 3>&-' 2>/dev/null; then
+            echo "[wrapper-manager] Ports 10020/20020 still bound and answering. Not starting a second server."
+            if [ -f "$SESSION_MARKER" ]; then
+                write_status "success" "Decryption server is running with an active session."
+            fi
+            return 0
+        fi
+        echo "[wrapper-manager] Warning: ports 10020/20020 still bound after 10s wait. Not starting a second server."
+        return 1
+    fi
     exit_if_pid_namespace_exhausted
     echo "[wrapper-manager] Starting decryption server on ports 10020/20020..."
     : > "$SERVER_LOG"
@@ -742,22 +753,75 @@ export function reconcileWrapperLoginStatus(
   return saved;
 }
 
-function checkWrapperPort(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
+export type TcpPortLookup = (
+  hostname: string,
+  options: dns.LookupAllOptions,
+  callback: (err: NodeJS.ErrnoException | null, addresses: dns.LookupAddress[]) => void,
+) => void;
+
+const appleWrapperProcessStartedAt = Date.now();
+/** A deploy's sidecar is still binding while Discogenius is already serving. */
+export const APPLE_WRAPPER_STARTUP_GRACE_MS = 20_000;
+
+export function isAppleWrapperStartupGrace(now = Date.now()): boolean {
+  return now - appleWrapperProcessStartedAt < APPLE_WRAPPER_STARTUP_GRACE_MS;
+}
+
+/**
+ * Succeeds when any resolved address accepts. Docker DNS for the wrapper
+ * returns IPv6 first, and the sidecar listens on IPv4 only. One socket's
+ * first error must not cancel the other family's attempt.
+ */
+export function checkTcpPort(
+  host: string,
+  port: number,
+  timeoutMs = 3_000,
+  lookup: TcpPortLookup = dns.lookup,
+): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = net.createConnection({ host, port });
-    const done = (open: boolean) => {
-      socket.removeAllListeners();
-      socket.destroy();
+    let settled = false;
+    const finish = (open: boolean) => {
+      if (settled) return;
+      settled = true;
       resolve(open);
     };
-    socket.setTimeout(timeoutMs);
-    socket.on("connect", () => done(true));
-    socket.on("timeout", () => done(false));
-    socket.on("error", () => done(false));
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const tryAddress = (address: string, family: number) => new Promise<boolean>((ok) => {
+      const socket = net.createConnection({ host: address, port, family });
+      let doneOnce = false;
+      const done = (open: boolean) => {
+        if (doneOnce) return;
+        doneOnce = true;
+        socket.removeAllListeners();
+        socket.destroy();
+        ok(open);
+      };
+      socket.setTimeout(timeoutMs);
+      socket.once("connect", () => done(true));
+      socket.once("timeout", () => done(false));
+      socket.once("error", () => done(false));
+    });
+
+    lookup(host, { all: true, verbatim: true }, (err, addresses) => {
+      if (settled) return;
+      const targets = !err && addresses.length > 0 ? addresses : [{ address: host, family: 4 }];
+      void Promise.all(targets.map((entry) => tryAddress(entry.address, entry.family === 6 ? 6 : 4)))
+        .then((results) => {
+          clearTimeout(timer);
+          finish(results.some(Boolean));
+        });
+    });
   });
 }
 
-export async function getWrapperLoginStatus(): Promise<AppleWrapperLoginStatus> {
+function checkWrapperPort(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
+  return checkTcpPort(host, port, timeoutMs);
+}
+
+export async function getWrapperLoginStatus(deps: {
+  checkPort?: (host: string, port: number, timeoutMs?: number) => Promise<boolean>;
+  now?: number;
+} = {}): Promise<AppleWrapperLoginStatus> {
   let saved: AppleWrapperLoginStatus = { status: loginStatus, message: loginMessage };
   let savedAtMs: number | null = null;
   try {
@@ -778,10 +842,24 @@ export async function getWrapperLoginStatus(): Promise<AppleWrapperLoginStatus> 
   // success. It must not turn an in-progress login into a false failure.
   if (saved.status !== "success") return saved;
   const host = resolveAppleWrapperHost();
+  const checkPort = deps.checkPort ?? checkWrapperPort;
   const [decryptPortOpen, m3u8PortOpen] = await Promise.all([
-    checkWrapperPort(host, 10020),
-    checkWrapperPort(host, 20020),
+    checkPort(host, 10020),
+    checkPort(host, 20020),
   ]);
+  // The saved session file is old across deploys. A sidecar that is still
+  // binding for a few seconds is not a hold.
+  if (
+    saved.status === "success"
+    && (!decryptPortOpen || !m3u8PortOpen)
+    && hasAppleWrapperSession()
+    && isAppleWrapperStartupGrace(deps.now)
+  ) {
+    return {
+      status: "logging_in",
+      message: "The saved Apple Music session is active and the decryption wrapper is starting...",
+    };
+  }
   const reconciled = reconcileWrapperLoginStatus(saved, {
     decryptPortOpen,
     m3u8PortOpen,

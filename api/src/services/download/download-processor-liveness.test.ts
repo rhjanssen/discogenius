@@ -272,7 +272,7 @@ test('dead download worker requeues a resumable attempt and rejects every late l
     assert.equal(CommandQueueManager.complete(id, secondOwner), true);
 });
 
-test('an interrupted active import fails closed and preserves its staging evidence', () => {
+test('an interrupted active import is reparked and keeps its staging files', () => {
     const id = pushTrack('partial-import');
     const owner = 'download-attempt:importing';
     claim(id, owner);
@@ -307,12 +307,15 @@ test('an interrupted active import fails closed and preserves its staging eviden
         'Synthetic worker exit during import',
         new Date('2026-01-01T00:00:10.000Z'),
     );
-    assert.deepEqual(recovered, { requeued: 0, failed: 1, ignored: 0 });
-    const failed = CommandQueueManager.get(id)!;
-    assert.equal(failed.status, 'failed');
-    assert.equal(failed.blocked_reason, 'poisoned command');
-    assert.match(failed.error || '', /partially mutated library files/i);
-    assert.equal(CommandQueueManager.complete(id, owner), false);
+    assert.deepEqual(recovered, { requeued: 1, failed: 0, ignored: 0 });
+    const resumed = CommandQueueManager.get(id)!;
+    const resumedPayload = resumed.payload as {
+        downloadState?: { state?: string };
+        downloadImportHandoff?: { executionStartedAt?: string | null };
+    };
+    assert.equal(resumed.status, 'started');
+    assert.equal(resumedPayload.downloadState?.state, 'importPending');
+    assert.equal(resumedPayload.downloadImportHandoff?.executionStartedAt, null);
     assert.equal(fs.existsSync(stagedFile), true);
     const repairs = db.prepare("SELECT COUNT(*) AS count FROM commands WHERE name = ?").get(CommandNames.RetagFiles) as { count: number };
     assert.equal(repairs.count, 0, "an import that never recorded file ids does not invent a retag");
@@ -377,7 +380,7 @@ test("a tag-rule phase that ticks per file is not poisoned while the percent sta
     assert.equal(CommandQueueManager.get(id)?.blocked_reason ?? null, null);
 });
 
-test("a stuck tag-rule phase is poisoned and queues a retag of the files it touched", async () => {
+test("a stuck tag-rule phase is stopped and the import is resumed", async () => {
     const id = pushTrack("tag-stuck");
     const owner = "download-attempt:tag-stuck";
     claim(id, owner);
@@ -427,15 +430,17 @@ test("a stuck tag-rule phase is poisoned and queues a retag of the files it touc
         "Download worker watchdog detected stale execution",
         new Date("2026-01-01T00:00:10.000Z"),
     );
-    assert.deepEqual(recovered, { requeued: 0, failed: 1, ignored: 0 });
-    const failed = CommandQueueManager.get(id)!;
-    assert.equal(failed.status, "failed");
-    assert.equal(failed.blocked_reason, "poisoned command");
-    assert.match(failed.error || "", /not replayed/i);
-    const repairs = db.prepare("SELECT payload, ref_id FROM commands WHERE name = ?").all(CommandNames.RetagFiles) as Array<{ payload: string; ref_id: string }>;
-    assert.equal(repairs.length, 1);
-    assert.equal(repairs[0].ref_id, `import-tag-repair:${id}`);
-    assert.deepEqual(JSON.parse(repairs[0].payload).ids, [11, 22]);
+    assert.deepEqual(recovered, { requeued: 1, failed: 0, ignored: 0 });
+    const resumed = CommandQueueManager.get(id)!;
+    const resumedPayload = resumed.payload as {
+        downloadState?: { state?: string };
+        downloadImportHandoff?: { importTouchedFileIds?: number[] };
+    };
+    assert.equal(resumed.status, "started");
+    assert.equal(resumedPayload.downloadState?.state, "importPending");
+    assert.deepEqual(resumedPayload.downloadImportHandoff?.importTouchedFileIds, [11, 22, 11]);
+    const repairs = db.prepare("SELECT COUNT(*) AS count FROM commands WHERE name = ?").get(CommandNames.RetagFiles) as { count: number };
+    assert.equal(repairs.count, 0, "the resumed import tags the files itself");
 });
 
 test('a durable import-pending handoff is resumed on the same attempt without re-downloading', () => {
@@ -599,7 +604,7 @@ test('an import killed before its first file change is reparked and resumed on t
     assert.equal(CommandQueueManager.get(id)!.attempt, 2);
 });
 
-test('an import killed after its first file change still fails closed', () => {
+test('an import killed after its first file change is reparked for another import pass', () => {
     const id = pushTrack('mutated-import');
     const owner = 'download-attempt:mutated';
     claim(id, owner);
@@ -618,8 +623,11 @@ test('an import killed after its first file change still fails closed', () => {
         } as any,
     });
     const recovered = recoverInterruptedDownloadAttempts('Synthetic worker exit during import', new Date('2026-01-01T00:00:10.000Z'));
-    assert.deepEqual(recovered, { requeued: 0, failed: 1, ignored: 0 });
-    assert.equal(CommandQueueManager.get(id)!.status, 'failed');
+    assert.deepEqual(recovered, { requeued: 1, failed: 0, ignored: 0 });
+    const resumed = CommandQueueManager.get(id)!;
+    assert.equal(resumed.status, 'started');
+    assert.equal(resumed.payload.downloadState?.state, 'importPending');
+    assert.equal(resumed.attempt, 1);
 });
 
 test('a parked import-pending download keeps its attempt across restart recovery', () => {

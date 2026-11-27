@@ -174,13 +174,24 @@ function hasSpecificPermanentCause(text: string): boolean {
 }
 
 export function classifyDownloadFailure(error: unknown): DownloadFailureKind {
-  if (error instanceof ProviderUnavailableError) return "permanent";
+  if (error instanceof ProviderUnavailableError) {
+    // A ripper "Unavailable" line is not a catalogue fact. Retry it. A positive
+    // provider rejection (404, region, Deezer no-data) stays permanent so one
+    // attempt moves on, and the offer is marked only after a preview check.
+    if (error.availability !== "needs_cookies" && /Failed to dl aac-lc/i.test(error.message) && isAppleUnavailableTrackError(error.message)) {
+      return "transient";
+    }
+    return "permanent";
+  }
   const text = errorText(error);
   if (!text.trim()) {
     return "transient";
   }
-  if (isAppleUnavailableTrackError(text) || isAppleMediaUserTokenError(text)) {
+  if (isAppleMediaUserTokenError(text)) {
     return "permanent";
+  }
+  if (/Failed to dl aac-lc/i.test(text) && isAppleUnavailableTrackError(text)) {
+    return "transient";
   }
   if (isAppleTruncatedSegmentError(text)) {
     return "transient";

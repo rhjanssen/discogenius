@@ -90,6 +90,8 @@ export interface DownloadStatePayload {
   warningMessage?: string;
   primaryProvider?: string;
   fallbackProvider?: string;
+  /** Liveness tick. Not stored; it only moves last_progress_at and the lease. */
+  subphaseTick?: boolean;
 }
 
 export interface ResolvedDownloadMetadata {

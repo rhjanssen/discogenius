@@ -151,17 +151,17 @@ test("classifyDownloadFailure treats private YouTube and SoundCloud DRM as perma
   );
 });
 
-test("classifyDownloadFailure treats Apple unavailable track errors as permanent without same-offer retry (#98)", async () => {
-  assert.equal(classifyDownloadFailure(new Error("Failed to dl aac-lc: Unavailable")), "permanent");
-  assert.equal(classifyDownloadFailure(new Error("Failed to dl aac-lc via lite-server: Unavailable")), "permanent");
-  assert.equal(classifyDownloadFailure(new Error("apple-music-downloader exited with code 0: Failed to dl aac-lc: Unavailable")), "permanent");
+test("classifyDownloadFailure retries Apple ripper Unavailable instead of treating it as a catalogue miss", async () => {
+  assert.equal(classifyDownloadFailure(new Error("Failed to dl aac-lc: Unavailable")), "transient");
+  assert.equal(classifyDownloadFailure(new Error("Failed to dl aac-lc via lite-server: Unavailable")), "transient");
+  assert.equal(classifyDownloadFailure(new Error("apple-music-downloader exited with code 0: Failed to dl aac-lc: Unavailable")), "transient");
 
   let attempts = 0;
   await assert.rejects(executeWithSameOfferRetries({ sleep: async () => {} }, async () => {
     attempts++;
     throw new Error("Failed to dl aac-lc: Unavailable");
   }), /Failed to dl aac-lc: Unavailable/);
-  assert.equal(attempts, 1);
+  assert.equal(attempts, 3);
 });
 
 test("sameOfferBackoffMs doubles from base", () => {

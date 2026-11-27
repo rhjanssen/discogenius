@@ -722,6 +722,16 @@ test("exact acquisition-plan track wins without positional or ISRC rematching", 
     providerTrackId: "1422677787",
     providerTrackUrl: "https://music.apple.com/song/1422677787",
   }]);
+
+  dbModule.db.prepare(`
+    UPDATE ProviderItems
+    SET availability = 'unavailable', availability_reason = 'Confirmed unavailable: no preview'
+    WHERE provider = 'apple-music' AND entity_type = 'track' AND provider_id = '1422677787'
+  `).run();
+  const hidden = await readServiceModule.MusicBrainzReleaseGroupReadService.getTracks(releaseGroupMbid);
+  assert.deepEqual(hidden[0].remoteOffers, []);
+  assert.equal(hidden[0].preview_provider_track_id ?? null, null);
+  assert.equal(hidden[0].preview_provider ?? null, null);
 });
 
 

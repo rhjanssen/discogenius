@@ -1195,6 +1195,20 @@ export function collectHealthDiagnosticsSnapshot(
       statisticsCheck,
       catalogCheck,
       providerAuthCheck,
+      safeCheck("downloads.offerBugs", "Download failures after a working preview", () => {
+        const row = db.prepare(
+          "SELECT COUNT(*) AS count FROM config WHERE key LIKE 'download.offer_bug.%'",
+        ).get() as { count: number };
+        const count = Number(row?.count) || 0;
+        return {
+          scope: "downloads.offerBugs",
+          status: count > 0 ? "warning" : "ok",
+          message: count > 0
+            ? `${count} track(s) still preview but the download keeps failing`
+            : "No download failures after a working preview",
+          details: { count },
+        };
+      }),
       safeCheck("files.recovery", "File mutation recovery", () => {
         const failures = db.prepare(`SELECT
           (SELECT COUNT(*) FROM FileMutationJournal WHERE recovery_error IS NOT NULL) +

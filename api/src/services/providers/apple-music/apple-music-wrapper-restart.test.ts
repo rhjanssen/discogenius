@@ -17,9 +17,10 @@ function isDockerRunning(): boolean {
   }
 }
 
-test("entrypoint script contains v12 marker, setsid, pkill, readiness check, and crash-loop guidance", () => {
-  assert.equal(WRAPPER_ENTRYPOINT_VERSION, "discogenius-wrapper-entrypoint v12");
-  assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /# discogenius-wrapper-entrypoint v12/);
+test("entrypoint script contains v13 marker, setsid, pkill, readiness check, and crash-loop guidance", () => {
+  assert.equal(WRAPPER_ENTRYPOINT_VERSION, "discogenius-wrapper-entrypoint v13");
+  assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /# discogenius-wrapper-entrypoint v13/);
+  assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /Not starting a second server/);
   assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /pkill -9 -f "wrapper\.\*-M 20020"/);
   assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /setsid \.\/wrapper -M 20020 -D 10020 -H 0\.0\.0\.0/);
   assert.match(WRAPPER_ENTRYPOINT_SCRIPT, /stop_server/);

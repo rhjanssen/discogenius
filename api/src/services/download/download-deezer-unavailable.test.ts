@@ -27,7 +27,7 @@ test.after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("a delisted Deezer album is tried once, marked unavailable, and sent back to planning", async () => {
+test("a delisted Deezer album is tried once per job and marked unavailable after repeated failures", async () => {
   saveDeezerCredentials({ arl: "a".repeat(192) });
   db.prepare(`
     INSERT INTO ProviderItems (provider, entity_type, provider_id, title, availability)
@@ -42,29 +42,34 @@ test("a delisted Deezer album is tried once, marked unavailable, and sent back t
   assert.equal(getPendingAcquisitionPlanningRevision(), null);
 
   const processor = new DownloadProcessor() as any;
-  await assert.rejects(
-    () => processor.downloadItem(93001, "113031", "album", {
-      provider: "deezer",
-      providerId: "113031",
-      type: "album",
-      title: "Just Say Ozzy",
-      artist: "Ozzy Osbourne",
-    }, {
-      provider: "deezer",
-      type: "album",
-      providerId: "113031",
-      workerId: "deezer-unavailable-test",
-      abortController: new AbortController(),
-      cancelRequested: false,
-    }),
-    (error: unknown) => error instanceof ProviderUnavailableError,
-  );
+  const run = (commandId: number) => processor.downloadItem(commandId, "113031", "album", {
+    provider: "deezer",
+    providerId: "113031",
+    type: "album",
+    title: "Just Say Ozzy",
+    artist: "Ozzy Osbourne",
+  }, {
+    provider: "deezer",
+    type: "album",
+    providerId: "113031",
+    workerId: "deezer-unavailable-test",
+    abortController: new AbortController(),
+    cancelRequested: false,
+  });
 
+  await assert.rejects(run(93001), (error: unknown) => error instanceof ProviderUnavailableError);
   assert.equal(runs, 1, "an unavailable offer gets no same-offer retries");
-  const row = db.prepare(`
+  const availability = () => (db.prepare(`
     SELECT availability FROM ProviderItems
     WHERE provider = 'deezer' AND entity_type = 'release' AND provider_id = '113031'
-  `).get() as { availability: string };
-  assert.equal(row.availability, "unavailable");
+  `).get() as { availability: string }).availability;
+  assert.equal(availability(), "available");
+  assert.equal(getPendingAcquisitionPlanningRevision(), null);
+
+  await assert.rejects(run(93002), (error: unknown) => error instanceof ProviderUnavailableError);
+  assert.equal(availability(), "available");
+  await assert.rejects(run(93003), (error: unknown) => error instanceof ProviderUnavailableError);
+  assert.equal(runs, 3, "each job tries the delisted album once");
+  assert.equal(availability(), "unavailable");
   assert.notEqual(getPendingAcquisitionPlanningRevision(), null, "the next missing pass replans instead of requeueing this offer");
 });
