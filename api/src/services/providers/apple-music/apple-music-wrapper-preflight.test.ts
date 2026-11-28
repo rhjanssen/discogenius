@@ -12,7 +12,7 @@ function snap(portsOpen: boolean): AppleMusicDownloaderCapabilitySnapshot {
     downloaderConfigExists: true, downloaderWorkingDirectory: "/tmp",
   };
 }
-const fast = { initialTimeoutMs: 1, restartTimeoutMs: 30, pollMs: 1 };
+const fast = { initialTimeoutMs: 1, restartTimeoutMs: 30, pollMs: 1, now: Date.now() + 60_000 };
 
 test("open ports: no restart requested", async () => {
   let restarts = 0;
@@ -26,6 +26,21 @@ test("hung wrapper: restart requested, then proceeds once ports answer", async (
     ...fast, readSnapshot: async () => snap(restarted), requestRestart: () => (restarted = true),
   });
   assert.equal(result.wrapperDecryptPortOpen, true);
+});
+
+test("startup grace does not restart a wrapper that is still binding", async () => {
+  let restarts = 0;
+  await assert.rejects(
+    ensureAppleWrapperReadyForDownload({
+      initialTimeoutMs: 1,
+      pollMs: 1,
+      now: Date.now(),
+      readSnapshot: async () => snap(false),
+      requestRestart: () => (restarts++, true),
+    }),
+    (error: unknown) => error instanceof ProviderAuthError && error.code === "wrapper_unreachable",
+  );
+  assert.equal(restarts, 0);
 });
 
 test("still down after restart: provider hold instead of a per-album failure", async () => {
