@@ -693,6 +693,7 @@ async function prepareWorkspaceForLibraryProfile(
     downloadPath: string,
     libraryId: number,
     isCancelled?: () => boolean,
+    onFile?: (index: number, total: number) => void,
 ): Promise<Map<string, PreparedImportQuality>> {
     const library = db.prepare(`
         SELECT quality_profile_id FROM Libraries WHERE id = ? AND enabled = 1
@@ -748,7 +749,9 @@ async function prepareWorkspaceForLibraryProfile(
                 : `No audio files to import for ${profile.name}`,
         );
     }
-    for (const { filePath, decision } of assessed) {
+    for (let index = 0; index < assessed.length; index += 1) {
+        const { filePath, decision } = assessed[index];
+        onFile?.(index + 1, assessed.length);
         if (isCancelled?.()) throw new ImportDownloadCancelledError("quality-profile conversion");
         if (!decision.accepted || !decision.importedQuality) {
             console.warn(
@@ -1565,6 +1568,17 @@ export class DownloadedTracksImportService {
                     downloadPath,
                     job.payload.libraryId,
                     options.isCancelled,
+                    (index, total) => {
+                        options.updateState({
+                            progress: 12,
+                            description: "ImportDownload: applying quality profile",
+                            statusMessage: `Checking audio quality ${index}/${total}`,
+                            currentFileNum: index,
+                            totalFiles: total,
+                            state: "importing",
+                            subphaseTick: true,
+                        });
+                    },
                 );
             }
             options.updateState({

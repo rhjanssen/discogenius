@@ -1,7 +1,6 @@
 import { spawnDownloadProcess as spawn } from "../../download/download-child-process.js";
 import fs from "fs";
 import path from "path";
-import net from "net";
 import { setTimeout as wait } from "node:timers/promises";
 import { DownloadBackend, DownloadRequest, DownloadProgress } from "../../download/download-backend.js";
 import { Config } from "../../config/config.js";
@@ -14,6 +13,7 @@ import {
   loadStoredAppleMusicToken,
   resolveAppleStorefront,
   resolveAppleVideoMaxHeight,
+  checkTcpPort,
   requestWrapperServerRestart,
   resolveAppleWrapperHost,
   syncTokenToDownloader,
@@ -28,8 +28,9 @@ import {
 import { recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
 
 export { isAppleTruncatedSegmentError, APPLE_TRUNCATED_SEGMENT_PATTERN };
+import { assessOfferDownloadFailure, type StreamProbeResult } from "../../download/offer-availability.js";
 import { ProviderUnavailableError } from "../../download/provider-unavailable-error.js";
-import { db, withSqliteWriteGate } from "../../../database.js";
+import { db } from "../../../database.js";
 import { markAcquisitionPlanningStale } from "../../music/acquisition-planning-control.js";
 import { appleMusicQualityMapping } from "./apple-music-quality.js";
 import { getAppleAlbumTracks } from "./apple-music-catalog.js";
@@ -154,22 +155,22 @@ export async function recordUnavailableAppleTrack(
   deps: {
     database?: import("better-sqlite3").Database;
     markStale?: () => string;
+    probe?: () => Promise<StreamProbeResult>;
   } = {},
 ): Promise<void> {
   try {
     const database = deps.database ?? (db as import("better-sqlite3").Database | undefined);
     if (!database) return;
-    const markStale = deps.markStale ?? markAcquisitionPlanningStale;
-    await withSqliteWriteGate(() => {
-      database.prepare(`
-        UPDATE ProviderItems
-        SET availability = 'unavailable', availability_reason = ?, checked_at = ?
-        WHERE provider = 'apple-music' AND entity_type = 'track' AND provider_id = ?
-      `).run(reason, new Date().toISOString(), providerTrackId);
-      markStale();
-    }, "apple-music:record-unavailable-track");
+    const result = await assessOfferDownloadFailure(database, {
+      provider: "apple-music",
+      entityType: "track",
+      providerId: providerTrackId,
+      error: new Error(reason),
+      probe: deps.probe,
+    });
+    if (result.markedUnavailable) (deps.markStale ?? markAcquisitionPlanningStale)();
   } catch (error) {
-    console.warn(`[APPLE-MUSIC] Failed to mark track ${providerTrackId} unavailable:`, error);
+    console.warn(`[APPLE-MUSIC] Failed to record track ${providerTrackId} download failure:`, error);
   }
 }
 
@@ -261,18 +262,7 @@ function commandExists(command: string): boolean {
 }
 
 function checkPort(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.createConnection({ host, port });
-    const done = (ok: boolean) => {
-      socket.removeAllListeners();
-      socket.destroy();
-      resolve(ok);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.on("connect", () => done(true));
-    socket.on("timeout", () => done(false));
-    socket.on("error", () => done(false));
-  });
+  return checkTcpPort(host, port, timeoutMs);
 }
 
 export type AppleMusicDownloaderCapabilitySnapshot = {
@@ -368,6 +358,10 @@ export async function ensureAppleWrapperReadyForDownload(
     signal: deps.signal, timeoutMs: deps.initialTimeoutMs ?? 10_000, pollMs,
   });
   let missing = describeAppleDownloaderMissingPrerequisites(snapshot);
+  if (!onlyWrapperPortsMissing(snapshot, missing)) return snapshot;
+  // One more read before killing a server that just answered.
+  snapshot = await readSnapshot();
+  missing = describeAppleDownloaderMissingPrerequisites(snapshot);
   if (!onlyWrapperPortsMissing(snapshot, missing)) return snapshot;
 
   console.warn(`[APPLE-MUSIC] Decryption wrapper unreachable before download (${missing.join(", ")}); requesting wrapper restart.`);

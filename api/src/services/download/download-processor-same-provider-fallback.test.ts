@@ -307,13 +307,14 @@ test("downloadAlbumTrackOffers downloads available tracks and completes with war
     // Track 2 was downloaded despite Track 1 being unavailable
     assert.deepEqual(downloadedTracks, ["apple-track-2"]);
 
-    // Track 1 recorded as unavailable in ProviderItems
+    // One ripper Unavailable line is not a catalogue fact. The offer stays
+    // retryable until a preview check confirms it.
     const row = db.prepare(`
       SELECT availability, availability_reason FROM ProviderItems
       WHERE provider = 'apple-music' AND entity_type = 'track' AND provider_id = 'apple-track-1'
-    `).get() as { availability: string; availability_reason: string };
-    assert.equal(row.availability, "unavailable");
-    assert.equal(row.availability_reason, "Failed to dl aac-lc: Unavailable");
+    `).get() as { availability: string; availability_reason: string | null };
+    assert.equal(row.availability, "available");
+    assert.equal(row.availability_reason, null);
 
     // Finished with outcome completedWithWarning
     const finishState = progressEmissions.find((p) => p.outcome === "completedWithWarning");

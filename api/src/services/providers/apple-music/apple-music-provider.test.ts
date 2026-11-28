@@ -1095,7 +1095,7 @@ test("Apple downloader backend rejects when all album tracks are unavailable", a
   );
 });
 
-test("recordUnavailableAppleTrack writes unavailable status to ProviderItems and marks planning stale", async () => {
+test("recordUnavailableAppleTrack does not stick unavailable on the first ripper Unavailable line", async () => {
   const { initDatabase, db } = await import("../../../database.js");
   initDatabase();
   const testTrackId = "999999999";
@@ -1114,14 +1114,14 @@ test("recordUnavailableAppleTrack writes unavailable status to ProviderItems and
     },
   });
 
-  assert.equal(staleCalled, true);
+  assert.equal(staleCalled, false);
   const row = db.prepare(`
     SELECT availability, availability_reason FROM ProviderItems
     WHERE provider = 'apple-music' AND entity_type = 'track' AND provider_id = ?
-  `).get(testTrackId) as { availability: string; availability_reason: string };
+  `).get(testTrackId) as { availability: string; availability_reason: string | null };
 
-  assert.equal(row.availability, "unavailable");
-  assert.equal(row.availability_reason, "Failed to dl aac-lc: Unavailable");
+  assert.equal(row.availability, "available");
+  assert.equal(row.availability_reason, null);
 });
 
 test("Apple downloader backend resumes remaining tracks when exit-on-error stops album after unavailable track", async () => {

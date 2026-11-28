@@ -20,6 +20,7 @@ import { getConfigSection } from "../config/config.js";
 import { AlbumTrackListNavigationService } from "../music/album-track-list-navigation-service.js";
 import { libraryArtistMonitoredSelectSql } from "../music/managed-artists.js";
 import { planTrackDisplayQualitySql } from "../../utils/display-quality-sql.js";
+import { providerItemAvailableSql } from "../download/offer-availability.js";
 import { getReleaseGroupDownloadStatsMap } from "../download/download-state.js";
 import { PROVIDER_REPRESENTS_EDITION_SQL } from "../music/provider-represents-edition.js";
 
@@ -1151,6 +1152,7 @@ function loadPlannedTrackOffers(releaseGroupMbid: string, targetReleaseMbid: str
         WHERE release_group.mbid = ?
           -- The plan being rendered is this edition's, not a sibling's.
           AND release.mbid = ?
+          AND ${providerItemAvailableSql("provider_track.availability", "provider_track.provider")}
       )
       SELECT
         track_mbid,
