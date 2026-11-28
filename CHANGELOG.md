@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.27.5] - 2026-11-28
+
+### Fixed
+
+- Apple Music downloads no longer restart a wrapper that is already working. A port check that saw IPv6 first was treating a healthy IPv4 wrapper as down, including when the IPv6 attempt simply hung.
+- Tracks that still have a working preview are no longer marked permanently unavailable after one failed download. After a few failures, Discogenius checks the preview once and marks the track unavailable only when that check fails. On startup, older unconfirmed marks are cleared so those albums are tried again. A track that is truly unavailable no longer keeps its provider badge.
+- Long "Checking track availability" and import steps report progress, so the download worker does not kill them. An import that was interrupted is run again instead of being left failed with files on disk.
+
 ## [2.27.4] - 2026-11-24
 
 ### Changed
