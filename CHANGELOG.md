@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.27.6] - 2026-11-28
+
+### Fixed
+
+- Apple downloads are no longer left waiting on a "decryption server is stuck" message from before an upgrade. As soon as the wrapper ports accept connections, that hold is cleared and the albums can download.
+- Starting Discogenius no longer restarts the Apple wrapper while it is still coming up, and does not put a working Apple install on hold during those first seconds.
+
 ## [2.27.5] - 2026-11-28
 
 ### Fixed
