@@ -2,7 +2,7 @@
 
 - **Branch**: `cursor/download-reliability-7af7`, from `main` (`3acad553`, release 2.27.4).
 - **Done**:
-  - **#187**: Apple port checks try every resolved address, so an IPv6 `ECONNREFUSED` no longer cancels the IPv4 listener. A second read happens before `restart_server.txt` is written. The first 20s after process start do not hold Apple while the sidecar is still binding. The wrapper supervisor (entrypoint v13) does not fork a second server while 10020/20020 are still listening.
+  - **#187**: Apple port checks try every resolved address and return as soon as one accepts, so an IPv6 refusal or a hanging IPv6 connect no longer cancels or outwaits the IPv4 listener. A second read happens before `restart_server.txt` is written. The first 20s after process start do not hold Apple while the sidecar is still binding. The wrapper supervisor (entrypoint v13) does not fork a second server while 10020/20020 are still listening.
   - **#189**: A ripper `Unavailable` (and the same class of download failure) is counted, not stored as permanent on the first hit. After the existing threshold, one preview/stream check decides: a working preview stays retryable and is counted on the health page; a failed preview is the only write of `unavailable` (`Confirmed unavailable:`). Startup and housekeeping clear unconfirmed download marks and in-progress streaks. The album tracklist hides a confirmed-unavailable offer.
   - **Download watchdog**: availability checks and quality-profile conversion tick progress. An interrupted import is reparked and run again instead of failed as "not replayed".
 - **Half-done**: none. Release is next, after this branch is merged.

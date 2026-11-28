@@ -41,6 +41,24 @@ test("IPv6-first DNS still counts an IPv4-only listener as open", async () => {
   }
 });
 
+test("a hanging address does not hide an address that already accepted", async () => {
+  const { server, port } = await listenOnV4();
+  const started = Date.now();
+  try {
+    const open = await checkTcpPort("apple-music-wrapper", port, 3_000, (_host, _options, callback) => {
+      callback(null, [
+        { address: "192.0.2.1", family: 4 },
+        { address: "127.0.0.1", family: 4 },
+      ]);
+    });
+    assert.equal(open, true);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1_000, `returned in ${elapsed}ms; a hanging address must not use the whole timeout`);
+  } finally {
+    await new Promise((resolve) => server.close(() => resolve(undefined)));
+  }
+});
+
 test("a port that refuses every address is closed", async () => {
   const { server, port } = await listenOnV4();
   await new Promise((resolve) => server.close(() => resolve(undefined)));

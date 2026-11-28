@@ -769,8 +769,8 @@ export function isAppleWrapperStartupGrace(now = Date.now()): boolean {
 
 /**
  * Succeeds when any resolved address accepts. Docker DNS for the wrapper
- * returns IPv6 first, and the sidecar listens on IPv4 only. One socket's
- * first error must not cancel the other family's attempt.
+ * returns IPv6 first, and the sidecar listens on IPv4 only. A refused or
+ * hanging address must not cancel, or outwait, an address that already accepted.
  */
 export function checkTcpPort(
   host: string,
@@ -780,36 +780,50 @@ export function checkTcpPort(
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
+    const sockets: net.Socket[] = [];
     const finish = (open: boolean) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
+      for (const socket of sockets) {
+        socket.removeAllListeners();
+        socket.destroy();
+      }
       resolve(open);
     };
     const timer = setTimeout(() => finish(false), timeoutMs);
-    const tryAddress = (address: string, family: number) => new Promise<boolean>((ok) => {
-      const socket = net.createConnection({ host: address, port, family });
-      let doneOnce = false;
-      const done = (open: boolean) => {
-        if (doneOnce) return;
-        doneOnce = true;
-        socket.removeAllListeners();
-        socket.destroy();
-        ok(open);
-      };
-      socket.setTimeout(timeoutMs);
-      socket.once("connect", () => done(true));
-      socket.once("timeout", () => done(false));
-      socket.once("error", () => done(false));
-    });
 
     lookup(host, { all: true, verbatim: true }, (err, addresses) => {
       if (settled) return;
       const targets = !err && addresses.length > 0 ? addresses : [{ address: host, family: 4 }];
-      void Promise.all(targets.map((entry) => tryAddress(entry.address, entry.family === 6 ? 6 : 4)))
-        .then((results) => {
-          clearTimeout(timer);
-          finish(results.some(Boolean));
+      if (targets.length === 0) {
+        finish(false);
+        return;
+      }
+      let pending = targets.length;
+      for (const entry of targets) {
+        const socket = net.createConnection({
+          host: entry.address,
+          port,
+          family: entry.family === 6 ? 6 : 4,
         });
+        sockets.push(socket);
+        let doneOnce = false;
+        const done = (open: boolean) => {
+          if (doneOnce || settled) return;
+          doneOnce = true;
+          if (open) {
+            finish(true);
+            return;
+          }
+          pending -= 1;
+          if (pending === 0) finish(false);
+        };
+        socket.setTimeout(timeoutMs);
+        socket.once("connect", () => done(true));
+        socket.once("timeout", () => done(false));
+        socket.once("error", () => done(false));
+      }
     });
   });
 }
