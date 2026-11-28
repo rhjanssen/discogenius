@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test, beforeEach } from "node:test";
 
 import {
+  appleWrapperStartupProbeAction,
   runAppleWrapperHoldProbe,
   reconcileWrapperLoginStatus,
   probeAppleWrapperHealth,
@@ -16,6 +17,13 @@ import { providerAuthCopy } from "../provider-auth-state.js";
 
 beforeEach(() => {
   resetAppleWrapperRestartState();
+});
+
+test("startup probe does not health-check a working Apple install while the sidecar is still binding", () => {
+  assert.equal(appleWrapperStartupProbeAction(true, true, Date.now()), "hold");
+  assert.equal(appleWrapperStartupProbeAction(false, true, Date.now()), "skip");
+  assert.equal(appleWrapperStartupProbeAction(false, true, Date.now() + 120_000), "health");
+  assert.equal(appleWrapperStartupProbeAction(false, false, Date.now() + 120_000), "skip");
 });
 
 test("hold probe: no wrapper check while Apple is not held", async () => {

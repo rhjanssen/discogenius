@@ -1190,10 +1190,25 @@ export async function runAppleWrapperHoldProbe(
   return "still_held";
 }
 
+/** What the startup/interval tick should do. A healthy install must not be held while the sidecar is still binding. */
+export function appleWrapperStartupProbeAction(
+  needsReauth: boolean,
+  hasToken: boolean,
+  now = Date.now(),
+): "hold" | "health" | "skip" {
+  if (needsReauth) return "hold";
+  if (!hasToken || isAppleWrapperStartupGrace(now)) return "skip";
+  return "health";
+}
+
 export function startAppleWrapperHoldProbeLoop(): void {
   if (appleHoldProbeLoop) return;
   const tick = () => {
-    if (providerNeedsReauth("apple-music")) {
+    const action = appleWrapperStartupProbeAction(
+      providerNeedsReauth("apple-music"),
+      Boolean(loadStoredAppleMusicToken()),
+    );
+    if (action === "hold") {
       void runAppleWrapperHoldProbe()
         .then((result) => {
           if (result === "cleared") console.log("[APPLE] Wrapper answers again; released held Apple downloads.");
@@ -1201,7 +1216,7 @@ export function startAppleWrapperHoldProbeLoop(): void {
         .catch((error) => {
           console.error("[APPLE] Wrapper hold probe failed:", error instanceof Error ? error.message : "unknown");
         });
-    } else if (loadStoredAppleMusicToken()) {
+    } else if (action === "health") {
       void probeAppleWrapperHealth().catch((error) => {
         console.error("[APPLE] Wrapper health probe failed:", error instanceof Error ? error.message : "unknown");
       });
