@@ -310,7 +310,7 @@ let loginStatus: "idle" | "logging_in" | "waiting_for_2fa" | "success" | "failed
 let loginMessage = "";
 
 // Bump the marker when the script changes so existing installs pick up fixes.
-export const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v13";
+export const WRAPPER_ENTRYPOINT_VERSION = "discogenius-wrapper-entrypoint v14";
 export const WRAPPER_ENTRYPOINT_SCRIPT = `#!/bin/bash
 # ${WRAPPER_ENTRYPOINT_VERSION} — managed by Discogenius, manual edits are overwritten.
 # Supervises the Apple Music decryption wrapper: serves decryption on ports
@@ -468,6 +468,9 @@ login_error_message() {
 }
 
 echo "[wrapper-manager] Discogenius wrapper supervisor starting..."
+# A restart file from the previous process is stale. Consuming it here would
+# kill the server this process is about to start.
+rm -f "$RESTART_FILE"
 stop_server
 if [ -f "$SESSION_MARKER" ]; then
     echo "[wrapper-manager] Active session detected."
@@ -764,7 +767,8 @@ const appleWrapperProcessStartedAt = Date.now();
 export const APPLE_WRAPPER_STARTUP_GRACE_MS = 20_000;
 
 export function isAppleWrapperStartupGrace(now = Date.now()): boolean {
-  return now - appleWrapperProcessStartedAt < APPLE_WRAPPER_STARTUP_GRACE_MS;
+  return now >= appleWrapperProcessStartedAt
+    && now - appleWrapperProcessStartedAt < APPLE_WRAPPER_STARTUP_GRACE_MS;
 }
 
 /**
@@ -795,7 +799,12 @@ export function checkTcpPort(
 
     lookup(host, { all: true, verbatim: true }, (err, addresses) => {
       if (settled) return;
-      const targets = !err && addresses.length > 0 ? addresses : [{ address: host, family: 4 }];
+      const targets = !err && addresses.length > 0 ? [...addresses] : [{ address: host, family: 4 }];
+      // Docker DNS can answer with only the IPv6 address. The wrapper listens
+      // on IPv4, so also ask the OS for an A record of the original hostname.
+      if (net.isIP(host) === 0 && !targets.some((entry) => entry.family === 4)) {
+        targets.push({ address: host, family: 4 });
+      }
       if (targets.length === 0) {
         finish(false);
         return;
@@ -1091,10 +1100,23 @@ export const APPLE_WRAPPER_HOLD_PROBE_INTERVAL_MS = 2 * 60 * 1000;
 
 let appleHoldProbeLoop: ReturnType<typeof setInterval> | null = null;
 
+async function wrapperPortsOpen(
+  checkPort: (host: string, port: number) => Promise<boolean> = checkWrapperPort,
+): Promise<boolean> {
+  const host = resolveAppleWrapperHost();
+  const [decryptPortOpen, m3u8PortOpen] = await Promise.all([
+    checkPort(host, 10020),
+    checkPort(host, 20020),
+  ]);
+  return decryptPortOpen && m3u8PortOpen;
+}
+
 /**
  * Clears the Apple hold once the wrapper answers again. While Apple is held for
  * "wrapper not answering" (session exists and no expired-session error), it keeps
  * re-probing with backoff (5m -> 10m -> 15m) and re-requests a wrapper server restart.
+ * A restart is not requested while this process is still in its startup grace:
+ * the sidecar is often still binding then.
  */
 export async function runAppleWrapperHoldProbe(
   deps: {
@@ -1105,11 +1127,25 @@ export async function runAppleWrapperHoldProbe(
     now?: () => number;
     recordRestart?: (time?: number) => void;
     recordFailure?: (provider: string, message: string) => Promise<unknown>;
+    recordOk?: (provider: string) => Promise<unknown>;
     readAuth?: () => ProviderAuthPublic | null;
+    portsOpen?: () => Promise<boolean>;
   } = {},
 ): Promise<"idle" | "cleared" | "still_held"> {
   const needsReauth = deps.needsReauth ?? (() => providerNeedsReauth("apple-music"));
   if (!needsReauth()) return "idle";
+
+  const readAuth = deps.readAuth ?? (() => readProviderAuthPublic("apple-music"));
+  const authRow = readAuth();
+  const portsOpen = deps.portsOpen ? await deps.portsOpen() : await wrapperPortsOpen();
+  // A stuck or "not answering" hold is not a session expiry. Ports that accept
+  // mean the saved failure is stale and the albums can download again.
+  if (portsOpen && !isAuthRowSessionExpired(authRow?.lastError)) {
+    const recordOk = deps.recordOk ?? ((provider: string) => recordProviderAuthOk(provider, { probedAt: new Date().toISOString() }));
+    await recordOk("apple-music");
+    resetAppleWrapperProbeBackoff();
+    return "cleared";
+  }
 
   const status = await (deps.loginStatus ?? getWrapperLoginStatus)();
   if (!needsReauth()) {
@@ -1117,18 +1153,18 @@ export async function runAppleWrapperHoldProbe(
     return "cleared";
   }
 
+  const now = deps.now ? deps.now() : Date.now();
+  if (isAppleWrapperStartupGrace(now)) return "still_held";
+
   // Apple is still held. Check if held for "wrapper not answering" vs a real session problem.
   // Check the wrapper status (status === "failed" with a session/login error, not crash-loop
   // or unreachable text) before restarting or overwriting.
   const hasSession = deps.hasSession ? deps.hasSession() : hasAppleWrapperSession();
-  const readAuth = deps.readAuth ?? (() => readProviderAuthPublic("apple-music"));
-  const authRow = readAuth();
   const isWrapperSessionFailure = isWrapperSessionOrLoginError(status);
   const isAuthSessionExpired = isAuthRowSessionExpired(authRow?.lastError);
   const isSessionProblem = isWrapperSessionFailure || isAuthSessionExpired;
 
   if (hasSession && !isSessionProblem) {
-    const now = deps.now ? deps.now() : Date.now();
     // If a restart was previously requested and the wrapper is still held on this probe,
     // the previous restart didn't help: record the stuck message now.
     if (probeRestartCount > 0 && authRow?.lastError !== APPLE_WRAPPER_STUCK_MESSAGE) {
@@ -1154,10 +1190,25 @@ export async function runAppleWrapperHoldProbe(
   return "still_held";
 }
 
+/** What the startup/interval tick should do. A healthy install must not be held while the sidecar is still binding. */
+export function appleWrapperStartupProbeAction(
+  needsReauth: boolean,
+  hasToken: boolean,
+  now = Date.now(),
+): "hold" | "health" | "skip" {
+  if (needsReauth) return "hold";
+  if (!hasToken || isAppleWrapperStartupGrace(now)) return "skip";
+  return "health";
+}
+
 export function startAppleWrapperHoldProbeLoop(): void {
   if (appleHoldProbeLoop) return;
-  appleHoldProbeLoop = setInterval(() => {
-    if (providerNeedsReauth("apple-music")) {
+  const tick = () => {
+    const action = appleWrapperStartupProbeAction(
+      providerNeedsReauth("apple-music"),
+      Boolean(loadStoredAppleMusicToken()),
+    );
+    if (action === "hold") {
       void runAppleWrapperHoldProbe()
         .then((result) => {
           if (result === "cleared") console.log("[APPLE] Wrapper answers again; released held Apple downloads.");
@@ -1165,12 +1216,19 @@ export function startAppleWrapperHoldProbeLoop(): void {
         .catch((error) => {
           console.error("[APPLE] Wrapper hold probe failed:", error instanceof Error ? error.message : "unknown");
         });
-    } else if (loadStoredAppleMusicToken()) {
+    } else if (action === "health") {
       void probeAppleWrapperHealth().catch((error) => {
         console.error("[APPLE] Wrapper health probe failed:", error instanceof Error ? error.message : "unknown");
       });
     }
-  }, APPLE_WRAPPER_HOLD_PROBE_INTERVAL_MS);
+  };
+  tick();
+  const graceLeft = appleWrapperProcessStartedAt + APPLE_WRAPPER_STARTUP_GRACE_MS - Date.now();
+  if (graceLeft > 0) {
+    const graceTimer = setTimeout(tick, graceLeft);
+    graceTimer.unref?.();
+  }
+  appleHoldProbeLoop = setInterval(tick, APPLE_WRAPPER_HOLD_PROBE_INTERVAL_MS);
   appleHoldProbeLoop.unref?.();
 }
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test, beforeEach } from "node:test";
 
 import {
+  appleWrapperStartupProbeAction,
   runAppleWrapperHoldProbe,
   reconcileWrapperLoginStatus,
   probeAppleWrapperHealth,
@@ -18,11 +19,79 @@ beforeEach(() => {
   resetAppleWrapperRestartState();
 });
 
+test("startup probe does not health-check a working Apple install while the sidecar is still binding", () => {
+  assert.equal(appleWrapperStartupProbeAction(true, true, Date.now()), "hold");
+  assert.equal(appleWrapperStartupProbeAction(false, true, Date.now()), "skip");
+  assert.equal(appleWrapperStartupProbeAction(false, true, Date.now() + 120_000), "health");
+  assert.equal(appleWrapperStartupProbeAction(false, false, Date.now() + 120_000), "skip");
+});
+
 test("hold probe: no wrapper check while Apple is not held", async () => {
   let checks = 0;
   const result = await runAppleWrapperHoldProbe({ needsReauth: () => false, loginStatus: async () => (checks++, { status: "success", message: "" }) });
   assert.equal(result, "idle");
   assert.equal(checks, 0);
+});
+
+test("hold probe: a stale stuck hold is cleared when the wrapper answers, without another restart", async () => {
+  let restarts = 0;
+  let cleared = false;
+  const result = await runAppleWrapperHoldProbe({
+    needsReauth: () => !cleared,
+    portsOpen: async () => true,
+    hasSession: () => true,
+    requestRestart: () => (restarts++, true),
+    recordOk: async () => { cleared = true; },
+    readAuth: () => ({
+      provider: "apple-music",
+      status: "needs_reauth",
+      since: "2026-11-28T00:10:48.000Z",
+      lastOkAt: null,
+      lastError: APPLE_WRAPPER_STUCK_MESSAGE,
+      accountLabel: null,
+      credentialSavedAt: null,
+      credentialAgeDays: null,
+      ageWarning: null,
+      held: 544,
+      banner: null,
+      queueMessage: "Waiting for Apple Music wrapper restart",
+      href: null,
+      settingsLabel: null,
+    }),
+  });
+  assert.equal(result, "cleared");
+  assert.equal(cleared, true);
+  assert.equal(restarts, 0);
+});
+
+test("hold probe: startup grace does not restart a wrapper that is still binding", async () => {
+  let restarts = 0;
+  const result = await runAppleWrapperHoldProbe({
+    needsReauth: () => true,
+    portsOpen: async () => false,
+    loginStatus: async () => ({ status: "failed", message: "ports 10020, 20020 not answering" }),
+    hasSession: () => true,
+    now: () => Date.now(),
+    requestRestart: () => (restarts++, true),
+    readAuth: () => ({
+      provider: "apple-music",
+      status: "needs_reauth",
+      since: "2026-11-28T00:10:48.000Z",
+      lastOkAt: null,
+      lastError: APPLE_WRAPPER_STUCK_MESSAGE,
+      accountLabel: null,
+      credentialSavedAt: null,
+      credentialAgeDays: null,
+      ageWarning: null,
+      held: 544,
+      banner: null,
+      queueMessage: null,
+      href: null,
+      settingsLabel: null,
+    }),
+  });
+  assert.equal(result, "still_held");
+  assert.equal(restarts, 0);
 });
 
 test("hold probe: clears the hold once the wrapper answers", async () => {
@@ -56,8 +125,10 @@ test("hold probe: does not request restart when held for expired session", async
   let restarts = 0;
   const result = await runAppleWrapperHoldProbe({
     needsReauth: () => true,
+    portsOpen: async () => false,
     loginStatus: async () => ({ status: "failed", message: "Sign In: Invalid CKC" }),
     hasSession: () => true,
+    now: () => Date.now() + 120_000,
     readAuth: () => ({
       provider: "apple-music",
       status: "needs_reauth",
@@ -84,8 +155,10 @@ test("hold probe: does not request restart when session marker does not exist", 
   let restarts = 0;
   const result = await runAppleWrapperHoldProbe({
     needsReauth: () => true,
+    portsOpen: async () => false,
     loginStatus: async () => ({ status: "failed", message: "ports 10020 not answering" }),
     hasSession: () => false,
+    now: () => Date.now() + 120_000,
     requestRestart: () => (restarts++, true),
   });
   assert.equal(result, "still_held");
@@ -323,6 +396,8 @@ test("hold probe: crash-loop or unreachable in login_status.json is not treated 
   let restarts = 0;
   const result = await runAppleWrapperHoldProbe({
     needsReauth: () => true,
+    portsOpen: async () => false,
+    now: () => Date.now() + 120_000,
     loginStatus: async () => ({
       status: "failed",
       message: "Decryption server is crash-looping. Restart the wrapper container (docker compose restart apple-music-wrapper).",

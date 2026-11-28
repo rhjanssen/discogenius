@@ -14,6 +14,7 @@ import {
   resolveAppleStorefront,
   resolveAppleVideoMaxHeight,
   checkTcpPort,
+  isAppleWrapperStartupGrace,
   requestWrapperServerRestart,
   resolveAppleWrapperHost,
   syncTokenToDownloader,
@@ -25,7 +26,7 @@ import {
   isAppleTruncatedSegmentError,
   APPLE_TRUNCATED_SEGMENT_PATTERN,
 } from "../provider-auth-error.js";
-import { recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
+import { providerNeedsReauth, recordProviderAuthFailure, recordProviderAuthOk } from "../provider-auth-state.js";
 
 export { isAppleTruncatedSegmentError, APPLE_TRUNCATED_SEGMENT_PATTERN };
 import { assessOfferDownloadFailure, type StreamProbeResult } from "../../download/offer-availability.js";
@@ -336,6 +337,14 @@ function onlyWrapperPortsMissing(snapshot: AppleMusicDownloaderCapabilitySnapsho
   return snapshot.authenticated && missing.length > 0 && missing.every((item) => item.startsWith("decryption wrapper port"));
 }
 
+async function releaseAppleHoldIfWrapperAnswers(snapshot: AppleMusicDownloaderCapabilitySnapshot): Promise<void> {
+  const portsDown = describeAppleDownloaderMissingPrerequisites(snapshot)
+    .some((item) => item.startsWith("decryption wrapper port"));
+  if (portsDown || !snapshot.wrapperDecryptPortOpen || !snapshot.wrapperM3u8PortOpen) return;
+  if (!providerNeedsReauth("apple-music")) return;
+  await recordProviderAuthOk("apple-music", { probedAt: new Date().toISOString() }).catch(() => undefined);
+}
+
 /**
  * Pre-download wrapper check (no periodic polling): if the decryption ports do
  * not answer, ask the supervisor to restart the hung server and wait for the
@@ -350,19 +359,34 @@ export async function ensureAppleWrapperReadyForDownload(
     initialTimeoutMs?: number;
     restartTimeoutMs?: number;
     pollMs?: number;
+    now?: number;
   } = {},
 ): Promise<AppleMusicDownloaderCapabilitySnapshot> {
   const readSnapshot = deps.readSnapshot ?? getAppleMusicDownloaderCapabilitySnapshot;
   const pollMs = deps.pollMs ?? 1_000;
+  const now = deps.now ?? Date.now();
   let snapshot = await waitForAppleMusicDownloaderReadiness(readSnapshot, {
     signal: deps.signal, timeoutMs: deps.initialTimeoutMs ?? 10_000, pollMs,
   });
   let missing = describeAppleDownloaderMissingPrerequisites(snapshot);
-  if (!onlyWrapperPortsMissing(snapshot, missing)) return snapshot;
+  if (!onlyWrapperPortsMissing(snapshot, missing)) {
+    await releaseAppleHoldIfWrapperAnswers(snapshot);
+    return snapshot;
+  }
   // One more read before killing a server that just answered.
   snapshot = await readSnapshot();
   missing = describeAppleDownloaderMissingPrerequisites(snapshot);
-  if (!onlyWrapperPortsMissing(snapshot, missing)) return snapshot;
+  if (!onlyWrapperPortsMissing(snapshot, missing)) {
+    await releaseAppleHoldIfWrapperAnswers(snapshot);
+    return snapshot;
+  }
+  // The sidecar is often still binding in the first seconds after a deploy.
+  // Waiting is enough; a restart file would kill the server that is about to answer.
+  if (isAppleWrapperStartupGrace(now)) {
+    const authMsg = `Apple Music decryption wrapper is not answering (${missing.join(", ")}); Apple downloads are on hold until it responds.`;
+    await recordProviderAuthFailure("apple-music", authMsg).catch(() => undefined);
+    throw new ProviderAuthError("apple-music", authMsg, "wrapper_unreachable");
+  }
 
   console.warn(`[APPLE-MUSIC] Decryption wrapper unreachable before download (${missing.join(", ")}); requesting wrapper restart.`);
   const requested = (deps.requestRestart ?? requestWrapperServerRestart)();
